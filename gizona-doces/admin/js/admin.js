@@ -276,7 +276,7 @@ function openProductForm(id) {
           <p class="photo-upload-label">Foto inteira</p>
           <div id="pfImagePreview" class="photo-preview">${p && p.image_url ? productImagePreviewHTML(p.image_url, p, "primary") : "Sem foto"}</div>
           <input type="hidden" id="pfImage" value="${p ? p.image_url || "" : ""}">
-          <input type="file" accept="image/jpeg,image/png,image/webp" id="pfImageFile" onchange="handlePhotoUpload(this, 'pfImage')">
+          <input type="file" accept="image/*" id="pfImageFile" onchange="handlePhotoUpload(this, 'pfImage')">
           <button type="button" class="btn btn-outline btn-sm crop-open-btn" onclick="openImageCropper('pfImage','Foto inteira')" ${p && p.image_url ? "" : "disabled"}>✂ Ajustar foto</button>
           ${imageAdjustControlsHTML(p, "primary")}
           <p id="pfImageStatus" class="photo-status"></p>
@@ -285,7 +285,7 @@ function openProductForm(id) {
           <p class="photo-upload-label">Foto mordida</p>
           <div id="pfImage2Preview" class="photo-preview">${p && p.image_url_2 ? productImagePreviewHTML(p.image_url_2, p, "secondary") : "Sem foto"}</div>
           <input type="hidden" id="pfImage2" value="${p ? p.image_url_2 || "" : ""}">
-          <input type="file" accept="image/jpeg,image/png,image/webp" id="pfImage2File" onchange="handlePhotoUpload(this, 'pfImage2')">
+          <input type="file" accept="image/*" id="pfImage2File" onchange="handlePhotoUpload(this, 'pfImage2')">
           <button type="button" class="btn btn-outline btn-sm crop-open-btn" onclick="openImageCropper('pfImage2','Foto mordida')" ${p && p.image_url_2 ? "" : "disabled"}>✂ Ajustar foto</button>
           ${imageAdjustControlsHTML(p, "secondary")}
           <p id="pfImage2Status" class="photo-status"></p>
@@ -590,12 +590,6 @@ async function handlePhotoUpload(inputEl, targetFieldId) {
   if (!file) return;
   const statusEl = document.getElementById(targetFieldId + "Status");
   const previewEl = document.getElementById(targetFieldId + "Preview");
-  const supportedTypes = ["image/jpeg", "image/png", "image/webp"];
-  if (!supportedTypes.includes(file.type)) {
-    statusEl.textContent = "Use uma foto JPG, PNG ou WebP. Fotos HEIC/HEIF precisam ser convertidas antes.";
-    inputEl.value = "";
-    return;
-  }
   statusEl.textContent = "Comprimindo...";
   try {
     const compressed = await compressImage(file);
