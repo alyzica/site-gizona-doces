@@ -20,7 +20,6 @@ const state = {
   loyaltyCard: null,
   rewardsList: [],
   isoporBox: false,
-  extraBrig: {},
   suggestQty: {},
 };
 
@@ -492,14 +491,14 @@ function renderCategory() {
           <span class="cat-emoji">🍬</span>
           <span class="cat-info">
             <strong>Brigadeiro Gourmet</strong>
-            <small>Caixas com 25, 50 ou 100 unidades</small>
+            <small>18 a 20g cada - caixas com 25, 50 ou 100 unidades</small>
           </span>
         </button>
         <button class="cat-card" onclick="selectCategory('geladinho')">
           <span class="cat-emoji">🍦</span>
           <span class="cat-info">
             <strong>Geladinho Gourmet</strong>
-            <small>Tamanho festa 7cm — mín. 30 unidades</small>
+            <small>Tamanho festa 8cm - mín. 30 unidades</small>
           </span>
         </button>
       </div>
@@ -517,7 +516,7 @@ function renderBrigadeiroBox() {
   const b = state.box;
   app.innerHTML = `
     <section class="screen">
-      <div class="screen-head pink"><h2>Brigadeiro Gourmet</h2><p>Escolha sua caixa</p></div>
+      <div class="screen-head pink"><h2>Brigadeiro Gourmet</h2><p>18 a 20g cada - escolha sua caixa</p></div>
       <div class="box-list">
         ${BRIGADEIRO_BOXES.map(box => `
           <div class="box-card ${b?.boxId === box.id ? "active" : ""}">
@@ -648,7 +647,7 @@ function renderGeladinhoInfo() {
     <section class="screen">
       <div class="screen-head pink"><h2>Geladinho Gourmet</h2><p>Tamanho Festa</p></div>
       <div class="info-card">
-        <p><strong>Nossos geladinhos tamanho festa possuem 7 cm.</strong></p>
+        <p><strong>Nossos geladinhos tamanho festa possuem 8 cm.</strong></p>
         <p>Ideal para aniversários, festas corporativas, chá de bebê e outras comemorações.</p>
       </div>
       <div class="rule-card">
@@ -657,11 +656,10 @@ function renderGeladinhoInfo() {
       </div>
       <div class="info-card">
         <p><strong>Caixa de isopor</strong></p>
-        <p>Todos os pedidos acompanham caixa de isopor para conservação e segurança no transporte.</p>
-        <p><strong>Arte gratuita</strong> e personalizada conforme o tema. Até 3 alterações sem custo.</p>
-        <p>A <strong>caixa é retornável</strong> — a taxa de caução é estornada após devolução em bom estado.</p>
+        <p>A caixa de isopor personalizada é <strong>opcional</strong>. Você poderá adicioná-la no carrinho.</p>
+        <p>Ela ajuda na conservação e no transporte, e a arte é gratuita e personalizada conforme o tema (até 3 alterações sem custo).</p>
       </div>
-      ${navButtons({ back: "category", next: "personalization", nextLabel: "Ver sabores" })}
+      ${navButtons({ back: "category", next: "geladinho-flavors", nextLabel: "Ver sabores" })}
     </section>
   `;
 }
@@ -708,7 +706,7 @@ function renderGeladinhoFlavors() {
         }).join("")}
       </div>
       ${isValid ? `<div class="subtotal-box"><span>Subtotal geladinhos</span><strong>${fmt(subtotal)}</strong></div>` : ""}
-      ${navButtons({ back: "personalization", next: isValid ? "cart" : null, nextLabel: "Ir para o carrinho" })}
+      ${navButtons({ back: "geladinho-info", next: isValid ? "cart" : null, nextLabel: "Ir para o carrinho" })}
     </section>
   `;
 }
@@ -741,9 +739,6 @@ function renderCart() {
   const brigItems = Object.keys(state.flavors).length
     ? Object.entries(state.flavors).map(([id, qty]) => ({ ...BRIGADEIRO_PRODUCTS.find(p => p.id === id), qty }))
     : [];
-  const extraBrigItems = Object.keys(state.extraBrig).length
-    ? Object.entries(state.extraBrig).map(([id, qty]) => ({ ...BRIGADEIRO_PRODUCTS.find(p => p.id === id), qty }))
-    : [];
   const gelaItems = Object.keys(state.geladinho).length
     ? Object.entries(state.geladinho).map(([id, qty]) => ({ ...GELADINHO_PRODUCTS.find(p => p.id === id), qty }))
     : [];
@@ -751,12 +746,11 @@ function renderCart() {
   const brigSubtotal = state.box?.boxConfig?.fixedPrice
     ? state.box.boxConfig.fixedPrice
     : brigItems.reduce((s, i) => s + i.price * i.qty, 0);
-  const extraBrigSubtotal = extraBrigItems.reduce((s, i) => s + i.price * i.qty, 0);
   const gelaSubtotal = gelaItems.reduce((s, i) => s + i.price * i.qty, 0);
   const boxPrice = (gelaItems.length && state.isoporBox) ? isoporBoxPrice() : 0;
-  const total = brigSubtotal + extraBrigSubtotal + gelaSubtotal + boxPrice;
+  const total = brigSubtotal + gelaSubtotal + boxPrice;
   const c = state.customer;
-  const canSubmit = c.name.trim() && c.phone.trim() && (brigItems.length || extraBrigItems.length || gelaItems.length);
+  const canSubmit = c.name.trim() && c.phone.trim() && (brigItems.length || gelaItems.length);
 
   // sabores de brigadeiro ainda não escolhidos, pra trocar
   const unusedBrigFlavors = BRIGADEIRO_PRODUCTS.filter(p => !state.flavors[p.id]);
@@ -784,24 +778,6 @@ function renderCart() {
             </div>
           `).join("")}
           <div class="cart-line total"><span>Subtotal brigadeiros</span><strong>${fmt(brigSubtotal)}</strong></div>
-        </div>
-      ` : ""}
-
-      ${extraBrigItems.length ? `
-        <div class="cart-summary">
-          <p class="cart-section-title">Brigadeiros avulsos</p>
-          ${extraBrigItems.map(i => `
-            <div class="cart-line-edit">
-              <span>${i.name} <small style="color:var(--muted)">(${fmt(i.price)}/un.)</small></span>
-              <span class="stepper">
-                <button onclick="cartChangeExtraBrig('${i.id}', -1)">–</button>
-                <span>${i.qty}</span>
-                <button onclick="cartChangeExtraBrig('${i.id}', 1)">+</button>
-              </span>
-              <button class="btn-remove" onclick="cartRemoveExtraBrig('${i.id}')" title="Remover">✕</button>
-            </div>
-          `).join("")}
-          <div class="cart-line total"><span>Subtotal avulsos</span><strong>${fmt(extraBrigSubtotal)}</strong></div>
         </div>
       ` : ""}
 
@@ -870,14 +846,9 @@ function renderCart() {
 /* ---------------- Sugestões "Você também pode gostar" ---------------- */
 function renderSuggestions() {
   const gelaChosen = new Set(Object.keys(state.geladinho));
-  const brigExtra = new Set(Object.keys(state.extraBrig));
-  const brigChosen = new Set([...Object.keys(state.flavors), ...brigExtra]);
-
   const suggestions = [];
   const gelaCandidate = GELADINHO_PRODUCTS.find(p => !gelaChosen.has(p.id));
   if (gelaCandidate) suggestions.push({ ...gelaCandidate, type: "geladinho" });
-  const brigCandidate = BRIGADEIRO_PRODUCTS.find(p => !brigChosen.has(p.id));
-  if (brigCandidate) suggestions.push({ ...brigCandidate, type: "brigadeiro" });
 
   if (!suggestions.length) return "";
 
@@ -914,11 +885,7 @@ function adjustSuggestQty(id, type, direction) {
 }
 function addSuggestion(id, type) {
   const qty = state.suggestQty[id] || (type === "geladinho" ? GELADINHO_RULES.minPerFlavor : 1);
-  if (type === "geladinho") {
-    state.geladinho[id] = qty;
-  } else {
-    state.extraBrig[id] = qty;
-  }
+  state.geladinho[id] = qty;
   delete state.suggestQty[id];
   render();
 }
@@ -940,17 +907,6 @@ function cartChangeBrig(id, direction) {
 }
 function cartRemoveBrig(id) {
   delete state.flavors[id];
-  render();
-}
-function cartChangeExtraBrig(id, direction) {
-  const current = state.extraBrig[id] || 0;
-  const next = Math.max(0, current + direction);
-  if (next === 0) delete state.extraBrig[id];
-  else state.extraBrig[id] = next;
-  render();
-}
-function cartRemoveExtraBrig(id) {
-  delete state.extraBrig[id];
   render();
 }
 function cartChangeGeladinho(id, direction) {
@@ -985,6 +941,9 @@ function handleEventDateInput(el) {
 }
 
 async function submitOrder(total) {
+  // A aba precisa abrir durante o toque no botão; se esperar o banco responder,
+  // navegadores móveis podem bloqueá-la como pop-up.
+  const whatsappWindow = window.open("about:blank", "_blank");
   const c = state.customer;
   let msg = `Olá! Gostaria de fazer uma encomenda na Gizona Doces.\n\n`;
   msg += `Nome: ${c.name}\nTelefone: ${c.phone}\n`;
@@ -1003,17 +962,6 @@ async function submitOrder(total) {
     });
     const subtotal = state.box.boxConfig.fixedPrice || Object.entries(state.flavors).reduce((s, [id, qty]) => s + BRIGADEIRO_PRODUCTS.find(p => p.id === id).price * qty, 0);
     msg += `  Subtotal: ${fmt(subtotal)}\n\n`;
-  }
-  if (Object.keys(state.extraBrig).length) {
-    msg += `Brigadeiros avulsos\n`;
-    let extraSubtotal = 0;
-    Object.entries(state.extraBrig).forEach(([id, qty]) => {
-      const p = BRIGADEIRO_PRODUCTS.find(p => p.id === id);
-      msg += `  - ${p.name}: ${qty} unidades x ${fmt(p.price)} = ${fmt(p.price * qty)}\n`;
-      items.push({ product_name: p.name, category: "brigadeiro", quantity: qty, unit_price: p.price, subtotal: p.price * qty });
-      extraSubtotal += p.price * qty;
-    });
-    msg += `  Subtotal: ${fmt(extraSubtotal)}\n\n`;
   }
   if (Object.keys(state.geladinho).length) {
     msg += `Geladinhos Gourmet Tamanho Festa\n`;
@@ -1044,6 +992,10 @@ async function submitOrder(total) {
 
   msg += `Valor estimado: ${fmt(total)}\n\nAguardo retorno sobre disponibilidade.`;
 
+  const whatsappUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
+  if (whatsappWindow) whatsappWindow.location.href = whatsappUrl;
+  else window.location.href = whatsappUrl;
+
   // Salva o pedido no banco (fica no histórico e conta ponto de fidelidade se logado)
   try {
     const paymentMap = { "Pix": "pix", "Crédito": "credito" };
@@ -1063,7 +1015,6 @@ async function submitOrder(total) {
     console.error("Erro ao salvar pedido:", e);
   }
 
-  window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
   renderConfirmation();
 }
 
@@ -1084,7 +1035,6 @@ function resetOrder() {
   state.geladinho = {};
   state.wantsArt = null;
   state.isoporBox = false;
-  state.extraBrig = {};
   state.suggestQty = {};
   state.personalization = { birthday_name: "", age: "", theme: "", colors: "", custom_text: "", art_description: "" };
   go(state.guest ? "welcome" : "dashboard");
