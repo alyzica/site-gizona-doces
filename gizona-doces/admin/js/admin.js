@@ -271,7 +271,6 @@ function openProductForm(id) {
         <label>Ordem de exibição<input id="pfSort" type="number" value="${p ? p.sort_order : 0}"></label>
       </div>
       <label style="display:block;margin-top:10px">Descrição<textarea id="pfDesc" rows="2">${p ? p.description || "" : ""}</textarea></label>
-
       <div class="photo-upload-row">
         <div class="photo-upload-box">
           <p class="photo-upload-label">Foto inteira</p>
@@ -288,7 +287,6 @@ function openProductForm(id) {
           <p id="pfImage2Status" class="photo-status"></p>
         </div>
       </div>
-
       <label style="display:flex;flex-direction:row;align-items:center;gap:8px;margin-top:14px">
         <input type="checkbox" id="pfActive" ${!p || p.active ? "checked" : ""} style="width:auto"> Ativo
       </label>
@@ -301,8 +299,8 @@ function openProductForm(id) {
 }
 
 /* ---------------- Recortador de foto (moldura + zoom + arrastar) ---------------- */
-const CROP_VIEWPORT = 280; // tamanho da moldura na tela (px)
-const CROP_OUTPUT = 800;   // tamanho final da imagem exportada (px, quadrada)
+const CROP_VIEWPORT = 280;
+const CROP_OUTPUT = 800;
 let cropState = null;
 
 function handlePhotoUpload(inputEl, targetFieldId) {
@@ -382,7 +380,6 @@ function clampCropOffset() {
 function setupCropperDrag() {
   const viewport = document.getElementById("cropperViewport");
   let startX, startY, startOffsetX, startOffsetY;
-
   const onDown = (clientX, clientY) => {
     cropState.dragging = true;
     startX = clientX; startY = clientY;
@@ -396,11 +393,9 @@ function setupCropperDrag() {
     updateCropperTransform();
   };
   const onUp = () => { cropState.dragging = false; };
-
   viewport.addEventListener("mousedown", (e) => { e.preventDefault(); onDown(e.clientX, e.clientY); });
   window.addEventListener("mousemove", (e) => onMove(e.clientX, e.clientY));
   window.addEventListener("mouseup", onUp);
-
   viewport.addEventListener("touchstart", (e) => { const t = e.touches[0]; onDown(t.clientX, t.clientY); }, { passive: true });
   viewport.addEventListener("touchmove", (e) => { const t = e.touches[0]; onMove(t.clientX, t.clientY); }, { passive: true });
   viewport.addEventListener("touchend", onUp);
@@ -415,7 +410,6 @@ function closeCropper() {
 async function confirmCrop() {
   const { img, baseScale, zoom, offsetX, offsetY, targetFieldId } = cropState;
   const scale = baseScale * zoom;
-
   const dispW = img.naturalWidth * scale;
   const dispH = img.naturalHeight * scale;
   const imgTopLeftX = CROP_VIEWPORT / 2 + offsetX - dispW / 2;
@@ -423,13 +417,11 @@ async function confirmCrop() {
   const sx = (0 - imgTopLeftX) / scale;
   const sy = (0 - imgTopLeftY) / scale;
   const sSize = CROP_VIEWPORT / scale;
-
   const canvas = document.createElement("canvas");
   canvas.width = CROP_OUTPUT; canvas.height = CROP_OUTPUT;
   const ctx = canvas.getContext("2d");
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, CROP_OUTPUT, CROP_OUTPUT);
   ctx.drawImage(img, sx, sy, sSize, sSize, 0, 0, CROP_OUTPUT, CROP_OUTPUT);
-
   const statusEl = document.getElementById("cropperStatus");
   statusEl.textContent = "Enviando...";
   canvas.toBlob(async (blob) => {
@@ -465,6 +457,7 @@ async function saveProduct(id) {
   document.getElementById("productFormArea").innerHTML = "";
   await loadProducts(document.getElementById("adminMain"));
 }
+
 async function deleteProduct(id) {
   if (!confirm("Excluir este produto?")) return;
   await sb.from("products").delete().eq("id", id);

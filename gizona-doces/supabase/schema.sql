@@ -67,6 +67,12 @@ create table public.products (
   description text,
   image_url text,
   image_url_2 text,
+  image_scale numeric(4,2) not null default 1,
+  image_position_x numeric(5,2) not null default 50,
+  image_position_y numeric(5,2) not null default 50,
+  image2_scale numeric(4,2) not null default 1,
+  image2_position_x numeric(5,2) not null default 50,
+  image2_position_y numeric(5,2) not null default 50,
   active boolean not null default true,
   sort_order int not null default 0,
   created_at timestamptz not null default now()

@@ -306,7 +306,9 @@ async function loadProductsFromDB() {
     if (error || !data || !data.length) return;
     const mapItem = p => ({
       id: p.id, name: p.name, price: Number(p.price), desc: p.description || "",
-      image: p.image_url || "", image2: p.image_url_2 || ""
+      image: p.image_url || "", image2: p.image_url_2 || "",
+      imageScale: Number(p.image_scale) || 1, imageX: Number(p.image_position_x) || 50, imageY: Number(p.image_position_y) || 50,
+      image2Scale: Number(p.image2_scale) || 1, image2X: Number(p.image2_position_x) || 50, image2Y: Number(p.image2_position_y) || 50
     });
     const brig = data.filter(p => p.category === "brigadeiro").map(mapItem);
     const gela = data.filter(p => p.category === "geladinho").map(mapItem);
@@ -583,8 +585,8 @@ function renderBrigadeiroFlavors() {
             <button class="flavor-row ${isSel ? "active" : ""} ${!isSel && !canSel ? "disabled" : ""}"
                     onclick="toggleBrigFlavor('${p.id}')" ${!isSel && !canSel ? "disabled" : ""}>
               <span class="flavor-thumb-pair">
-                <span class="flavor-thumb"><img src="${p.image}" alt="${p.name}" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
-                <span class="flavor-thumb"><img src="${p.image2}" alt="${p.name} mordido" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
+                <span class="flavor-thumb"><img src="${p.image}" alt="${p.name}" style="--img-scale:${p.imageScale};--img-x:${p.imageX}%;--img-y:${p.imageY}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
+                <span class="flavor-thumb"><img src="${p.image2}" alt="${p.name} mordido" style="--img-scale:${p.image2Scale};--img-x:${p.image2X}%;--img-y:${p.image2Y}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
               </span>
               <span class="flavor-info">
                 <strong>${p.name}</strong>
@@ -687,8 +689,8 @@ function renderGeladinhoFlavors() {
           return `
             <div class="flavor-row wide">
               <span class="flavor-thumb-pair">
-                <span class="flavor-thumb"><img src="${p.image}" alt="${p.name}" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
-                <span class="flavor-thumb"><img src="${p.image2}" alt="${p.name} mordido" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
+                <span class="flavor-thumb"><img src="${p.image}" alt="${p.name}" style="--img-scale:${p.imageScale};--img-x:${p.imageX}%;--img-y:${p.imageY}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
+                <span class="flavor-thumb"><img src="${p.image2}" alt="${p.name} mordido" style="--img-scale:${p.image2Scale};--img-x:${p.image2X}%;--img-y:${p.image2Y}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
               </span>
               <span class="flavor-info">
                 <strong>${p.name}</strong>
