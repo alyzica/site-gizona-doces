@@ -784,3 +784,276 @@ async function resetLoyaltyPoints(customerId) {
     document.getElementById("adminMain")
   );
 }
+/* ---------------- MIMOS / RECOMPENSAS ---------------- */
+
+async function loadRewards(main) {
+  const { data: rewards, error } = await sb
+    .from("rewards")
+    .select("*")
+    .order("points_required", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (error) throw error;
+
+  admin.data.rewards = rewards || [];
+  renderRewardsTable(main);
+}
+
+function renderRewardsTable(main) {
+  const rewards = admin.data.rewards || [];
+
+  main.innerHTML = `
+    <div class="admin-topbar">
+      <h1>Mimos</h1>
+      <button class="btn btn-pink" onclick="openRewardForm()">
+        + Novo mimo
+      </button>
+    </div>
+
+    <div id="rewardFormArea"></div>
+
+    <div class="admin-card">
+      ${
+        rewards.length
+          ? `
+            <div style="overflow-x:auto">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Foto</th>
+                    <th>Mimo</th>
+                    <th>Descrição</th>
+                    <th>Pontos necessários</th>
+                    <th>Ativo</th>
+                    <th></th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  ${rewards.map(r => `
+                    <tr>
+                      <td>
+                        ${
+                          r.image_url
+                            ? `<img
+                                class="img-thumb"
+                                src="${r.image_url}"
+                                onerror="this.style.display='none'"
+                              >`
+                            : "—"
+                        }
+                      </td>
+
+                      <td>
+                        <strong>${r.name}</strong>
+                      </td>
+
+                      <td>
+                        ${r.description || "—"}
+                      </td>
+
+                      <td>
+                        <strong style="font-size:18px">
+                          ${Number(r.points_required || 0)}
+                        </strong>
+                        pontos
+                      </td>
+
+                      <td>
+                        ${r.active ? "Sim" : "Não"}
+                      </td>
+
+                      <td style="white-space:nowrap">
+                        <button
+                          class="btn btn-outline btn-sm"
+                          onclick="openRewardForm('${r.id}')"
+                        >
+                          Editar
+                        </button>
+
+                        <button
+                          class="btn btn-danger btn-sm"
+                          onclick="deleteReward('${r.id}')"
+                        >
+                          Excluir
+                        </button>
+                      </td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            </div>
+          `
+          : `
+            <p class="center-msg">
+              Nenhum mimo cadastrado.
+            </p>
+          `
+      }
+    </div>
+  `;
+}
+
+function openRewardForm(id) {
+  const reward = id
+    ? admin.data.rewards.find(r => r.id === id)
+    : null;
+
+  document.getElementById("rewardFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>${reward ? "Editar mimo" : "Novo mimo"}</h2>
+
+      <div class="form-grid">
+
+        <label>
+          Nome
+          <input
+            id="rfName"
+            value="${reward ? reward.name || "" : ""}"
+          >
+        </label>
+
+        <label>
+          Pontos necessários
+          <input
+            id="rfPoints"
+            type="number"
+            min="1"
+            step="1"
+            value="${reward ? Number(reward.points_required || 1) : 100}"
+          >
+        </label>
+
+      </div>
+
+      <label style="display:block;margin-top:10px">
+        Descrição
+        <textarea id="rfDescription" rows="3">${reward ? reward.description || "" : ""}</textarea>
+      </label>
+
+      <label style="display:block;margin-top:10px">
+        URL da imagem
+        <input
+          id="rfImage"
+          value="${reward ? reward.image_url || "" : ""}"
+          placeholder="https://..."
+        >
+      </label>
+
+      <label style="
+        display:flex;
+        flex-direction:row;
+        align-items:center;
+        gap:8px;
+        margin-top:14px;
+      ">
+        <input
+          type="checkbox"
+          id="rfActive"
+          ${!reward || reward.active ? "checked" : ""}
+          style="width:auto"
+        >
+        Ativo
+      </label>
+
+      <div style="
+        margin-top:14px;
+        display:flex;
+        gap:10px;
+      ">
+        <button
+          class="btn btn-pink"
+          onclick="saveReward(${reward ? `'${reward.id}'` : "null"})"
+        >
+          Salvar
+        </button>
+
+        <button
+          class="btn btn-outline"
+          onclick="document.getElementById('rewardFormArea').innerHTML=''"
+        >
+          Cancelar
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveReward(id) {
+  const name = document.getElementById("rfName").value.trim();
+  const description = document.getElementById("rfDescription").value.trim();
+  const image_url = document.getElementById("rfImage").value.trim();
+  const points_required = parseInt(
+    document.getElementById("rfPoints").value,
+    10
+  ) || 0;
+
+  const active = document.getElementById("rfActive").checked;
+
+  if (!name) {
+    alert("Digite o nome do mimo.");
+    return;
+  }
+
+  if (points_required <= 0) {
+    alert("A quantidade de pontos deve ser maior que zero.");
+    return;
+  }
+
+  const payload = {
+    name,
+    description,
+    image_url,
+    points_required,
+    active
+  };
+
+  const result = id
+    ? await sb.from("rewards").update(payload).eq("id", id)
+    : await sb.from("rewards").insert(payload);
+
+  if (result.error) {
+    console.error(result.error);
+    alert("Não foi possível salvar o mimo: " + result.error.message);
+    return;
+  }
+
+  document.getElementById("rewardFormArea").innerHTML = "";
+
+  await loadRewards(
+    document.getElementById("adminMain")
+  );
+}
+
+async function deleteReward(id) {
+  const reward = admin.data.rewards.find(r => r.id === id);
+
+  if (!reward) return;
+
+  if (
+    !confirm(
+      `Excluir o mimo "${reward.name}"?\n\nEssa ação não pode ser desfeita.`
+    )
+  ) {
+    return;
+  }
+
+  const { error } = await sb
+    .from("rewards")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    console.error(error);
+    alert("Não foi possível excluir o mimo: " + error.message);
+    return;
+  }
+
+  admin.data.rewards = admin.data.rewards.filter(
+    r => r.id !== id
+  );
+
+  renderRewardsTable(
+    document.getElementById("adminMain")
+  );
+}
