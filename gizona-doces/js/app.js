@@ -118,6 +118,7 @@ async function handleLogin() {
   btn.disabled = true; btn.textContent = "Entrando...";
   try {
     await auth_login({ email, password });
+    syncOrderCustomerFromProfile();
     state.formError = "";
     go("dashboard");
   } catch (e) {
@@ -234,6 +235,7 @@ async function handleRegister() {
       street: regAddress.street, neighborhood: regAddress.neighborhood,
       city: regAddress.city, state: regAddress.state,
     });
+    syncOrderCustomerFromProfile();
     state.formError = "";
     go("dashboard");
   } catch (e) {
@@ -257,6 +259,12 @@ function renderGuestWarning() {
 function continueAsGuest() {
   state.guest = true;
   go("guide");
+}
+
+function syncOrderCustomerFromProfile() {
+  if (!auth.customer) return;
+  state.customer.name = auth.customer.full_name || "";
+  state.customer.phone = auth.customer.phone || "";
 }
 
 /* ---------------- DASHBOARD (cliente logado) ---------------- */
@@ -686,10 +694,7 @@ function renderGeladinhoFlavors() {
           const err = qty > 0 && qty < GELADINHO_RULES.minPerFlavor;
           return `
             <div class="flavor-row wide">
-              <span class="flavor-thumb-pair">
-                <span class="flavor-thumb"><img src="${p.image}" alt="${p.name}" style="--img-scale:${p.imageScale};--img-x:${p.imageX}%;--img-y:${p.imageY}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
-                <span class="flavor-thumb"><img src="${p.image2}" alt="${p.name} mordido" style="--img-scale:${p.image2Scale};--img-x:${p.image2X}%;--img-y:${p.image2Y}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
-              </span>
+              <span class="flavor-thumb"><img src="${p.image}" alt="${p.name}" style="--img-scale:${p.imageScale};--img-x:${p.imageX}%;--img-y:${p.imageY}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
               <span class="flavor-info">
                 <strong>${p.name}</strong>
                 <small>${p.desc}</small>
@@ -749,8 +754,11 @@ function renderCart() {
   const gelaSubtotal = gelaItems.reduce((s, i) => s + i.price * i.qty, 0);
   const boxPrice = (gelaItems.length && state.isoporBox) ? isoporBoxPrice() : 0;
   const total = brigSubtotal + gelaSubtotal + boxPrice;
-  const c = state.customer;
-  const canSubmit = c.name.trim() && c.phone.trim() && (brigItems.length || gelaItems.length);
+  const c = auth.customer
+    ? { ...state.customer, name: auth.customer.full_name || state.customer.name, phone: auth.customer.phone || state.customer.phone }
+    : state.customer;
+  const isGuestOrder = state.guest || !auth.customer;
+  const canSubmit = (!isGuestOrder || (c.name.trim() && c.phone.trim())) && (brigItems.length || gelaItems.length);
 
   // sabores de brigadeiro ainda não escolhidos, pra trocar
   const unusedBrigFlavors = BRIGADEIRO_PRODUCTS.filter(p => !state.flavors[p.id]);
@@ -811,6 +819,12 @@ function renderCart() {
 
       ${renderSuggestions()}
 
+      <div class="cart-summary">
+        <p class="cart-section-title">Continuar explorando</p>
+        <p class="hint">Quer conhecer as outras opções antes de finalizar?</p>
+        <button class="btn btn-outline btn-block" onclick="go('category')">Ver outros produtos</button>
+      </div>
+
       ${state.wantsArt ? `
         <div class="cart-summary">
           <p class="cart-section-title">Arte personalizada</p>
@@ -821,9 +835,11 @@ function renderCart() {
       ` : ""}
 
       <div class="cart-form-block">
-        <p class="cart-section-title">Seus dados para contato</p>
-        <label>Nome completo<input type="text" value="${c.name}" oninput="c_update('name', this.value)"></label>
-        <label>Telefone / WhatsApp<input type="text" placeholder="(19) 99999-9999" value="${c.phone}" oninput="c_update('phone', this.value)"></label>
+        <p class="cart-section-title">${isGuestOrder ? "Seus dados para contato" : "Dados do pedido"}</p>
+        ${isGuestOrder ? `
+          <label>Nome completo<input type="text" value="${c.name}" oninput="c_update('name', this.value)"></label>
+          <label>Telefone / WhatsApp<input type="text" placeholder="(19) 99999-9999" value="${c.phone}" oninput="c_update('phone', this.value)"></label>
+        ` : `<p class="hint">Usaremos automaticamente os dados do seu perfil: <strong>${auth.customer.full_name}</strong>.</p>`}
         <label>Data do evento<input type="date" id="eventDateInput" min="${minEventDate()}" value="${c.eventDate}" oninput="handleEventDateInput(this)"></label>
         <p class="hint" style="margin-top:-6px">Trabalhamos com antecedência mínima de 5 dias.</p>
         <label>Forma de pagamento
@@ -944,7 +960,9 @@ async function submitOrder(total) {
   // A aba precisa abrir durante o toque no botão; se esperar o banco responder,
   // navegadores móveis podem bloqueá-la como pop-up.
   const whatsappWindow = window.open("about:blank", "_blank");
-  const c = state.customer;
+  const c = auth.customer
+    ? { ...state.customer, name: auth.customer.full_name || state.customer.name, phone: auth.customer.phone || state.customer.phone }
+    : state.customer;
   let msg = `Olá! Gostaria de fazer uma encomenda na Gizona Doces.\n\n`;
   msg += `Nome: ${c.name}\nTelefone: ${c.phone}\n`;
   if (c.eventDate) msg += `Data do evento: ${new Date(c.eventDate + "T00:00:00").toLocaleDateString("pt-BR")}\n`;
@@ -1059,8 +1077,7 @@ function navButtons({ back, next, nextLabel }) {
   }
   await loadProductsFromDB();
   if (auth.session && auth.customer) {
-    state.customer.name = auth.customer.full_name;
-    state.customer.phone = auth.customer.phone;
+    syncOrderCustomerFromProfile();
     state.step = "dashboard";
     await loadLoyaltyData();
   } else {
