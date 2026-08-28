@@ -466,7 +466,7 @@ function renderCover() {
 /* ---------------- GUIDE ---------------- */
 function renderGuide() {
   const items = [
-    "Os pedidos devem ser feitos com no mínimo 7 dias de antecedência, sujeitos à disponibilidade da agenda.",
+    "Os pedidos devem ser feitos com no mínimo 5 dias de antecedência, sujeitos à disponibilidade da agenda.",
     "Para confirmar a encomenda, é necessário pagar 50% do valor total no ato do pedido. Os 50% restantes até 1 dia antes da retirada.",
     "A encomenda é entregue somente após a confirmação do pagamento integral.",
     "Aceitamos Pix e cartão de crédito, parcelado em até 2x com acréscimo da taxa.",
@@ -940,15 +940,29 @@ function toggleIsoporBox(checked) {
 function c_update(key, value) { state.customer[key] = value; }
 
 /* Data mínima: hoje + 5 dias, no formato YYYY-MM-DD pro atributo min do input */
+function dateKeyLocal(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function minEventDate() {
   const d = new Date();
+  // Meio-dia evita que uma mudança de fuso ou horário de verão desloque o dia.
+  d.setHours(12, 0, 0, 0);
   d.setDate(d.getDate() + 5);
-  return d.toISOString().split("T")[0];
+  return dateKeyLocal(d);
+}
+
+function formatDateKey(dateKey) {
+  const [year, month, day] = dateKey.split("-");
+  return `${day}/${month}/${year}`;
 }
 function handleEventDateInput(el) {
   const min = minEventDate();
   if (el.value && el.value < min) {
-    alert("Para garantir o preparo da sua encomenda, trabalhamos com antecedência mínima de 5 dias.");
+    alert(`Para garantir o preparo da sua encomenda, trabalhamos com antecedência mínima de 5 dias. A primeira data disponível é ${formatDateKey(min)}.`);
     el.value = "";
     state.customer.eventDate = "";
     return;
