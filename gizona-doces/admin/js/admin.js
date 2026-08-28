@@ -643,92 +643,144 @@ async function deleteProduct(id) {
 }
 
 /* ---------------- FIDELIDADE ---------------- */
+
 async function loadLoyalty(main) {
-  const { data: customers } = await sb.from("customers").select("id, full_name, email, phone");
-  const { data: cards } = await sb.from("loyalty_cards").select("*");
+  const [{ data: customers, error: customersError }, { data: cards, error: cardsError }] =
+    await Promise.all([
+      sb.from("customers").select("id, full_name, email, phone"),
+      sb.from("loyalty_cards").select("*")
+    ]);
+
+  if (customersError) throw customersError;
+  if (cardsError) throw cardsError;
+
   admin.data.customers = customers || [];
   admin.data.loyalty = cards || [];
+
   renderLoyaltyTable(main);
 }
+
 function renderLoyaltyTable(main) {
   const rows = admin.data.customers.map(c => {
-    const card = admin.data.loyalty.find(l => l.customer_id === c.id);
-    return { customer: c, completed: card ? card.completed_orders : 0, hasCard: !!card };
+    const card = admin.data.loyalty.find(
+      l => l.customer_id === c.id
+    );
+
+    return {
+      customer: c,
+      points: card ? Number(card.points || 0) : 0,
+      completed: card ? Number(card.completed_orders || 0) : 0,
+      claimed: card ? Number(card.rewards_claimed || 0) : 0,
+      hasCard: !!card
+    };
   });
+
   main.innerHTML = `
-    <div class="admin-topbar"><h1>Programa de Fidelidade</h1></div>
+    <div class="admin-topbar">
+      <h1>Programa de Fidelidade</h1>
+    </div>
+
     <div class="admin-card">
+
+      <div style="
+        padding:14px;
+        border-radius:12px;
+        background:#fff5f8;
+        margin-bottom:18px;
+      ">
+        <strong>Regra do Clube Fidelidade</strong>
+        <div style="margin-top:5px;color:var(--muted)">
+          Cada R$ 1,00 gasto = 1 ponto.
+          Os pontos são creditados quando o pedido fica concluído ou entregue.
+        </div>
+      </div>
+
       ${rows.length ? `
-        <table><thead><tr><th>Cliente</th><th>E-mail</th><th>Telefone</th><th>Pedidos</th><th></th></tr></thead><tbody>
-          ${rows.map(r => `<tr><td>${r.customer.full_name}</td><td>${r.customer.email || "—"}</td><td>${r.customer.phone || "—"}</td><td>${r.completed}</td><td>${r.hasCard ? `<button class="btn btn-outline btn-sm" onclick="removeLoyalty('${r.customer.id}')">Zerar</button>` : "—"}</td></tr>`).join("")}
-        </tbody></table>
-      ` : `<p class="center-msg">Nenhum cliente cadastrado.</p>`}
+        <div style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>E-mail</th>
+                <th>Telefone</th>
+                <th>Pontos</th>
+                <th>Pedidos concluídos</th>
+                <th>Resgates</th>
+                <th></th>
+              </tr>
+            </thead>
+
+            <tbody>
+              ${rows.map(r => `
+                <tr>
+                  <td><strong>${r.customer.full_name}</strong></td>
+
+                  <td>
+                    ${r.customer.email || "—"}
+                  </td>
+
+                  <td>
+                    ${r.customer.phone || "—"}
+                  </td>
+
+                  <td>
+                    <strong style="font-size:18px">
+                      ${r.points}
+                    </strong>
+                    <small> pontos</small>
+                  </td>
+
+                  <td>
+                    ${r.completed}
+                  </td>
+
+                  <td>
+                    ${r.claimed}
+                  </td>
+
+                  <td>
+                    ${r.hasCard ? `
+                      <button
+                        class="btn btn-outline btn-sm"
+                        onclick="resetLoyaltyPoints('${r.customer.id}')"
+                      >
+                        Zerar pontos
+                      </button>
+                    ` : "—"}
+                  </td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : `
+        <p class="center-msg">
+          Nenhum cliente cadastrado.
+        </p>
+      `}
     </div>
   `;
-}
-async function removeLoyalty(customerId) {
-  if (!confirm("Zerar os pontos de fidelidade desse cliente?")) return;
-  await sb.from("loyalty_cards").update({ completed_orders: 0 }).eq("customer_id", customerId);
-  await loadLoyalty(document.getElementById("adminMain"));
 }
 
-/* ---------------- MIMOS ---------------- */
-async function loadRewards(main) {
-  const { data: rewards } = await sb.from("rewards").select("*");
-  admin.data.rewards = rewards || [];
-  renderRewardsTable(main);
-}
-function renderRewardsTable(main) {
-  const rewards = admin.data.rewards;
-  main.innerHTML = `
-    <div class="admin-topbar"><h1>Mimos</h1><button class="btn btn-pink" onclick="openRewardForm()">+ Novo mimo</button></div>
-    <div id="rewardFormArea"></div>
-    <div class="admin-card">
-      ${rewards.length ? `
-        <table><thead><tr><th></th><th>Nome</th><th>Pontos necessários</th><th>Ativo</th><th></th></tr></thead><tbody>
-          ${rewards.map(r => `<tr><td>${r.image_url ? `<img class="img-thumb" src="${r.image_url}" onerror="this.style.display='none'">` : ""}</td><td>${r.name}</td><td>${r.points_required}</td><td>${r.active ? "Sim" : "Não"}</td><td><button class="btn btn-outline btn-sm" onclick="openRewardForm('${r.id}')">Editar</button><button class="btn btn-danger btn-sm" onclick="deleteReward('${r.id}')">Excluir</button></td></tr>`).join("")}
-        </tbody></table>
-      ` : `<p class="center-msg">Nenhum mimo cadastrado.</p>`}
-    </div>
-  `;
-}
-function openRewardForm(id) {
-  const r = id ? admin.data.rewards.find(r => r.id === id) : null;
-  document.getElementById("rewardFormArea").innerHTML = `
-    <div class="admin-card">
-      <h2>${r ? "Editar mimo" : "Novo mimo"}</h2>
-      <div class="form-grid">
-        <label>Nome<input id="rfName" value="${r ? r.name : ""}"></label>
-        <label>Pontos necessários<input id="rfPoints" type="number" value="${r ? r.points_required : 10}"></label>
-      </div>
-      <label style="display:block;margin-top:10px">Descrição<textarea id="rfDesc" rows="2">${r ? r.description || "" : ""}</textarea></label>
-      <label style="display:block;margin-top:10px">URL da foto<input id="rfImage" value="${r ? r.image_url || "" : ""}"></label>
-      <label style="display:flex;flex-direction:row;align-items:center;gap:8px;margin-top:10px">
-        <input type="checkbox" id="rfActive" ${!r || r.active ? "checked" : ""} style="width:auto"> Ativo
-      </label>
-      <div style="margin-top:14px;display:flex;gap:10px">
-        <button class="btn btn-pink" onclick="saveReward(${r ? `'${r.id}'` : "null"})">Salvar</button>
-        <button class="btn btn-outline" onclick="document.getElementById('rewardFormArea').innerHTML=''">Cancelar</button>
-      </div>
-    </div>
-  `;
-}
-async function saveReward(id) {
-  const payload = {
-    name: document.getElementById("rfName").value.trim(),
-    points_required: parseInt(document.getElementById("rfPoints").value) || 10,
-    description: document.getElementById("rfDesc").value.trim(),
-    image_url: document.getElementById("rfImage").value.trim(),
-    active: document.getElementById("rfActive").checked,
-  };
-  if (id) await sb.from("rewards").update(payload).eq("id", id);
-  else await sb.from("rewards").insert(payload);
-  document.getElementById("rewardFormArea").innerHTML = "";
-  await loadRewards(document.getElementById("adminMain"));
-}
-async function deleteReward(id) {
-  if (!confirm("Excluir este mimo?")) return;
-  await sb.from("rewards").delete().eq("id", id);
-  admin.data.rewards = admin.data.rewards.filter(r => r.id !== id);
-  renderRewardsTable(document.getElementById("adminMain"));
+async function resetLoyaltyPoints(customerId) {
+  if (!confirm(
+    "Tem certeza que deseja zerar os pontos desse cliente?"
+  )) return;
+
+  const { error } = await sb
+    .from("loyalty_cards")
+    .update({
+      points: 0
+    })
+    .eq("customer_id", customerId);
+
+  if (error) {
+    console.error(error);
+    alert("Não foi possível zerar os pontos.");
+    return;
+  }
+
+  await loadLoyalty(
+    document.getElementById("adminMain")
+  );
 }
