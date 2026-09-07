@@ -279,7 +279,12 @@ function renderDashboard() {
         <p class="small-line">${c ? c.email : ""}</p>
       </div>
       <div class="cart-summary center-text">
-        <p class="cart-section-title">Clube Fidelidade</p>
+        <div class="card-head" style="justify-content:center">
+          <span class="card-icon gold">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 8l4 3 5-6 5 6 4-3-2 10H5L3 8z" stroke="#C98A1E" stroke-width="1.8" stroke-linejoin="round"/></svg>
+          </span>
+          <p class="cart-section-title">Clube Fidelidade</p>
+        </div>
         <div style="font-size:42px;font-weight:800;color:var(--pink)">${points}</div>
         <div style="font-weight:700">pontos</div>
         <button class="btn btn-ghost" onclick="go('loyalty')">Ver Clube Fidelidade</button>

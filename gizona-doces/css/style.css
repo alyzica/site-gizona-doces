@@ -74,6 +74,7 @@ input,select,textarea{font-family:var(--font-body);}
 .cat-emoji svg{width:30px;height:30px;}
 .cat-info strong{display:block;font-family:var(--font-display);font-weight:600;font-size:18px;color:var(--ink);}
 .cat-info small{color:var(--muted);font-size:12.5px;}
+.cart-section-title{font-family:var(--font-display);font-weight:700;font-size:19px;color:var(--ink);margin:0;}
 
 /* Box list */
 .box-list{display:flex;flex-direction:column;gap:14px;}
@@ -138,7 +139,15 @@ input,select,textarea{font-family:var(--font-body);}
 .info-card p{margin:5px 0;}
 
 /* Carrinho */
-.cart-summary,.cart-form-block{background:#fff;border-radius:var(--radius-md);padding:18px;border:1px solid var(--border);display:flex;flex-direction:column;gap:7px;}
+.cart-summary,.cart-form-block{background:#fff;border-radius:24px;padding:20px 22px;border:none;box-shadow:0 10px 28px -14px rgba(224,72,124,.28);display:flex;flex-direction:column;gap:8px;}
+.card-head{display:flex;align-items:center;gap:10px;margin-bottom:2px;}
+.card-icon{width:34px;height:34px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.card-icon.gold{background:#FBEBCF;}
+.card-icon.pink{background:var(--pink-soft);}
+.card-icon svg{width:19px;height:19px;}
+.status-pill{display:inline-block;padding:4px 12px;border-radius:999px;font-size:11.5px;font-weight:700;}
+.status-pill.pending{background:#FDECD2;color:#B9720B;}
+.status-pill.ok{background:#DFF3E4;color:#2E7D46;}
 .cart-section-title{font-family:var(--font-display);font-weight:600;font-size:16px;color:var(--ink);margin:0 0 4px;}
 .cart-line{display:flex;justify-content:space-between;font-size:13.5px;color:var(--muted);padding:2px 0;}
 .cart-line.total{border-top:1px solid var(--border);margin-top:6px;padding-top:9px;font-weight:700;color:var(--ink);}
