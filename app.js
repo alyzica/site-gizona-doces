@@ -279,16 +279,27 @@ function renderDashboard() {
         <p class="small-line">${c ? c.email : ""}</p>
       </div>
       <div class="cart-summary center-text">
-        <p class="cart-section-title">Clube Fidelidade</p>
+        <div class="card-head" style="justify-content:center">
+          <span class="card-icon gold">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 8l4 3 5-6 5 6 4-3-2 10H5L3 8z" stroke="#C98A1E" stroke-width="1.8" stroke-linejoin="round"/></svg>
+          </span>
+          <p class="cart-section-title">Clube Fidelidade</p>
+        </div>
         <div style="font-size:42px;font-weight:800;color:var(--pink)">${points}</div>
         <div style="font-weight:700">pontos</div>
         <button class="btn btn-ghost" onclick="go('loyalty')">Ver Clube Fidelidade</button>
       </div>
       <button class="btn btn-primary btn-block btn-lg" onclick="go('guide')">Fazer uma encomenda</button>
       <div class="dash-links">
-        <button class="btn btn-outline-pill" onclick="go('profile')">Meu Perfil</button>
-        <button class="btn btn-outline-pill" onclick="go('orders')">Meus Pedidos</button>
-        <button class="btn btn-outline-pill" onclick="go('loyalty')">Fidelidade</button>
+        <button class="btn btn-outline-pill" onclick="go('profile')">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" style="vertical-align:-3px;margin-right:5px"><path d="M12 15a5 5 0 100-10 5 5 0 000 10zM4 21a8 8 0 0116 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Meu Perfil
+        </button>
+        <button class="btn btn-outline-pill" onclick="go('orders')">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" style="vertical-align:-3px;margin-right:5px"><path d="M4 8h16l-1.5 11a2 2 0 01-2 1.8H7.5a2 2 0 01-2-1.8L4 8z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 8V6a4 4 0 018 0v2" stroke="currentColor" stroke-width="1.8"/></svg>Meus Pedidos
+        </button>
+        <button class="btn btn-outline-pill" onclick="go('loyalty')">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" style="vertical-align:-3px;margin-right:5px"><path d="M3 8l4 3 5-6 5 6 4-3-2 10H5L3 8z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>Fidelidade
+        </button>
       </div>
       <button class="btn btn-ghost btn-block" onclick="handleLogout()">Sair da conta</button>
     </section>
