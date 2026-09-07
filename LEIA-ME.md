@@ -72,3 +72,4 @@ seu, sem depender de plataforma fechada. Quando quiser seguir pra essa etapa,
 - Fotos reais dos sabores (ainda não temos as fotos)
 - Upload de imagem de referência na personalização — por ora, a cliente pode
   mandar a foto de referência direto no WhatsApp depois de enviar o pedido
+ 
