@@ -270,8 +270,7 @@ function syncOrderCustomerFromProfile() {
 /* ---------------- DASHBOARD (cliente logado) ---------------- */
 function renderDashboard() {
   const c = auth.customer;
-  const stamps = (state.loyaltyCard?.completed_orders || 0) % 10;
-  const completed = state.loyaltyCard?.completed_orders || 0;
+  const points = Number(state.loyaltyCard?.points || 0);
   app.innerHTML = `
     <section class="screen">
       <div class="screen-head pink"><h2>Gizona Doces</h2><p>Olá, ${c ? c.full_name.split(" ")[0] : ""}!</p></div>
@@ -281,14 +280,9 @@ function renderDashboard() {
       </div>
       <div class="cart-summary center-text">
         <p class="cart-section-title">Clube Fidelidade</p>
-        <div class="stamp-grid">
-          ${Array.from({ length: 10 }, (_, i) => `<span class="stamp ${i < stamps ? "on" : ""}">${i < stamps ? "✓" : i + 1}</span>`).join("")}
-        </div>
-        <p class="stamp-count">${completed} pedido${completed !== 1 ? "s" : ""} concluído${completed !== 1 ? "s" : ""}</p>
-        ${completed === 0
-          ? `<p class="hint center">Faça seu primeiro pedido pra começar a acumular pontos!</p>`
-          : `<button class="btn btn-ghost" onclick="go('loyalty')">Ver Clube Fidelidade</button>`
-        }
+        <div style="font-size:42px;font-weight:800;color:var(--pink)">${points}</div>
+        <div style="font-weight:700">pontos</div>
+        <button class="btn btn-ghost" onclick="go('loyalty')">Ver Clube Fidelidade</button>
       </div>
       <button class="btn btn-primary btn-block btn-lg" onclick="go('guide')">Fazer uma encomenda</button>
       <div class="dash-links">
@@ -411,45 +405,7 @@ async function renderOrdersHistory() {
 }
 const STATUS_LABEL = { pending: "Pendente", confirmed: "Confirmado", production: "Em Produção", completed: "Concluído", delivered: "Entregue", cancelled: "Cancelado" };
 
-/* ---------------- CLUBE FIDELIDADE (cliente) ---------------- */
-function renderLoyaltyClub() {
-  const completed = state.loyaltyCard?.completed_orders || 0;
-  const stamps = completed % 10;
-  app.innerHTML = `
-    <section class="screen">
-      <div class="screen-head pink"><h2>Clube Fidelidade</h2></div>
-      <div class="cart-summary center-text">
-        <div class="stamp-grid">
-          ${Array.from({ length: 10 }, (_, i) => `<span class="stamp ${i < stamps ? "on" : ""}">${i < stamps ? "✓" : i + 1}</span>`).join("")}
-        </div>
-        <p class="stamp-count">${completed} pedido${completed !== 1 ? "s" : ""} concluído${completed !== 1 ? "s" : ""}</p>
-      </div>
-      <p class="cart-section-title" style="margin-top:6px">Mimos disponíveis</p>
-      ${state.rewardsList && state.rewardsList.length ? state.rewardsList.map(r => `
-        <div class="cart-summary reward-row">
-          ${r.image_url ? `<img class="reward-thumb" src="${r.image_url}" onerror="this.remove()">` : ""}
-          <div style="flex:1">
-            <p class="cart-section-title" style="margin:0">${r.name}</p>
-            <p class="small-line">${r.description || ""}</p>
-            <p class="small-line"><strong>${r.points_required} pontos</strong></p>
-          </div>
-          <button class="btn btn-small btn-primary" ${completed >= r.points_required ? "" : "disabled"} onclick="redeemReward('${r.id}')">Resgatar</button>
-        </div>
-      `).join("") : `<p class="hint center">Nenhum mimo disponível no momento.</p>`}
-      ${navButtons({ back: "dashboard" })}
-    </section>
-  `;
-}
-async function redeemReward(rewardId) {
-  const reward = state.rewardsList.find(r => r.id === rewardId);
-  if (!reward || !state.loyaltyCard) return;
-  const msg = `Olá! Gostaria de resgatar meu mimo disponível no programa fidelidade: "${reward.name}".`;
-  window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank");
-  const newCompleted = Math.max(0, state.loyaltyCard.completed_orders - reward.points_required);
-  await sb.from("loyalty_cards").update({ completed_orders: newCompleted, rewards_claimed: (state.loyaltyCard.rewards_claimed || 0) + 1 }).eq("customer_id", auth.customer.id);
-  await loadLoyaltyData();
-  render();
-}
+/* Clube Fidelidade (tela + resgate) fica em js/loyalty-points.js — sistema por pontos. */
 
 /* ---------------- COVER ---------------- */
 function renderCover() {
@@ -496,14 +452,26 @@ function renderCategory() {
       </div>
       <div class="cat-choices">
         <button class="cat-card" onclick="selectCategory('brigadeiro')">
-          <span class="cat-emoji">🍬</span>
+          <span class="cat-emoji">
+            <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M13 19l-6.5-4.5v19L13 29" stroke="var(--pink)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M35 19l6.5-4.5v19L35 29" stroke="var(--pink)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <rect x="13" y="15" width="22" height="18" rx="9" stroke="var(--pink)" stroke-width="2.5"/>
+            </svg>
+          </span>
           <span class="cat-info">
             <strong>Brigadeiro Gourmet</strong>
-            <small>18 a 20g cada - caixas com 25, 50 ou 100 unidades</small>
+            <small>18 a 20g cada - caixas com 50 ou 100 unidades</small>
           </span>
         </button>
         <button class="cat-card" onclick="selectCategory('geladinho')">
-          <span class="cat-emoji">🍦</span>
+          <span class="cat-emoji">
+            <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M15 21c0-6.6 4-11 9-11s9 4.4 9 11" stroke="var(--pink)" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M15 21h18l-6.6 17a3 3 0 01-4.8 0L15 21z" stroke="var(--pink)" stroke-width="2.5" stroke-linejoin="round"/>
+              <path d="M15 21h18" stroke="var(--pink)" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </span>
           <span class="cat-info">
             <strong>Geladinho Gourmet</strong>
             <small>Tamanho festa 8cm - mín. 30 unidades</small>
@@ -665,7 +633,7 @@ function renderGeladinhoInfo() {
       <div class="info-card">
         <p><strong>Caixa de isopor</strong></p>
         <p>A caixa de isopor personalizada é <strong>opcional</strong>. Você poderá adicioná-la no carrinho.</p>
-        <p>Ela ajuda na conservação e no transporte, e a arte é gratuita e personalizada conforme o tema (até 3 alterações sem custo).</p>
+        <p>Ela ajuda na conservação e no transporte, e a arte é gratuita e personalizada conforme o tema (até 3 alterações sem custo). O valor é combinado diretamente pelo WhatsApp.</p>
       </div>
       ${navButtons({ back: "category", next: "geladinho-flavors", nextLabel: "Ver sabores" })}
     </section>
@@ -735,11 +703,6 @@ function changeGeladinho(id, direction) {
 }
 
 /* ---------------- CARRINHO ---------------- */
-function isoporBoxPrice() {
-  const totalGela = Object.values(state.geladinho).reduce((s, q) => s + q, 0);
-  return totalGela * ISOPOR_BOX_PRICE_PER_UNIT;
-}
-
 function renderCart() {
   const brigItems = Object.keys(state.flavors).length
     ? Object.entries(state.flavors).map(([id, qty]) => ({ ...BRIGADEIRO_PRODUCTS.find(p => p.id === id), qty }))
@@ -752,8 +715,8 @@ function renderCart() {
     ? state.box.boxConfig.fixedPrice
     : brigItems.reduce((s, i) => s + i.price * i.qty, 0);
   const gelaSubtotal = gelaItems.reduce((s, i) => s + i.price * i.qty, 0);
-  const boxPrice = (gelaItems.length && state.isoporBox) ? isoporBoxPrice() : 0;
-  const total = brigSubtotal + gelaSubtotal + boxPrice;
+  // A caixa de isopor não entra no valor estimado: o preço é combinado direto pelo WhatsApp.
+  const total = brigSubtotal + gelaSubtotal;
   const c = auth.customer
     ? { ...state.customer, name: auth.customer.full_name || state.customer.name, phone: auth.customer.phone || state.customer.phone }
     : state.customer;
@@ -809,9 +772,9 @@ function renderCart() {
         <div class="cart-summary">
           <label class="isopor-toggle">
             <input type="checkbox" ${state.isoporBox ? "checked" : ""} onchange="toggleIsoporBox(this.checked)">
-            <span>Adicionar caixa de isopor personalizada ${boxPrice || state.isoporBox ? `— <strong>${fmt(isoporBoxPrice())}</strong>` : ""}</span>
+            <span>Adicionar caixa de isopor personalizada</span>
           </label>
-          <p class="hint">O cliente pode optar por adicionar uma caixa de isopor personalizada, que garante maior conservação dos geladinhos, segurança no transporte e uma apresentação ainda mais especial. A arte é gratuita e personalizada conforme o tema do evento (até 3 alterações sem custo). A caixa é adquirida separadamente e o valor varia conforme a quantidade de geladinhos.</p>
+          <p class="hint">O cliente pode optar por adicionar uma caixa de isopor personalizada, que garante maior conservação dos geladinhos, segurança no transporte e uma apresentação ainda mais especial. A arte é gratuita e personalizada conforme o tema do evento (até 3 alterações sem custo). A caixa é adquirida separadamente e <strong>o valor é combinado diretamente pelo WhatsApp</strong>.</p>
         </div>
       ` : ""}
 
@@ -1003,9 +966,8 @@ async function submitOrder(total) {
       items.push({ product_name: p.name, category: "geladinho", quantity: qty, unit_price: p.price, subtotal: p.price * qty });
     });
     if (state.isoporBox) {
-      const boxPrice = isoporBoxPrice();
-      msg += `  Caixa de isopor personalizada: ${fmt(boxPrice)}\n`;
-      items.push({ product_name: "Caixa de isopor personalizada", category: "geladinho", quantity: 1, unit_price: boxPrice, subtotal: boxPrice });
+      msg += `  Caixa de isopor personalizada: valor a combinar\n`;
+      items.push({ product_name: "Caixa de isopor personalizada", category: "geladinho", quantity: 1, unit_price: null, subtotal: null });
     }
     msg += `\n`;
   }

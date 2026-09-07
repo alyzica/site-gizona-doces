@@ -8,17 +8,6 @@
 // Opções de caixa de Brigadeiro Gourmet
 const BRIGADEIRO_BOXES = [
   {
-    id: "25",
-    title: "Caixa especial com 25 unidades",
-    subtitle: "Escolha 1 ou 5 sabores",
-    fixedPrice: 80,
-    badge: "Valor fixo R$ 80,00",
-    flavorsOptions: [
-      { id: "1s", label: "1 sabor (25 unidades)", count: 1, qty: 25 },
-      { id: "5s", label: "5 sabores (5 de cada)", count: 5, qty: 5 },
-    ],
-  },
-  {
     id: "50",
     title: "Caixa com 50 unidades",
     subtitle: "Escolha 1 ou 2 sabores",
@@ -76,5 +65,3 @@ const GELADINHO_RULES = {
   smallStepLimit: 15, // até esse valor, o passo é de 1 em 1
 };
 
-// Caixa de isopor personalizada (só pro geladinho): preço varia por unidade encomendada.
-const ISOPOR_BOX_PRICE_PER_UNIT = 1.00;
