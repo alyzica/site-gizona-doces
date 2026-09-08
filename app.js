@@ -291,14 +291,14 @@ function renderDashboard() {
       </div>
       <button class="btn btn-primary btn-block btn-lg" onclick="go('guide')">Fazer uma encomenda</button>
       <div class="dash-links">
-        <button class="btn btn-outline-pill" onclick="go('profile')">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" style="vertical-align:-3px;margin-right:5px"><path d="M12 15a5 5 0 100-10 5 5 0 000 10zM4 21a8 8 0 0116 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Meu Perfil
+        <button class="btn btn-outline-pill" onclick="go('profile')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M12 15a5 5 0 100-10 5 5 0 000 10zM4 21a8 8 0 0116 0" stroke="#F06292" stroke-width="2" stroke-linecap="round"/></svg>Meu Perfil
         </button>
-        <button class="btn btn-outline-pill" onclick="go('orders')">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" style="vertical-align:-3px;margin-right:5px"><path d="M4 8h16l-1.5 11a2 2 0 01-2 1.8H7.5a2 2 0 01-2-1.8L4 8z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 8V6a4 4 0 018 0v2" stroke="currentColor" stroke-width="1.8"/></svg>Meus Pedidos
+        <button class="btn btn-outline-pill" onclick="go('orders')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M4 8h16l-1.5 11a2 2 0 01-2 1.8H7.5a2 2 0 01-2-1.8L4 8z" stroke="#F06292" stroke-width="2" stroke-linejoin="round"/><path d="M8 8V6a4 4 0 018 0v2" stroke="#F06292" stroke-width="2"/></svg>Meus Pedidos
         </button>
-        <button class="btn btn-outline-pill" onclick="go('loyalty')">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" style="vertical-align:-3px;margin-right:5px"><path d="M3 8l4 3 5-6 5 6 4-3-2 10H5L3 8z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>Fidelidade
+        <button class="btn btn-outline-pill" onclick="go('loyalty')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M3 8l4 3 5-6 5 6 4-3-2 10H5L3 8z" stroke="#F06292" stroke-width="2" stroke-linejoin="round"/></svg>Fidelidade
         </button>
       </div>
       <button class="btn btn-ghost btn-block" onclick="handleLogout()">Sair da conta</button>
