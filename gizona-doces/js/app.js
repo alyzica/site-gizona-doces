@@ -103,6 +103,7 @@ function renderWelcome() {
 function renderLogin() {
   app.innerHTML = `
     <section class="screen login-screen">
+      <img class="login-logo" src="images/brand/icon.png" alt="Gizona Doces">
       <div class="login-title">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#F06292" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <h2>Entrar na minha conta</h2>
