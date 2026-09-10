@@ -137,6 +137,15 @@ input,select,textarea{font-family:var(--font-body);}
 .art-form{display:flex;flex-direction:column;gap:11px;background:#fff;border-radius:var(--radius-md);padding:18px;border:1px solid var(--border);}
 .art-form label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:var(--muted);}
 .art-form input,.art-form textarea{border:1.5px solid var(--border);border-radius:12px;padding:10px 13px;font-size:14px;color:var(--ink);resize:none;}
+.login-screen{display:flex;flex-direction:column;gap:16px;}
+.login-title{display:flex;align-items:center;gap:10px;}
+.login-title h2{font-family:var(--font-display);font-weight:700;font-size:22px;color:var(--ink);margin:0;}
+.login-field{display:flex;flex-direction:column;gap:7px;}
+.login-field label{display:flex;align-items:center;gap:7px;font-weight:700;font-size:14px;color:var(--ink);}
+.login-field-head{display:flex;align-items:center;justify-content:space-between;}
+.login-forgot{background:none;border:none;color:var(--pink);font-weight:600;font-size:13px;padding:0;cursor:pointer;}
+.login-field input{border:1.5px solid var(--border);border-radius:14px;padding:13px 16px;font-size:14.5px;color:var(--ink);}
+.login-back{background:none;border:none;color:var(--muted);font-weight:600;font-size:14px;padding:6px;align-self:center;cursor:pointer;}
 .hint{color:var(--muted);font-size:13px;text-align:left;}
 .hint.center{text-align:center;}
 

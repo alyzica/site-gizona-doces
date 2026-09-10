@@ -102,16 +102,27 @@ function renderWelcome() {
 /* ---------------- LOGIN ---------------- */
 function renderLogin() {
   app.innerHTML = `
-    <section class="screen">
-      <div class="screen-head pink"><h2>Entrar</h2><p>Acesse sua conta</p></div>
-      ${state.formError ? `<div class="form-error">${state.formError}</div>` : ""}
-      <div class="art-form">
-        <label>E-mail<input type="email" id="loginEmail" placeholder="seu@email.com"></label>
-        <label>Senha<input type="password" id="loginPassword" placeholder="••••••••"></label>
+    <section class="screen login-screen">
+      <div class="login-title">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#F06292" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <h2>Entrar na minha conta</h2>
       </div>
-      <button class="btn btn-primary btn-block btn-lg" id="loginBtn" onclick="handleLogin()">Entrar</button>
-      <button class="btn btn-link-pink" onclick="go('forgot-password')">Esqueci minha senha</button>
-      ${navButtons({ back: "welcome" })}
+      ${state.formError ? `<div class="form-error">${state.formError}</div>` : ""}
+      <div class="login-field">
+        <label for="loginEmail"><svg viewBox="0 0 24 24" width="15" height="15" fill="none"><path d="M4 6h16v12H4V6z" stroke="#3D1A24" stroke-width="1.6"/><path d="M4 7l8 6 8-6" stroke="#3D1A24" stroke-width="1.6"/></svg>E-mail</label>
+        <input type="email" id="loginEmail" placeholder="seu@email.com">
+      </div>
+      <div class="login-field">
+        <div class="login-field-head">
+          <label for="loginPassword"><svg viewBox="0 0 24 24" width="15" height="15" fill="none"><rect x="5" y="10" width="14" height="10" rx="2" stroke="#3D1A24" stroke-width="1.6"/><path d="M8 10V7a4 4 0 018 0v3" stroke="#3D1A24" stroke-width="1.6"/></svg>Senha</label>
+          <button class="login-forgot" onclick="go('forgot-password')">Esqueci minha senha</button>
+        </div>
+        <input type="password" id="loginPassword" placeholder="••••••••">
+      </div>
+      <button class="btn btn-primary btn-block btn-lg" id="loginBtn" onclick="handleLogin()" style="display:inline-flex;align-items:center;justify-content:center;gap:8px">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M9 6l6 6-6 6" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>Entrar
+      </button>
+      <button class="login-back" onclick="go('welcome')">Voltar</button>
     </section>
   `;
 }
