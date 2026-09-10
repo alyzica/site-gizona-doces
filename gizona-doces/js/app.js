@@ -74,21 +74,25 @@ function renderWelcome() {
   app.innerHTML = `
     <section class="screen cover-screen">
       <img class="cover-logo" src="images/brand/logo.png" alt="Gizona Doces">
-      <p class="cover-sub">Olá! Seja bem-vindo(a) ao Guia de Encomendas. Como deseja continuar?</p>
+      <p class="cover-sub center-text" style="font-weight:700;font-size:19px">Seja bem-vindo ao Guia de Encomendas!</p>
 
       <div class="welcome-benefits">
         <p class="welcome-benefits-title">Benefícios do cadastro:</p>
         <ul>
-          <li>Acúmulo de pontos no programa fidelidade</li>
-          <li>Histórico de pedidos</li>
-          <li>Processo de compra mais rápido</li>
-          <li>Promoções e benefícios exclusivos</li>
+          <li><span class="welcome-benefit-icon"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 3l2.6 5.6L21 9.4l-4.5 4.3 1.1 6.3L12 17l-5.6 3 1.1-6.3L3 9.4l6.4-.8L12 3z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg></span>Acúmulo de pontos no programa fidelidade</li>
+          <li><span class="welcome-benefit-icon"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 21a9 9 0 100-18 9 9 0 000 18z" stroke="#fff" stroke-width="1.6"/><path d="M12 7v5l3.5 2" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg></span>Histórico de pedidos</li>
+          <li><span class="welcome-benefit-icon"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M13 3L4 14h6l-1 7 9-11h-6l1-7z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg></span>Processo de compra mais rápido</li>
+          <li><span class="welcome-benefit-icon"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20.6 12.3L12.7 4.4a2 2 0 00-1.4-.6H5a1 1 0 00-1 1v6.3c0 .5.2 1 .6 1.4l7.9 7.9a2 2 0 002.8 0l5.3-5.3a2 2 0 000-2.8z" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/><circle cx="8.5" cy="8.5" r="1.2" fill="#fff"/></svg></span>Promoções e benefícios exclusivos</li>
         </ul>
       </div>
 
       <div class="welcome-actions">
-        <button class="btn btn-white btn-block btn-lg" onclick="go('login')">Já tenho cadastro</button>
-        <button class="btn btn-outline-white btn-block btn-lg" onclick="go('register')">Criar meu cadastro</button>
+        <button class="btn btn-white btn-block btn-lg" onclick="go('login')" style="display:inline-flex;align-items:center;justify-content:center;gap:8px">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#F06292" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Já tenho cadastro
+        </button>
+        <button class="btn btn-outline-white btn-block btn-lg" onclick="go('register')" style="display:inline-flex;align-items:center;justify-content:center;gap:8px">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M9 12a4 4 0 100-8 4 4 0 000 8zM3 21a6 6 0 0112 0M18 8v6M15 11h6" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>Criar meu cadastro
+        </button>
         <button class="btn btn-link-white" onclick="go('guest-warning')">Continuar sem cadastro</button>
       </div>
     </section>
@@ -247,12 +251,19 @@ async function handleRegister() {
 /* ---------------- CONTINUAR SEM CADASTRO (aviso) ---------------- */
 function renderGuestWarning() {
   app.innerHTML = `
-    <section class="screen">
-      <div class="screen-head pink"><h2>Atenção</h2></div>
-      <div class="callout">Ao continuar sem cadastro, suas compras não serão contabilizadas no programa de fidelidade. Você não acumulará pontos nem benefícios referentes a este pedido.</div>
-      <button class="btn btn-primary btn-block btn-lg" onclick="continueAsGuest()">Continuar sem cadastro</button>
-      <button class="btn btn-ghost btn-block" onclick="go('register')">Fazer cadastro</button>
-      ${navButtons({ back: "welcome" })}
+    <section class="guest-warning-screen">
+      <div class="guest-warning-card">
+        <div class="guest-warning-head">
+          <span class="guest-warning-icon">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none"><path d="M12 3.5L2 20h20L12 3.5z" stroke="#C98A1E" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 10v4" stroke="#C98A1E" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="17" r="1" fill="#C98A1E"/></svg>
+          </span>
+          <h2>Atenção</h2>
+        </div>
+        <p class="guest-warning-text">Ao continuar sem cadastro, suas compras <strong>não serão contabilizadas</strong> no programa de fidelidade. Você não acumulará pontos nem benefícios referentes a este pedido.</p>
+        <p class="guest-warning-question">Deseja continuar mesmo assim?</p>
+        <button class="btn btn-primary btn-block btn-lg" onclick="continueAsGuest()">Continuar sem cadastro</button>
+        <button class="btn btn-ghost btn-block btn-lg" onclick="go('register')">Fazer cadastro</button>
+      </div>
     </section>
   `;
 }
@@ -291,9 +302,15 @@ function renderDashboard() {
       </div>
       <button class="btn btn-primary btn-block btn-lg" onclick="go('guide')">Fazer uma encomenda</button>
       <div class="dash-links">
-        <button class="btn btn-outline-pill" onclick="go('profile')">Meu Perfil</button>
-        <button class="btn btn-outline-pill" onclick="go('orders')">Meus Pedidos</button>
-        <button class="btn btn-outline-pill" onclick="go('loyalty')">Fidelidade</button>
+        <button class="btn btn-outline-pill" onclick="go('profile')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M12 15a5 5 0 100-10 5 5 0 000 10zM4 21a8 8 0 0116 0" stroke="#F06292" stroke-width="2" stroke-linecap="round"/></svg>Meu Perfil
+        </button>
+        <button class="btn btn-outline-pill" onclick="go('orders')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M4 8h16l-1.5 11a2 2 0 01-2 1.8H7.5a2 2 0 01-2-1.8L4 8z" stroke="#F06292" stroke-width="2" stroke-linejoin="round"/><path d="M8 8V6a4 4 0 018 0v2" stroke="#F06292" stroke-width="2"/></svg>Meus Pedidos
+        </button>
+        <button class="btn btn-outline-pill" onclick="go('loyalty')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M3 8l4 3 5-6 5 6 4-3-2 10H5L3 8z" stroke="#F06292" stroke-width="2" stroke-linejoin="round"/></svg>Fidelidade
+        </button>
       </div>
       <button class="btn btn-ghost btn-block" onclick="handleLogout()">Sair da conta</button>
     </section>
