@@ -182,11 +182,11 @@ function renderRegister() {
       ${state.formError ? `<div class="form-error">${state.formError}</div>` : ""}
       <div class="art-form">
         <label>Nome completo *<input type="text" id="regName"></label>
-        <label>Como prefere ser chamado(a)?
+        <label>Gênero
           <select id="regGender">
             <option value="">Prefiro não informar</option>
-            <option value="feminino">Bem-vinda (feminino)</option>
-            <option value="masculino">Bem-vindo (masculino)</option>
+            <option value="feminino">Feminino</option>
+            <option value="masculino">Masculino</option>
           </select>
         </label>
         <label>CPF *<input type="text" id="regCpf" placeholder="000.000.000-00" maxlength="14" oninput="maskCpf(this)"></label>
@@ -332,13 +332,13 @@ function renderDashboard() {
       </button>
       <div class="dash-links">
         <button class="btn btn-outline-pill" onclick="go('profile')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
-          <span style="font-size:14px">⚙️</span>Meu Perfil
+          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="#F06292" d="M12 2a1 1 0 011 1v1.2a7.9 7.9 0 012.1.9l.9-.9a1 1 0 011.4 1.4l-.9.9c.4.6.7 1.3.9 2.1H18a1 1 0 010 2h-1.2c-.2.8-.5 1.5-.9 2.1l.9.9a1 1 0 01-1.4 1.4l-.9-.9c-.6.4-1.3.7-2.1.9V18a1 1 0 01-2 0v-1.2a7.9 7.9 0 01-2.1-.9l-.9.9a1 1 0 01-1.4-1.4l.9-.9a7.9 7.9 0 01-.9-2.1H6a1 1 0 010-2h1.2c.2-.8.5-1.5.9-2.1l-.9-.9a1 1 0 011.4-1.4l.9.9c.6-.4 1.3-.7 2.1-.9V3a1 1 0 011-1zm0 6.5A3.5 3.5 0 1012 15a3.5 3.5 0 000-7z"/></svg>Meu Perfil
         </button>
         <button class="btn btn-outline-pill" onclick="go('loyalty')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
-          <span style="font-size:14px">👑</span>Fidelidade
+          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="#E8A33D" d="M3 8l3.5 2.6L12 4l5.5 6.6L21 8l-2 10H5L3 8zm2.6 12h12.8v1.6H5.6V20z"/></svg>Fidelidade
         </button>
         <button class="btn btn-outline-pill" onclick="go('orders')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
-          <span style="font-size:14px">🛒</span>Pedidos
+          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="#F06292" d="M6 8h12l1 13H5L6 8zm2-1a4 4 0 118 0v1H8V7z" fill-rule="evenodd" clip-rule="evenodd"/><path fill="none" stroke="#F06292" stroke-width="1.5" d="M8 7a4 4 0 018 0v1H8V7z"/></svg>Pedidos
         </button>
       </div>
       <button class="btn btn-ghost btn-block" onclick="handleLogout()">Sair da conta</button>
@@ -394,11 +394,11 @@ function renderProfile() {
       ${state.formError ? `<div class="form-error">${state.formError}</div>` : ""}
       <div class="art-form">
         <label>Nome completo<input type="text" id="prName" value="${c.full_name || ""}"></label>
-        <label>Como prefere ser chamado(a)?
+        <label>Gênero
           <select id="prGender">
             <option value="" ${!c.gender ? "selected" : ""}>Prefiro não informar</option>
-            <option value="feminino" ${c.gender === "feminino" ? "selected" : ""}>Bem-vinda (feminino)</option>
-            <option value="masculino" ${c.gender === "masculino" ? "selected" : ""}>Bem-vindo (masculino)</option>
+            <option value="feminino" ${c.gender === "feminino" ? "selected" : ""}>Feminino</option>
+            <option value="masculino" ${c.gender === "masculino" ? "selected" : ""}>Masculino</option>
           </select>
         </label>
         <label>CPF (não editável)<input type="text" value="${(c.cpf || "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")}" disabled></label>
