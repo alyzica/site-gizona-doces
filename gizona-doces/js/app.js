@@ -182,6 +182,13 @@ function renderRegister() {
       ${state.formError ? `<div class="form-error">${state.formError}</div>` : ""}
       <div class="art-form">
         <label>Nome completo *<input type="text" id="regName"></label>
+        <label>Como prefere ser chamado(a)?
+          <select id="regGender">
+            <option value="">Prefiro não informar</option>
+            <option value="feminino">Bem-vinda (feminino)</option>
+            <option value="masculino">Bem-vindo (masculino)</option>
+          </select>
+        </label>
         <label>CPF *<input type="text" id="regCpf" placeholder="000.000.000-00" maxlength="14" oninput="maskCpf(this)"></label>
         <label>Telefone / WhatsApp *<input type="text" id="regPhone" placeholder="(19) 99999-9999" maxlength="15" oninput="maskPhone(this)"></label>
         <label>E-mail *<input type="email" id="regEmail"></label>
@@ -228,6 +235,7 @@ async function handleCepInput(el) {
 
 async function handleRegister() {
   const name = document.getElementById("regName").value.trim();
+  const gender = document.getElementById("regGender").value;
   const cpf = document.getElementById("regCpf").value.trim();
   const phone = document.getElementById("regPhone").value.trim();
   const email = document.getElementById("regEmail").value.trim();
@@ -246,7 +254,7 @@ async function handleRegister() {
   btn.disabled = true; btn.textContent = "Criando...";
   try {
     await auth_register({
-      name, cpf, phone, email, password, number, complement,
+      name, gender, cpf, phone, email, password, number, complement,
       cep: cep.replace(/\D/g, ""),
       street: regAddress.street, neighborhood: regAddress.neighborhood,
       city: regAddress.city, state: regAddress.state,
@@ -294,34 +302,43 @@ function syncOrderCustomerFromProfile() {
 function renderDashboard() {
   const c = auth.customer;
   const points = Number(state.loyaltyCard?.points || 0);
+  const greeting = c?.gender === "masculino" ? "Bem-vindo" : c?.gender === "feminino" ? "Bem-vinda" : "Olá";
   app.innerHTML = `
     <section class="screen">
-      <div class="screen-head pink"><h2>Gizona Doces</h2><p>Olá, ${c ? c.full_name.split(" ")[0] : ""}!</p></div>
-      <div class="cart-summary">
-        <p class="cart-section-title">${c ? c.full_name : ""}</p>
-        <p class="small-line">${c ? c.email : ""}</p>
-      </div>
-      <div class="cart-summary center-text">
-        <div class="card-head" style="justify-content:center">
-          <span class="card-icon gold">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 8l4 3 5-6 5 6 4-3-2 10H5L3 8z" stroke="#C98A1E" stroke-width="1.8" stroke-linejoin="round"/></svg>
-          </span>
-          <p class="cart-section-title">Clube Fidelidade</p>
+      <div class="screen-head pink"><h2>Gizona Doces</h2><p>${greeting}, ${c ? c.full_name.split(" ")[0] : ""}!</p></div>
+      <div class="cart-summary" style="display:flex;flex-direction:row;align-items:center;gap:12px">
+        <span class="card-icon pink" style="width:40px;height:40px;border-radius:50%">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M12 15a5 5 0 100-10 5 5 0 000 10zM4 21a8 8 0 0116 0" stroke="#F06292" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </span>
+        <div>
+          <p class="cart-section-title" style="font-family:var(--font-body);font-size:15px">${c ? c.full_name : ""}</p>
+          <p class="small-line">${c ? c.email : ""}</p>
         </div>
-        <div style="font-size:42px;font-weight:800;color:var(--pink)">${points}</div>
-        <div style="font-weight:700">pontos</div>
-        <button class="btn btn-ghost" onclick="go('loyalty')">Ver Clube Fidelidade</button>
       </div>
-      <button class="btn btn-primary btn-block btn-lg" onclick="go('guide')">Fazer uma encomenda</button>
+      <div class="cart-summary">
+        <div class="card-head">
+          <span style="font-size:18px">👑</span>
+          <p class="cart-section-title" style="font-family:var(--font-body);font-size:15px">Clube Fidelidade</p>
+        </div>
+        <div class="center-text" style="margin-top:4px">
+          <div style="font-size:42px;font-weight:800;color:var(--pink)">${points}</div>
+          <div style="font-weight:700;margin-bottom:10px">pontos</div>
+          <button class="btn btn-ghost" onclick="go('loyalty')">Ver Clube Fidelidade</button>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-block btn-lg" onclick="go('guide')" style="display:inline-flex;align-items:center;justify-content:center;gap:8px">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M6 8h12l-1 12H7L6 8z" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 8V6a3 3 0 016 0v2" stroke="#fff" stroke-width="1.8"/></svg>Fazer uma encomenda
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <div class="dash-links">
         <button class="btn btn-outline-pill" onclick="go('profile')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M12 15a5 5 0 100-10 5 5 0 000 10zM4 21a8 8 0 0116 0" stroke="#F06292" stroke-width="2" stroke-linecap="round"/></svg>Meu Perfil
-        </button>
-        <button class="btn btn-outline-pill" onclick="go('orders')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M4 8h16l-1.5 11a2 2 0 01-2 1.8H7.5a2 2 0 01-2-1.8L4 8z" stroke="#F06292" stroke-width="2" stroke-linejoin="round"/><path d="M8 8V6a4 4 0 018 0v2" stroke="#F06292" stroke-width="2"/></svg>Meus Pedidos
+          <span style="font-size:14px">⚙️</span>Meu Perfil
         </button>
         <button class="btn btn-outline-pill" onclick="go('loyalty')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M3 8l4 3 5-6 5 6 4-3-2 10H5L3 8z" stroke="#F06292" stroke-width="2" stroke-linejoin="round"/></svg>Fidelidade
+          <span style="font-size:14px">👑</span>Fidelidade
+        </button>
+        <button class="btn btn-outline-pill" onclick="go('orders')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
+          <span style="font-size:14px">🛒</span>Pedidos
         </button>
       </div>
       <button class="btn btn-ghost btn-block" onclick="handleLogout()">Sair da conta</button>
@@ -377,6 +394,13 @@ function renderProfile() {
       ${state.formError ? `<div class="form-error">${state.formError}</div>` : ""}
       <div class="art-form">
         <label>Nome completo<input type="text" id="prName" value="${c.full_name || ""}"></label>
+        <label>Como prefere ser chamado(a)?
+          <select id="prGender">
+            <option value="" ${!c.gender ? "selected" : ""}>Prefiro não informar</option>
+            <option value="feminino" ${c.gender === "feminino" ? "selected" : ""}>Bem-vinda (feminino)</option>
+            <option value="masculino" ${c.gender === "masculino" ? "selected" : ""}>Bem-vindo (masculino)</option>
+          </select>
+        </label>
         <label>CPF (não editável)<input type="text" value="${(c.cpf || "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")}" disabled></label>
         <label>Telefone / WhatsApp<input type="text" id="prPhone" value="${c.phone || ""}" oninput="maskPhone(this)"></label>
         <label>E-mail (não editável)<input type="email" value="${c.email || ""}" disabled></label>
@@ -399,6 +423,7 @@ async function handleProfileSave() {
   btn.disabled = true; btn.textContent = "Salvando...";
   const payload = {
     full_name: document.getElementById("prName").value.trim(),
+    gender: document.getElementById("prGender").value || null,
     phone: document.getElementById("prPhone").value.trim(),
     cep: document.getElementById("prCep").value.replace(/\D/g, ""),
     number: document.getElementById("prNumber").value.trim(),

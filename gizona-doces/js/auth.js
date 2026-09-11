@@ -29,7 +29,7 @@ async function auth_loadCustomer() {
 }
 
 /* Cadastro: cria o login e o perfil do cliente */
-async function auth_register({ name, cpf, phone, email, password, cep, street, number, complement, neighborhood, city, state }) {
+async function auth_register({ name, gender, cpf, phone, email, password, cep, street, number, complement, neighborhood, city, state }) {
   const cpfDigits = cpf.replace(/\D/g, "");
 
   // Verifica se o CPF já existe antes de criar a conta
@@ -50,6 +50,7 @@ async function auth_register({ name, cpf, phone, email, password, cep, street, n
   const { error: insertError } = await sb.from("customers").insert({
     id: userId,
     full_name: name,
+    gender: gender || null,
     cpf: cpfDigits,
     phone,
     email,
