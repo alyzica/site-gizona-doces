@@ -305,7 +305,10 @@ function renderDashboard() {
   const greeting = c?.gender === "masculino" ? "Bem-vindo" : c?.gender === "feminino" ? "Bem-vinda" : "Olá";
   app.innerHTML = `
     <section class="screen">
-      <div class="screen-head pink"><h2>Gizona Doces</h2><p>${greeting}, ${c ? c.full_name.split(" ")[0] : ""}!</p></div>
+      <div class="screen-head pink center-text">
+        <img src="images/brand/logo.png" alt="Gizona Doces" style="width:130px;margin:0 auto 8px;display:block">
+        <p>${greeting}, ${c ? c.full_name.split(" ")[0] : ""}!</p>
+      </div>
       <div class="cart-summary" style="display:flex;flex-direction:row;align-items:center;gap:12px">
         <span class="card-icon pink" style="width:40px;height:40px;border-radius:50%">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M12 15a5 5 0 100-10 5 5 0 000 10zM4 21a8 8 0 0116 0" stroke="#F06292" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -332,13 +335,13 @@ function renderDashboard() {
       </button>
       <div class="dash-links">
         <button class="btn btn-outline-pill" onclick="go('profile')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
-          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="#F06292" d="M12 2a1 1 0 011 1v1.2a7.9 7.9 0 012.1.9l.9-.9a1 1 0 011.4 1.4l-.9.9c.4.6.7 1.3.9 2.1H18a1 1 0 010 2h-1.2c-.2.8-.5 1.5-.9 2.1l.9.9a1 1 0 01-1.4 1.4l-.9-.9c-.6.4-1.3.7-2.1.9V18a1 1 0 01-2 0v-1.2a7.9 7.9 0 01-2.1-.9l-.9.9a1 1 0 01-1.4-1.4l.9-.9a7.9 7.9 0 01-.9-2.1H6a1 1 0 010-2h1.2c.2-.8.5-1.5.9-2.1l-.9-.9a1 1 0 011.4-1.4l.9.9c.6-.4 1.3-.7 2.1-.9V3a1 1 0 011-1zm0 6.5A3.5 3.5 0 1012 15a3.5 3.5 0 000-7z"/></svg>Meu Perfil
+          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="#F06292" fill-rule="evenodd" clip-rule="evenodd" d="M11.078 2.25c-.917 0-1.699.663-1.85 1.567l-.178 1.072c-.02.12-.115.26-.297.348a7.49 7.49 0 00-.985.57c-.167.114-.335.125-.45.082l-1.02-.382a1.875 1.875 0 00-2.282.819l-.922 1.597a1.875 1.875 0 00.432 2.385l.84.692c.095.078.17.23.154.43a7.6 7.6 0 000 1.139c.015.2-.059.352-.153.43l-.841.692a1.875 1.875 0 00-.432 2.385l.922 1.597c.5.868 1.573 1.225 2.282.818l1.019-.382c.115-.043.283-.031.45.082.312.214.641.405.985.57.182.088.277.228.297.35l.178 1.071c.151.904.933 1.567 1.85 1.567h1.844c.916 0 1.699-.663 1.85-1.567l.178-1.072c.02-.12.114-.26.297-.349.344-.165.673-.356.985-.57.167-.114.335-.125.45-.082l1.02.382c.709.407 1.781.05 2.28-.819l.923-1.597a1.875 1.875 0 00-.432-2.385l-.84-.692c-.095-.078-.17-.229-.154-.43a7.6 7.6 0 000-1.139c-.016-.2.059-.352.153-.43l.84-.692c.708-.582.891-1.59.433-2.385l-.922-1.597a1.875 1.875 0 00-2.282-.818l-1.02.382c-.114.043-.282.031-.449-.083a7.49 7.49 0 00-.985-.57c-.183-.087-.277-.227-.297-.348l-.179-1.072a1.875 1.875 0 00-1.85-1.567h-1.843zM12 15.75a3.75 3.75 0 100-7.5 3.75 3.75 0 000 7.5z"/></svg>Meu Perfil
         </button>
         <button class="btn btn-outline-pill" onclick="go('loyalty')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
-          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="#E8A33D" d="M3 8l3.5 2.6L12 4l5.5 6.6L21 8l-2 10H5L3 8zm2.6 12h12.8v1.6H5.6V20z"/></svg>Fidelidade
+          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="#E8A33D" d="M5 16L3 7l5.5 4L12 5l3.5 6L21 7l-2 9H5zm0 2h14v2H5v-2z"/></svg>Fidelidade
         </button>
         <button class="btn btn-outline-pill" onclick="go('orders')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
-          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="#F06292" d="M6 8h12l1 13H5L6 8zm2-1a4 4 0 118 0v1H8V7z" fill-rule="evenodd" clip-rule="evenodd"/><path fill="none" stroke="#F06292" stroke-width="1.5" d="M8 7a4 4 0 018 0v1H8V7z"/></svg>Pedidos
+          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="#F06292" fill-rule="evenodd" clip-rule="evenodd" d="M7.5 6v.75H5.513c-.96 0-1.764.724-1.865 1.679l-1.263 12A1.875 1.875 0 004.25 22.5h15.5a1.875 1.875 0 001.865-2.071l-1.263-12a1.875 1.875 0 00-1.865-1.679H16.5V6a4.5 4.5 0 10-9 0zM12 3a3 3 0 00-3 3v.75h6V6a3 3 0 00-3-3zm-3 8.25a3 3 0 106 0v-.75a.75.75 0 011.5 0v.75a4.5 4.5 0 11-9 0v-.75a.75.75 0 011.5 0v.75z"/></svg>Pedidos
         </button>
       </div>
       <button class="btn btn-ghost btn-block" onclick="handleLogout()">Sair da conta</button>
