@@ -92,6 +92,7 @@ function renderShell() {
           <button class="${admin.tab === 'dashboard' ? 'active' : ''}" onclick="setTab('dashboard')">Dashboard</button>
           <button class="${admin.tab === 'orders' ? 'active' : ''}" onclick="setTab('orders')">Pedidos</button>
           <button class="${admin.tab === 'products' ? 'active' : ''}" onclick="setTab('products')">Produtos</button>
+          <button class="${admin.tab === 'customers' ? 'active' : ''}" onclick="setTab('customers')">Clientes</button>
           <button class="${admin.tab === 'loyalty' ? 'active' : ''}" onclick="setTab('loyalty')">Fidelidade</button>
           <button class="${admin.tab === 'rewards' ? 'active' : ''}" onclick="setTab('rewards')">Mimos</button>
         </nav>
@@ -111,6 +112,7 @@ async function loadTab() {
     if (admin.tab === "dashboard") await loadDashboard(main);
     else if (admin.tab === "orders") await loadOrders(main);
     else if (admin.tab === "products") await loadProducts(main);
+    else if (admin.tab === "customers") await loadCustomers(main);
     else if (admin.tab === "loyalty") await loadLoyalty(main);
     else if (admin.tab === "rewards") await loadRewards(main);
   } catch (e) {
@@ -640,6 +642,160 @@ async function deleteProduct(id) {
   await sb.from("products").delete().eq("id", id);
   admin.data.products = admin.data.products.filter(p => p.id !== id);
   renderProductsTable(document.getElementById("adminMain"));
+}
+
+/* ---------------- CLIENTES ---------------- */
+
+async function loadCustomers(main) {
+  const [{ data: customers, error: cErr }, { data: cards, error: lErr }] = await Promise.all([
+    sb.from("customers").select("*").order("full_name", { ascending: true }),
+    sb.from("loyalty_cards").select("*"),
+  ]);
+  if (cErr) throw cErr;
+  if (lErr) throw lErr;
+  admin.data.allCustomers = customers || [];
+  admin.data.loyalty = cards || [];
+  renderCustomersTable(main);
+}
+
+function renderCustomersTable(main) {
+  const list = admin.data.allCustomers;
+  main.innerHTML = `
+    <div class="admin-topbar"><h1>Clientes</h1></div>
+    <div id="customerFormArea"></div>
+    <div class="admin-card">
+      ${list.length ? `
+        <table>
+          <thead><tr><th>Nome</th><th>E-mail</th><th>Telefone</th><th>Pontos</th><th></th></tr></thead>
+          <tbody>
+            ${list.map(c => {
+              const card = admin.data.loyalty.find(l => l.customer_id === c.id);
+              const points = card ? Number(card.points || 0) : 0;
+              return `
+                <tr>
+                  <td><strong>${c.full_name || "—"}</strong></td>
+                  <td>${c.email || "—"}</td>
+                  <td>${c.phone || "—"}</td>
+                  <td><strong>${points}</strong> <small>pontos</small></td>
+                  <td><button class="btn btn-outline btn-sm" onclick="openCustomerForm('${c.id}')">Gerenciar</button></td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Nenhum cliente cadastrado.</p>`}
+    </div>
+  `;
+}
+
+function openCustomerForm(id) {
+  const c = admin.data.allCustomers.find(c => c.id === id);
+  if (!c) return;
+  const card = admin.data.loyalty.find(l => l.customer_id === c.id);
+  const points = card ? Number(card.points || 0) : 0;
+  document.getElementById("customerFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>Gerenciar cliente</h2>
+      <div class="form-grid">
+        <label>Nome completo<input id="cfName" value="${c.full_name || ""}"></label>
+        <label>Gênero
+          <select id="cfGender">
+            <option value="" ${!c.gender ? "selected" : ""}>Prefiro não informar</option>
+            <option value="feminino" ${c.gender === "feminino" ? "selected" : ""}>Feminino</option>
+            <option value="masculino" ${c.gender === "masculino" ? "selected" : ""}>Masculino</option>
+          </select>
+        </label>
+        <label>E-mail (não editável aqui)<input value="${c.email || ""}" disabled></label>
+        <label>Telefone<input id="cfPhone" value="${c.phone || ""}"></label>
+        <label>CEP<input id="cfCep" value="${c.cep || ""}"></label>
+        <label>Rua<input id="cfStreet" value="${c.street || ""}"></label>
+        <label>Número<input id="cfNumber" value="${c.number || ""}"></label>
+        <label>Complemento<input id="cfComplement" value="${c.complement || ""}"></label>
+        <label>Bairro<input id="cfNeighborhood" value="${c.neighborhood || ""}"></label>
+        <label>Cidade<input id="cfCity" value="${c.city || ""}"></label>
+        <label>Estado<input id="cfState" value="${c.state || ""}" maxlength="2"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveCustomerProfile('${c.id}')">Salvar alterações</button>
+        <button class="btn btn-outline" onclick="document.getElementById('customerFormArea').innerHTML=''">Cancelar</button>
+      </div>
+
+      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--border)">
+        <strong>Pontos de fidelidade — saldo atual: ${points}</strong>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+          <input id="cfPointsDelta" type="number" placeholder="Quantidade" style="width:120px;border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;">
+          <button class="btn btn-pink btn-sm" onclick="adjustCustomerPoints('${c.id}', 1)">+ Adicionar</button>
+          <button class="btn btn-outline btn-sm" onclick="adjustCustomerPoints('${c.id}', -1)">− Remover</button>
+          <button class="btn btn-outline btn-sm" onclick="resetLoyaltyPoints('${c.id}')">Zerar pontos</button>
+        </div>
+      </div>
+
+      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--border)">
+        <strong>Senha de acesso</strong>
+        <div style="margin-top:8px;color:var(--muted);font-size:13px">
+          Por segurança, não é possível definir a senha diretamente por aqui. Você pode enviar um e-mail pro cliente com um link pra ele criar uma nova senha.
+        </div>
+        <button class="btn btn-outline btn-sm" style="margin-top:10px" onclick="sendCustomerPasswordReset('${c.email}')">Enviar link de redefinição de senha</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveCustomerProfile(id) {
+  const payload = {
+    full_name: document.getElementById("cfName").value.trim(),
+    gender: document.getElementById("cfGender").value || null,
+    phone: document.getElementById("cfPhone").value.trim(),
+    cep: document.getElementById("cfCep").value.trim(),
+    street: document.getElementById("cfStreet").value.trim(),
+    number: document.getElementById("cfNumber").value.trim(),
+    complement: document.getElementById("cfComplement").value.trim(),
+    neighborhood: document.getElementById("cfNeighborhood").value.trim(),
+    city: document.getElementById("cfCity").value.trim(),
+    state: document.getElementById("cfState").value.trim(),
+  };
+  const { error } = await sb.from("customers").update(payload).eq("id", id);
+  if (error) {
+    console.error(error);
+    alert("Não foi possível salvar as alterações.");
+    return;
+  }
+  alert("Dados do cliente atualizados.");
+  await loadCustomers(document.getElementById("adminMain"));
+}
+
+async function adjustCustomerPoints(customerId, sign) {
+  const raw = Number(document.getElementById("cfPointsDelta").value);
+  if (!raw || raw <= 0) {
+    alert("Informe uma quantidade de pontos maior que zero.");
+    return;
+  }
+  const card = admin.data.loyalty.find(l => l.customer_id === customerId);
+  const current = card ? Number(card.points || 0) : 0;
+  const next = Math.max(0, current + sign * raw);
+
+  if (card) {
+    const { error } = await sb.from("loyalty_cards").update({ points: next }).eq("customer_id", customerId);
+    if (error) { console.error(error); alert("Não foi possível atualizar os pontos."); return; }
+  } else {
+    const { error } = await sb.from("loyalty_cards").insert({ customer_id: customerId, points: next });
+    if (error) { console.error(error); alert("Não foi possível criar a carteira de pontos."); return; }
+  }
+  await loadCustomers(document.getElementById("adminMain"));
+  openCustomerForm(customerId);
+}
+
+async function sendCustomerPasswordReset(email) {
+  if (!email) { alert("Cliente sem e-mail cadastrado."); return; }
+  const { error } = await sb.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin + "/",
+  });
+  if (error) {
+    console.error(error);
+    alert("Não foi possível enviar o e-mail de redefinição.");
+    return;
+  }
+  alert("E-mail de redefinição de senha enviado para " + email + ".");
 }
 
 /* ---------------- FIDELIDADE ---------------- */

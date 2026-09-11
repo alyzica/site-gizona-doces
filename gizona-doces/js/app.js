@@ -320,7 +320,7 @@ function renderDashboard() {
       </div>
       <div class="cart-summary">
         <div class="card-head">
-          <span style="font-size:18px">👑</span>
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="#E8A33D" d="M5 16L3 7l5.5 4L12 5l3.5 6L21 7l-2 9H5zm0 2h14v2H5v-2z"/></svg>
           <p class="cart-section-title" style="font-family:var(--font-body);font-size:15px">Clube Fidelidade</p>
         </div>
         <div class="center-text" style="margin-top:4px">
