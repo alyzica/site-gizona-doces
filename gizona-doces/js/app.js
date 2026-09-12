@@ -536,9 +536,14 @@ function renderCategory() {
         <button class="cat-card" onclick="selectCategory('brigadeiro')">
           <span class="cat-emoji">
             <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M13 19l-6.5-4.5v19L13 29" stroke="var(--pink)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M35 19l6.5-4.5v19L35 29" stroke="var(--pink)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-              <rect x="13" y="15" width="22" height="18" rx="9" stroke="var(--pink)" stroke-width="2.5"/>
+              <circle cx="24" cy="26" r="11" stroke="var(--pink)" stroke-width="2.5"/>
+              <circle cx="19" cy="21" r="1.4" fill="var(--pink)"/>
+              <circle cx="27" cy="19" r="1.4" fill="var(--pink)"/>
+              <circle cx="30" cy="25" r="1.4" fill="var(--pink)"/>
+              <circle cx="22" cy="29" r="1.4" fill="var(--pink)"/>
+              <circle cx="17" cy="27" r="1.4" fill="var(--pink)"/>
+              <circle cx="26" cy="31" r="1.4" fill="var(--pink)"/>
+              <path d="M17 13h14" stroke="var(--pink)" stroke-width="2.5" stroke-linecap="round"/>
             </svg>
           </span>
           <span class="cat-info">
@@ -549,9 +554,9 @@ function renderCategory() {
         <button class="cat-card" onclick="selectCategory('geladinho')">
           <span class="cat-emoji">
             <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M15 21c0-6.6 4-11 9-11s9 4.4 9 11" stroke="var(--pink)" stroke-width="2.5" stroke-linecap="round"/>
-              <path d="M15 21h18l-6.6 17a3 3 0 01-4.8 0L15 21z" stroke="var(--pink)" stroke-width="2.5" stroke-linejoin="round"/>
-              <path d="M15 21h18" stroke="var(--pink)" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M17 10h14a2 2 0 012 2v13a9 9 0 01-18 0V12a2 2 0 012-2z" stroke="var(--pink)" stroke-width="2.5" stroke-linejoin="round"/>
+              <path d="M15 17h18" stroke="var(--pink)" stroke-width="2.5"/>
+              <path d="M24 34v6" stroke="var(--pink)" stroke-width="2.5" stroke-linecap="round"/>
             </svg>
           </span>
           <span class="cat-info">
