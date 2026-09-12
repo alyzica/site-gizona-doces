@@ -510,8 +510,9 @@ function renderGuide() {
 function renderCategory() {
   app.innerHTML = `
     <section class="screen">
-      <div class="screen-head pink">
-        <h2>O que você deseja pedir?</h2>
+      <div class="screen-head pink center-text">
+        <img src="images/brand/logo.png" alt="Gizona Doces" style="width:110px;margin:0 auto 10px;display:block">
+        <h2 style="font-size:24px">O que você deseja pedir?</h2>
       </div>
 
       <div class="order-tabs">
@@ -535,12 +536,11 @@ function renderCategory() {
       <div class="cat-choices">
         <button class="cat-card" onclick="selectCategory('brigadeiro')">
           <span class="cat-emoji">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 3c.132 .341 .43 1.286 1.117 1.99a3.11 3.11 0 0 0 2.501 .867a3.05 3.05 0 0 0 -.148 2.34c.35 1.036 1.235 1.65 1.827 1.943c-.487 .467 -1.126 1.24 -1.294 2.31c-.16 1.05 .213 1.926 .547 2.45c-.658 .118 -1.577 .418 -2.335 1.207c-.665 .69 -.955 1.522 -1.086 2.157c-.462 -.575 -1.19 -1.264 -2.203 -1.264c-1.014 0 -1.742 .69 -2.203 1.264c-.131 -.635 -.42 -1.467 -1.086 -2.157c-.758 -.79 -1.677 -1.089 -2.335 -1.207c.334 -.524 .706 -1.4 .547 -2.45c-.168 -1.07 -.807 -1.843 -1.294 -2.31c.592 -.292 1.477 -.907 1.827 -1.943a3.05 3.05 0 0 0 -.148 -2.34a3.11 3.11 0 0 0 2.501 -.866c.687 -.705 .985 -1.65 1.117 -1.991z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/>
-              <circle cx="12" cy="12" r="1" fill="var(--pink)"/>
-              <circle cx="9" cy="8.5" r="1" fill="var(--pink)"/>
-              <circle cx="15" cy="14" r="1" fill="var(--pink)"/>
-              <circle cx="9" cy="15" r="1" fill="var(--pink)"/>
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path fill="var(--pink)" d="M12 2a3 3 0 012.995 2.824L15 4.9v.05a4 4 0 012.999 3.774L18 8.9h1.5a1.5 1.5 0 011.493 1.356l.007.144-1.132 9.9a2 2 0 01-1.987 1.77l-.184-.005H6.303a2 2 0 01-1.981-1.767l-.017-.192-1.13-9.898a1.5 1.5 0 011.34-1.657l.15-.007h1.501a4 4 0 012.75-3.802l.25-.074.001-.174A3 3 0 0112 2z"/>
+              <circle cx="9.2" cy="9.6" r="0.85" fill="#fff"/>
+              <circle cx="12" cy="8.6" r="0.85" fill="#fff"/>
+              <circle cx="14.8" cy="9.6" r="0.85" fill="#fff"/>
             </svg>
           </span>
           <span class="cat-info">
@@ -550,8 +550,8 @@ function renderCategory() {
         </button>
         <button class="cat-card" onclick="selectCategory('geladinho')">
           <span class="cat-emoji">
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 3c2.5 0 4.5 2 4.5 4.5c0 .53 -.032 1.026 -.5 1.5l-3 3v9a1 1 0 01-2 0v-9l-3-3c-.478-.487-.5-.97-.5-1.5c0-2.5 2-4.5 4.5-4.5z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/>
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path fill="var(--pink)" d="M8 3a4 4 0 118 0v12.2a4 4 0 01-3.2 3.92c.13.24.2.5.2.78a1 1 0 01-2 0c0-.28.07-.54.2-.78A4 4 0 018 15.2V3z"/>
             </svg>
           </span>
           <span class="cat-info">
