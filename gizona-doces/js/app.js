@@ -535,15 +535,12 @@ function renderCategory() {
       <div class="cat-choices">
         <button class="cat-card" onclick="selectCategory('brigadeiro')">
           <span class="cat-emoji">
-            <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="24" cy="26" r="11" stroke="var(--pink)" stroke-width="2.5"/>
-              <circle cx="19" cy="21" r="1.4" fill="var(--pink)"/>
-              <circle cx="27" cy="19" r="1.4" fill="var(--pink)"/>
-              <circle cx="30" cy="25" r="1.4" fill="var(--pink)"/>
-              <circle cx="22" cy="29" r="1.4" fill="var(--pink)"/>
-              <circle cx="17" cy="27" r="1.4" fill="var(--pink)"/>
-              <circle cx="26" cy="31" r="1.4" fill="var(--pink)"/>
-              <path d="M17 13h14" stroke="var(--pink)" stroke-width="2.5" stroke-linecap="round"/>
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 3c.132 .341 .43 1.286 1.117 1.99a3.11 3.11 0 0 0 2.501 .867a3.05 3.05 0 0 0 -.148 2.34c.35 1.036 1.235 1.65 1.827 1.943c-.487 .467 -1.126 1.24 -1.294 2.31c-.16 1.05 .213 1.926 .547 2.45c-.658 .118 -1.577 .418 -2.335 1.207c-.665 .69 -.955 1.522 -1.086 2.157c-.462 -.575 -1.19 -1.264 -2.203 -1.264c-1.014 0 -1.742 .69 -2.203 1.264c-.131 -.635 -.42 -1.467 -1.086 -2.157c-.758 -.79 -1.677 -1.089 -2.335 -1.207c.334 -.524 .706 -1.4 .547 -2.45c-.168 -1.07 -.807 -1.843 -1.294 -2.31c.592 -.292 1.477 -.907 1.827 -1.943a3.05 3.05 0 0 0 -.148 -2.34a3.11 3.11 0 0 0 2.501 -.866c.687 -.705 .985 -1.65 1.117 -1.991z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/>
+              <circle cx="12" cy="12" r="1" fill="var(--pink)"/>
+              <circle cx="9" cy="8.5" r="1" fill="var(--pink)"/>
+              <circle cx="15" cy="14" r="1" fill="var(--pink)"/>
+              <circle cx="9" cy="15" r="1" fill="var(--pink)"/>
             </svg>
           </span>
           <span class="cat-info">
@@ -553,10 +550,8 @@ function renderCategory() {
         </button>
         <button class="cat-card" onclick="selectCategory('geladinho')">
           <span class="cat-emoji">
-            <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M17 10h14a2 2 0 012 2v13a9 9 0 01-18 0V12a2 2 0 012-2z" stroke="var(--pink)" stroke-width="2.5" stroke-linejoin="round"/>
-              <path d="M15 17h18" stroke="var(--pink)" stroke-width="2.5"/>
-              <path d="M24 34v6" stroke="var(--pink)" stroke-width="2.5" stroke-linecap="round"/>
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 3c2.5 0 4.5 2 4.5 4.5c0 .53 -.032 1.026 -.5 1.5l-3 3v9a1 1 0 01-2 0v-9l-3-3c-.478-.487-.5-.97-.5-1.5c0-2.5 2-4.5 4.5-4.5z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/>
             </svg>
           </span>
           <span class="cat-info">
