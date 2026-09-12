@@ -75,6 +75,12 @@ input,select,textarea{font-family:var(--font-body);}
 .address-block{text-align:center;font-size:13.5px;color:var(--muted);line-height:1.6;}
 
 /* Category */
+.order-tabs{display:flex;gap:8px;margin:16px 0;background:var(--pink-soft);border-radius:999px;padding:5px;}
+.order-tab{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;border:none;background:none;border-radius:999px;padding:11px 10px;font-family:var(--font-body);font-weight:700;font-size:13.5px;color:var(--pink-dark);cursor:pointer;transition:background .15s,color .15s;}
+.order-tab.active{background:var(--pink);color:#fff;box-shadow:var(--shadow);}
+.delivery-soon{background:#fff;border:1px solid var(--border);border-radius:var(--radius-md);padding:36px 24px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px;}
+.delivery-soon-title{font-family:var(--font-display);font-weight:700;font-size:20px;color:var(--ink);margin:4px 0 0;}
+.delivery-soon-text{font-family:var(--font-body);font-weight:400;color:var(--muted);font-size:13.5px;max-width:320px;margin:0;}
 .cat-choices{display:flex;flex-direction:column;gap:14px;}
 .cat-card{display:flex;align-items:center;gap:16px;background:#fff;border:2px solid var(--border);border-radius:24px;padding:20px;text-align:left;transition:border-color .15s, box-shadow .15s;}
 .cat-card:hover{border-color:var(--pink);box-shadow:var(--shadow);}

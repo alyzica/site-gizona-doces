@@ -21,6 +21,7 @@ const state = {
   rewardsList: [],
   isoporBox: false,
   suggestQty: {},
+  orderTab: "encomendas", // "encomendas" | "delivery"
 };
 
 const app = document.getElementById("app");
@@ -510,8 +511,27 @@ function renderCategory() {
   app.innerHTML = `
     <section class="screen">
       <div class="screen-head pink">
-        <h2>O que deseja encomendar?</h2>
+        <h2>O que você deseja pedir?</h2>
       </div>
+
+      <div class="order-tabs">
+        <button class="order-tab ${state.orderTab === "delivery" ? "active" : ""}" onclick="setOrderTab('delivery')">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M3 7h11v9H3V7z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M14 10h4l3 3v3h-7v-6z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="7" cy="18" r="1.6" stroke="currentColor" stroke-width="1.6"/><circle cx="17" cy="18" r="1.6" stroke="currentColor" stroke-width="1.6"/></svg>
+          Delivery
+        </button>
+        <button class="order-tab ${state.orderTab === "encomendas" ? "active" : ""}" onclick="setOrderTab('encomendas')">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><rect x="4" y="5" width="16" height="15" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M4 9h16M8 3v4M16 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          Encomendas
+        </button>
+      </div>
+
+      ${state.orderTab === "delivery" ? `
+        <div class="delivery-soon">
+          <svg viewBox="0 0 24 24" width="34" height="34" fill="none"><path d="M3 7h11v9H3V7z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 10h4l3 3v3h-7v-6z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/><circle cx="7" cy="18" r="1.6" stroke="var(--pink)" stroke-width="1.4"/><circle cx="17" cy="18" r="1.6" stroke="var(--pink)" stroke-width="1.4"/></svg>
+          <p class="delivery-soon-title">Delivery em breve</p>
+          <p class="delivery-soon-text">Estamos preparando essa novidade. Por enquanto, siga com as encomendas — combinamos tudo pelo WhatsApp.</p>
+        </div>
+      ` : `
       <div class="cat-choices">
         <button class="cat-card" onclick="selectCategory('brigadeiro')">
           <span class="cat-emoji">
@@ -540,9 +560,14 @@ function renderCategory() {
           </span>
         </button>
       </div>
+      `}
       ${navButtons({ back: "guide" })}
     </section>
   `;
+}
+function setOrderTab(tab) {
+  state.orderTab = tab;
+  renderCategory();
 }
 function selectCategory(cat) {
   state.category = cat;
