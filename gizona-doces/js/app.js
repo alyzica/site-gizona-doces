@@ -53,7 +53,6 @@ function render() {
     orders: renderOrdersHistory,
     loyalty: renderLoyaltyClub,
     cover: renderCover,
-    guide: renderGuide,
     category: renderCategory,
     "brigadeiro-box": renderBrigadeiroBox,
     "brigadeiro-flavors": renderBrigadeiroFlavors,
@@ -290,7 +289,7 @@ function renderGuestWarning() {
 }
 function continueAsGuest() {
   state.guest = true;
-  go("guide");
+  go("category");
 }
 
 function syncOrderCustomerFromProfile() {
@@ -330,7 +329,7 @@ function renderDashboard() {
           <button class="btn btn-ghost" onclick="go('loyalty')">Ver Clube Fidelidade</button>
         </div>
       </div>
-      <button class="btn btn-primary btn-block btn-lg" onclick="go('guide')" style="display:inline-flex;align-items:center;justify-content:center;gap:8px">
+      <button class="btn btn-primary btn-block btn-lg" onclick="go('category')" style="display:inline-flex;align-items:center;justify-content:center;gap:8px">
         <svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M6 8h12l-1 12H7L6 8z" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 8V6a3 3 0 016 0v2" stroke="#fff" stroke-width="1.8"/></svg>Fazer uma encomenda
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
@@ -476,36 +475,13 @@ function renderCover() {
     <section class="screen cover-screen">
       <img class="cover-logo" src="images/brand/logo.png" alt="Gizona Doces">
       <p class="cover-sub">Brigadeiro Gourmet e Geladinho Gourmet para festas — feitos à mão, encomenda a encomenda.</p>
-      <button class="btn btn-primary btn-lg" onclick="go('guide')">Fazer minha encomenda</button>
+      <button class="btn btn-primary btn-lg" onclick="go('category')">Fazer minha encomenda</button>
       <p class="cover-insta">@gizonadoces</p>
     </section>
   `;
 }
 
 /* ---------------- GUIDE ---------------- */
-function renderGuide() {
-  const items = [
-    "Os pedidos devem ser feitos com no mínimo 5 dias de antecedência, sujeitos à disponibilidade da agenda.",
-    "Para confirmar a encomenda, é necessário pagar 50% do valor total no ato do pedido. Os 50% restantes até 1 dia antes da retirada.",
-    "A encomenda é entregue somente após a confirmação do pagamento integral.",
-    "Aceitamos Pix e cartão de crédito, parcelado em até 2x com acréscimo da taxa.",
-  ];
-  app.innerHTML = `
-    <section class="screen">
-      <div class="screen-head">
-        <img class="brand-seal" src="images/brand/icon.png" alt="Gizona Doces">
-        <h2>Guia para encomendas</h2>
-      </div>
-      <ul class="guide-list">
-        ${items.map(i => `<li>${i}</li>`).join("")}
-      </ul>
-      <div class="callout">Os valores do cardápio são por unidade e não mudam conforme a quantidade — são produtos artesanais.</div>
-      <p class="address-block"><strong>Endereço para retirada:</strong><br>${ADDRESS}</p>
-      ${navButtons({ back: state.guest ? "welcome" : "dashboard", next: "category", nextLabel: "Ver cardápio" })}
-    </section>
-  `;
-}
-
 /* ---------------- CATEGORY ---------------- */
 function renderCategory() {
   app.innerHTML = `
@@ -536,12 +512,7 @@ function renderCategory() {
       <div class="cat-choices">
         <button class="cat-card" onclick="selectCategory('brigadeiro')">
           <span class="cat-emoji">
-            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path fill="var(--pink)" d="M12 2a3 3 0 012.995 2.824L15 4.9v.05a4 4 0 012.999 3.774L18 8.9h1.5a1.5 1.5 0 011.493 1.356l.007.144-1.132 9.9a2 2 0 01-1.987 1.77l-.184-.005H6.303a2 2 0 01-1.981-1.767l-.017-.192-1.13-9.898a1.5 1.5 0 011.34-1.657l.15-.007h1.501a4 4 0 012.75-3.802l.25-.074.001-.174A3 3 0 0112 2z"/>
-              <circle cx="9.2" cy="9.6" r="0.85" fill="#fff"/>
-              <circle cx="12" cy="8.6" r="0.85" fill="#fff"/>
-              <circle cx="14.8" cy="9.6" r="0.85" fill="#fff"/>
-            </svg>
+            <img src="images/icons/icon-brigadeiro.png" alt="Brigadeiro">
           </span>
           <span class="cat-info">
             <strong>Brigadeiro Gourmet</strong>
@@ -550,9 +521,7 @@ function renderCategory() {
         </button>
         <button class="cat-card" onclick="selectCategory('geladinho')">
           <span class="cat-emoji">
-            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path fill="var(--pink)" d="M8 3a4 4 0 118 0v12.2a4 4 0 01-3.2 3.92c.13.24.2.5.2.78a1 1 0 01-2 0c0-.28.07-.54.2-.78A4 4 0 018 15.2V3z"/>
-            </svg>
+            <img src="images/icons/icon-geladinho.png" alt="Geladinho">
           </span>
           <span class="cat-info">
             <strong>Geladinho Gourmet</strong>
@@ -561,7 +530,19 @@ function renderCategory() {
         </button>
       </div>
       `}
-      ${navButtons({ back: "guide" })}
+
+      ${state.orderTab === "encomendas" ? `
+      <div class="order-info-block">
+        <p class="order-info-title">Informações importantes</p>
+        <ul class="guide-list">
+          <li>Para confirmar a encomenda, é necessário pagar 50% do valor total no ato do pedido. Os 50% restantes até 1 dia antes da retirada.</li>
+          <li>A encomenda é entregue somente após a confirmação do pagamento integral.</li>
+        </ul>
+        <p class="address-block"><strong>Endereço para retirada:</strong><br>${ADDRESS}</p>
+      </div>
+      ` : ""}
+
+      ${navButtons({ back: state.guest ? "welcome" : "dashboard" })}
     </section>
   `;
 }
