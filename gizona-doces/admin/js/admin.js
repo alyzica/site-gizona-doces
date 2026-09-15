@@ -93,6 +93,8 @@ function renderShell() {
           <button class="${admin.tab === 'orders' ? 'active' : ''}" onclick="setTab('orders')">Pedidos</button>
           <button class="${admin.tab === 'products' ? 'active' : ''}" onclick="setTab('products')">Produtos</button>
           <button class="${admin.tab === 'customers' ? 'active' : ''}" onclick="setTab('customers')">Clientes</button>
+          <button class="${admin.tab === 'financeiro' ? 'active' : ''}" onclick="setTab('financeiro')">Financeiro</button>
+          <button class="${admin.tab === 'estoque' ? 'active' : ''}" onclick="setTab('estoque')">Estoque</button>
           <button class="${admin.tab === 'loyalty' ? 'active' : ''}" onclick="setTab('loyalty')">Fidelidade</button>
           <button class="${admin.tab === 'rewards' ? 'active' : ''}" onclick="setTab('rewards')">Mimos</button>
         </nav>
@@ -113,6 +115,8 @@ async function loadTab() {
     else if (admin.tab === "orders") await loadOrders(main);
     else if (admin.tab === "products") await loadProducts(main);
     else if (admin.tab === "customers") await loadCustomers(main);
+    else if (admin.tab === "financeiro") await loadFinanceiro(main);
+    else if (admin.tab === "estoque") await loadEstoque(main);
     else if (admin.tab === "loyalty") await loadLoyalty(main);
     else if (admin.tab === "rewards") await loadRewards(main);
   } catch (e) {
@@ -796,6 +800,271 @@ async function sendCustomerPasswordReset(email) {
     return;
   }
   alert("E-mail de redefinição de senha enviado para " + email + ".");
+}
+
+/* ---------------- FINANCEIRO (Caixa) ---------------- */
+
+async function loadFinanceiro(main) {
+  const { data: entries, error } = await sb.from("cash_entries").select("*").order("entry_date", { ascending: false }).order("created_at", { ascending: false });
+  if (error) throw error;
+  admin.data.cashEntries = entries || [];
+  renderFinanceiro(main);
+}
+
+function renderFinanceiro(main) {
+  const entries = admin.data.cashEntries;
+  const totalEntradas = entries.filter(e => e.type === "entrada").reduce((s, e) => s + Number(e.amount), 0);
+  const totalSaidas = entries.filter(e => e.type === "saida").reduce((s, e) => s + Number(e.amount), 0);
+  const saldo = totalEntradas - totalSaidas;
+
+  main.innerHTML = `
+    <div class="admin-topbar"><h1>Financeiro</h1><button class="btn btn-pink" onclick="openCashForm()">+ Novo lançamento</button></div>
+
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">Entradas</div><div class="value" style="color:#2E7D46">${fmt(totalEntradas)}</div></div>
+      <div class="stat-card"><div class="label">Saídas</div><div class="value" style="color:#B23434">${fmt(totalSaidas)}</div></div>
+      <div class="stat-card"><div class="label">Saldo</div><div class="value">${fmt(saldo)}</div></div>
+    </div>
+
+    <div id="cashFormArea"></div>
+
+    <div class="admin-card">
+      ${entries.length ? `
+        <table>
+          <thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Pagamento</th><th>Valor</th><th></th></tr></thead>
+          <tbody>
+            ${entries.map(e => `
+              <tr>
+                <td>${new Date(e.entry_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
+                <td><span class="badge-status ${e.type === "entrada" ? "completed" : "cancelled"}">${e.type === "entrada" ? "Entrada" : "Saída"}</span></td>
+                <td>${e.description}</td>
+                <td>${e.payment_method || "—"}</td>
+                <td><strong style="color:${e.type === "entrada" ? "#2E7D46" : "#B23434"}">${e.type === "entrada" ? "+" : "−"} ${fmt(e.amount)}</strong></td>
+                <td><button class="btn btn-outline btn-sm" onclick="deleteCashEntry('${e.id}')">Excluir</button></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Nenhum lançamento ainda.</p>`}
+    </div>
+  `;
+}
+
+function openCashForm() {
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById("cashFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>Novo lançamento</h2>
+      <div class="form-grid">
+        <label>Data<input type="date" id="ceDate" value="${today}"></label>
+        <label>Tipo
+          <select id="ceType">
+            <option value="entrada">Entrada</option>
+            <option value="saida">Saída</option>
+          </select>
+        </label>
+        <label>Descrição<input type="text" id="ceDescription" placeholder="Ex: Ana Paula - geladinho, ou Compra atacadão"></label>
+        <label>Forma de pagamento
+          <select id="cePayment">
+            <option value="Pix">Pix</option>
+            <option value="Dinheiro">Dinheiro</option>
+            <option value="Cartão">Cartão</option>
+            <option value="Outro">Outro</option>
+          </select>
+        </label>
+        <label>Valor (R$)<input type="number" step="0.01" min="0" id="ceAmount" placeholder="0,00"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveCashEntry()">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('cashFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveCashEntry() {
+  const payload = {
+    entry_date: document.getElementById("ceDate").value,
+    type: document.getElementById("ceType").value,
+    description: document.getElementById("ceDescription").value.trim(),
+    payment_method: document.getElementById("cePayment").value,
+    amount: Number(document.getElementById("ceAmount").value),
+  };
+  if (!payload.entry_date || !payload.description || !payload.amount) {
+    alert("Preencha data, descrição e valor.");
+    return;
+  }
+  const { error } = await sb.from("cash_entries").insert(payload);
+  if (error) { console.error(error); alert("Não foi possível salvar o lançamento."); return; }
+  document.getElementById("cashFormArea").innerHTML = "";
+  await loadFinanceiro(document.getElementById("adminMain"));
+}
+
+async function deleteCashEntry(id) {
+  if (!confirm("Excluir este lançamento?")) return;
+  const { error } = await sb.from("cash_entries").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível excluir."); return; }
+  await loadFinanceiro(document.getElementById("adminMain"));
+}
+
+/* ---------------- ESTOQUE (ingredientes) ---------------- */
+
+async function loadEstoque(main) {
+  const [{ data: ingredients, error: iErr }, { data: movements, error: mErr }] = await Promise.all([
+    sb.from("ingredients").select("*").order("name", { ascending: true }),
+    sb.from("stock_movements").select("*, ingredients(name, unit)").order("created_at", { ascending: false }).limit(40),
+  ]);
+  if (iErr) throw iErr;
+  if (mErr) throw mErr;
+  admin.data.ingredients = ingredients || [];
+  admin.data.stockMovements = movements || [];
+  renderEstoque(main);
+}
+
+function renderEstoque(main) {
+  const ingredients = admin.data.ingredients;
+  const movements = admin.data.stockMovements;
+
+  main.innerHTML = `
+    <div class="admin-topbar"><h1>Estoque</h1><button class="btn btn-pink" onclick="openIngredientForm()">+ Novo ingrediente</button></div>
+
+    <div id="ingredientFormArea"></div>
+    <div id="movementFormArea"></div>
+
+    <div class="admin-card">
+      <h2>Estoque em tempo real</h2>
+      ${ingredients.length ? `
+        <table>
+          <thead><tr><th>Ingrediente</th><th>Saldo</th><th>Mínimo</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            ${ingredients.map(i => {
+              const low = Number(i.current_stock) < Number(i.min_stock);
+              return `
+                <tr>
+                  <td><strong>${i.name}</strong></td>
+                  <td>${i.current_stock} ${i.unit}</td>
+                  <td>${i.min_stock} ${i.unit}</td>
+                  <td>${low ? `<span class="badge-status cancelled">Abaixo do mínimo</span>` : `<span class="badge-status completed">OK</span>`}</td>
+                  <td style="display:flex;gap:6px">
+                    <button class="btn btn-outline btn-sm" onclick="openMovementForm('${i.id}', 'entrada')">+ Entrada</button>
+                    <button class="btn btn-outline btn-sm" onclick="openMovementForm('${i.id}', 'saida')">− Saída</button>
+                  </td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Nenhum ingrediente cadastrado ainda.</p>`}
+    </div>
+
+    <div class="admin-card">
+      <h2>Últimas movimentações</h2>
+      ${movements.length ? `
+        <table>
+          <thead><tr><th>Data</th><th>Ingrediente</th><th>Tipo</th><th>Quantidade</th><th>Obs.</th></tr></thead>
+          <tbody>
+            ${movements.map(m => `
+              <tr>
+                <td>${new Date(m.movement_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
+                <td>${m.ingredients ? m.ingredients.name : "—"}</td>
+                <td><span class="badge-status ${m.type === "entrada" ? "completed" : "cancelled"}">${m.type === "entrada" ? "Entrada" : "Saída"}</span></td>
+                <td>${m.quantity} ${m.ingredients ? m.ingredients.unit : ""}</td>
+                <td>${m.note || "—"}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Nenhuma movimentação ainda.</p>`}
+    </div>
+  `;
+}
+
+function openIngredientForm() {
+  document.getElementById("ingredientFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>Novo ingrediente</h2>
+      <div class="form-grid">
+        <label>Nome<input type="text" id="ingName" placeholder="Ex: Chocolate em gotas ao leite - genuine"></label>
+        <label>Unidade
+          <select id="ingUnit">
+            <option value="g">g (gramas)</option>
+            <option value="ml">ml</option>
+            <option value="uni">uni (unidade)</option>
+          </select>
+        </label>
+        <label>Tamanho do pacote comprado<input type="number" step="0.01" id="ingPackageQty" placeholder="Ex: 1000"></label>
+        <label>Custo do pacote (R$)<input type="number" step="0.01" id="ingPackageCost" placeholder="Ex: 18.70"></label>
+        <label>Estoque mínimo<input type="number" step="0.01" id="ingMinStock" placeholder="Ex: 500"></label>
+        <label>Estoque atual (inicial)<input type="number" step="0.01" id="ingCurrentStock" placeholder="Ex: 0"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveIngredient()">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('ingredientFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveIngredient() {
+  const name = document.getElementById("ingName").value.trim();
+  const unit = document.getElementById("ingUnit").value;
+  const packageQty = Number(document.getElementById("ingPackageQty").value) || null;
+  const packageCost = Number(document.getElementById("ingPackageCost").value) || null;
+  const minStock = Number(document.getElementById("ingMinStock").value) || 0;
+  const currentStock = Number(document.getElementById("ingCurrentStock").value) || 0;
+  if (!name) { alert("Informe o nome do ingrediente."); return; }
+  const costPerUnit = (packageQty && packageCost) ? packageCost / packageQty : null;
+
+  const { error } = await sb.from("ingredients").insert({
+    name, unit, package_qty: packageQty, package_cost: packageCost,
+    cost_per_unit: costPerUnit, min_stock: minStock, current_stock: currentStock,
+  });
+  if (error) { console.error(error); alert("Não foi possível salvar o ingrediente."); return; }
+  document.getElementById("ingredientFormArea").innerHTML = "";
+  await loadEstoque(document.getElementById("adminMain"));
+}
+
+function openMovementForm(ingredientId, type) {
+  const ing = admin.data.ingredients.find(i => i.id === ingredientId);
+  if (!ing) return;
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById("movementFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>${type === "entrada" ? "Registrar entrada" : "Registrar saída"} — ${ing.name}</h2>
+      <p class="center-msg" style="margin:0 0 10px">Saldo atual: <strong>${ing.current_stock} ${ing.unit}</strong></p>
+      <div class="form-grid">
+        <label>Data<input type="date" id="movDate" value="${today}"></label>
+        <label>Quantidade (${ing.unit})<input type="number" step="0.01" min="0.01" id="movQty"></label>
+        <label>Observação (opcional)<input type="text" id="movNote"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveMovement('${ingredientId}', '${type}')">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('movementFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveMovement(ingredientId, type) {
+  const qty = Number(document.getElementById("movQty").value);
+  const date = document.getElementById("movDate").value;
+  const note = document.getElementById("movNote").value.trim();
+  if (!qty || qty <= 0 || !date) { alert("Informe data e uma quantidade válida."); return; }
+
+  const ing = admin.data.ingredients.find(i => i.id === ingredientId);
+  const delta = type === "entrada" ? qty : -qty;
+  const newStock = Math.max(0, Number(ing.current_stock) + delta);
+
+  const { error: mErr } = await sb.from("stock_movements").insert({
+    ingredient_id: ingredientId, movement_date: date, type, quantity: qty, note: note || null,
+  });
+  if (mErr) { console.error(mErr); alert("Não foi possível registrar a movimentação."); return; }
+
+  const { error: uErr } = await sb.from("ingredients").update({ current_stock: newStock }).eq("id", ingredientId);
+  if (uErr) { console.error(uErr); alert("Movimentação salva, mas não foi possível atualizar o saldo."); }
+
+  document.getElementById("movementFormArea").innerHTML = "";
+  await loadEstoque(document.getElementById("adminMain"));
 }
 
 /* ---------------- FIDELIDADE ---------------- */
