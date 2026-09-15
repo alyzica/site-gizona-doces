@@ -525,7 +525,7 @@ function renderCategory() {
           </span>
           <span class="cat-info">
             <strong>Geladinho Gourmet</strong>
-            <small>Tamanho festa 8cm - mín. 30 unidades</small>
+            <small>Tamanho festa 8cm - mín. 10 por sabor</small>
           </span>
         </button>
       </div>
@@ -696,7 +696,6 @@ function renderGeladinhoInfo() {
       </div>
       <div class="rule-card">
         <p>Quantidade mínima por sabor: <u>${GELADINHO_RULES.minPerFlavor} unidades</u></p>
-        <p>Pedido mínimo total: <strong>${GELADINHO_RULES.minTotal} unidades</strong></p>
       </div>
       <div class="info-card">
         <p><strong>Caixa de isopor</strong></p>
@@ -712,7 +711,7 @@ function renderGeladinhoInfo() {
 function renderGeladinhoFlavors() {
   const totalUnits = Object.values(state.geladinho).reduce((s, q) => s + q, 0);
   const hasErrors = Object.values(state.geladinho).some(q => q > 0 && q < GELADINHO_RULES.minPerFlavor);
-  const isValid = totalUnits >= GELADINHO_RULES.minTotal && !hasErrors;
+  const isValid = totalUnits > 0 && !hasErrors;
   const subtotal = Object.entries(state.geladinho).reduce((s, [id, qty]) => {
     const p = GELADINHO_PRODUCTS.find(p => p.id === id);
     return s + p.price * qty;
@@ -722,7 +721,7 @@ function renderGeladinhoFlavors() {
     <section class="screen">
       <div class="screen-head pink"><h2>Geladinho Gourmet</h2><p>Escolha os sabores</p></div>
       <div class="counter-pill ${isValid ? "done" : ""}">
-        <span>Total: ${totalUnits} unidades</span><strong>${isValid ? "Mínimo atingido" : `Mín. ${GELADINHO_RULES.minTotal} un.`}</strong>
+        <span>Total: ${totalUnits} unidades</span><strong>${isValid ? "Mínimo atingido" : `Escolha os sabores`}</strong>
       </div>
       <div class="flavor-list">
         ${GELADINHO_PRODUCTS.map(p => {
@@ -871,7 +870,7 @@ function renderCart() {
           <label>Nome completo<input type="text" value="${c.name}" oninput="c_update('name', this.value)"></label>
           <label>Telefone / WhatsApp<input type="text" placeholder="(19) 99999-9999" value="${c.phone}" oninput="c_update('phone', this.value)"></label>
         ` : `<p class="hint">Usaremos automaticamente os dados do seu perfil: <strong>${auth.customer.full_name}</strong>.</p>`}
-        <label>Data do evento<input type="date" id="eventDateInput" min="${minEventDate()}" value="${c.eventDate}" oninput="handleEventDateInput(this)"></label>
+        <label>Data do evento<input type="date" id="eventDateInput" min="${minEventDate()}" value="${c.eventDate}" onchange="handleEventDateInput(this)"></label>
         <p class="hint" style="margin-top:-6px">Trabalhamos com antecedência mínima de 5 dias.</p>
         <label>Forma de pagamento
           <select onchange="c_update('payment', this.value)">
@@ -992,7 +991,10 @@ function formatDateKey(dateKey) {
 }
 function handleEventDateInput(el) {
   const min = minEventDate();
-  if (el.value && el.value < min) {
+  if (!el.value) { state.customer.eventDate = ""; return; }
+  const year = Number(el.value.split("-")[0]);
+  if (year < 2000) return; // ano ainda incompleto/em digitação, ignora por enquanto
+  if (el.value < min) {
     alert(`Para garantir o preparo da sua encomenda, trabalhamos com antecedência mínima de 5 dias. A primeira data disponível é ${formatDateKey(min)}.`);
     el.value = "";
     state.customer.eventDate = "";
