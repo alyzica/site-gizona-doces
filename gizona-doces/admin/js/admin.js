@@ -94,7 +94,9 @@ function renderShell() {
           <button class="${admin.tab === 'products' ? 'active' : ''}" onclick="setTab('products')">Produtos</button>
           <button class="${admin.tab === 'customers' ? 'active' : ''}" onclick="setTab('customers')">Clientes</button>
           <button class="${admin.tab === 'financeiro' ? 'active' : ''}" onclick="setTab('financeiro')">Financeiro</button>
+          <button class="${admin.tab === 'resultados' ? 'active' : ''}" onclick="setTab('resultados')">Resultados</button>
           <button class="${admin.tab === 'estoque' ? 'active' : ''}" onclick="setTab('estoque')">Estoque</button>
+          <button class="${admin.tab === 'precificacao' ? 'active' : ''}" onclick="setTab('precificacao')">Precificação</button>
           <button class="${admin.tab === 'loyalty' ? 'active' : ''}" onclick="setTab('loyalty')">Fidelidade</button>
           <button class="${admin.tab === 'rewards' ? 'active' : ''}" onclick="setTab('rewards')">Mimos</button>
         </nav>
@@ -116,7 +118,9 @@ async function loadTab() {
     else if (admin.tab === "products") await loadProducts(main);
     else if (admin.tab === "customers") await loadCustomers(main);
     else if (admin.tab === "financeiro") await loadFinanceiro(main);
+    else if (admin.tab === "resultados") await loadResultados(main);
     else if (admin.tab === "estoque") await loadEstoque(main);
+    else if (admin.tab === "precificacao") await loadPrecificacao(main);
     else if (admin.tab === "loyalty") await loadLoyalty(main);
     else if (admin.tab === "rewards") await loadRewards(main);
   } catch (e) {
@@ -1065,6 +1069,272 @@ async function saveMovement(ingredientId, type) {
 
   document.getElementById("movementFormArea").innerHTML = "";
   await loadEstoque(document.getElementById("adminMain"));
+}
+
+/* ---------------- RESULTADOS ---------------- */
+
+const MONTH_NAMES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+
+async function loadResultados(main) {
+  const [{ data: orders, error: oErr }, { data: cash, error: cErr }] = await Promise.all([
+    sb.from("orders").select("id, total, status, items, created_at"),
+    sb.from("cash_entries").select("entry_date, type, amount"),
+  ]);
+  if (oErr) throw oErr;
+  if (cErr) throw cErr;
+  admin.data.resultOrders = orders || [];
+  admin.data.resultCash = cash || [];
+  renderResultados(main);
+}
+
+function renderResultados(main) {
+  const orders = admin.data.resultOrders.filter(o => o.status !== "cancelled");
+  const cash = admin.data.resultCash;
+
+  // agrupa por mês (AAAA-MM) — faturamento e gasto vêm do Financeiro (Caixa),
+  // que é onde toda venda entra (site, WhatsApp etc.)
+  const months = {};
+  function monthKey(dateStr) { return dateStr ? dateStr.slice(0, 7) : null; }
+  function ensure(key) {
+    if (!months[key]) months[key] = { faturamento: 0, gasto: 0 };
+    return months[key];
+  }
+
+  cash.forEach(c => {
+    const key = monthKey(c.entry_date);
+    if (!key) return;
+    if (c.type === "entrada") ensure(key).faturamento += Number(c.amount || 0);
+    else ensure(key).gasto += Number(c.amount || 0);
+  });
+
+  const sortedKeys = Object.keys(months).sort();
+
+  // faturamento por produto/categoria — vem dos itens dos pedidos feitos pelo site
+  // (cobre só as vendas feitas pelo site; vendas manuais no Financeiro não têm categoria)
+  const byCategory = {};
+  orders.forEach(o => {
+    (o.items || []).forEach(item => {
+      const cat = item.category || item.product_name || "Outros";
+      byCategory[cat] = (byCategory[cat] || 0) + Number(item.subtotal || 0);
+    });
+  });
+  const categoryRows = Object.entries(byCategory).sort(([, a], [, b]) => b - a);
+
+  const totalFaturamento = cash.filter(c => c.type === "entrada").reduce((s, c) => s + Number(c.amount || 0), 0);
+  const totalGasto = cash.filter(c => c.type === "saida").reduce((s, c) => s + Number(c.amount || 0), 0);
+  const totalLucro = totalFaturamento - totalGasto;
+
+  main.innerHTML = `
+    <div class="admin-topbar"><h1>Resultados</h1></div>
+
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">Faturamento total</div><div class="value" style="color:#2E7D46">${fmt(totalFaturamento)}</div></div>
+      <div class="stat-card"><div class="label">Gastos totais</div><div class="value" style="color:#B23434">${fmt(totalGasto)}</div></div>
+      <div class="stat-card"><div class="label">Lucro total</div><div class="value">${fmt(totalLucro)}</div></div>
+    </div>
+
+    <div class="admin-card">
+      <h2>Resumo por mês</h2>
+      ${sortedKeys.length ? `
+        <table>
+          <thead><tr><th>Mês</th><th>Faturamento</th><th>Gasto</th><th>Lucro</th><th>Lucro %</th></tr></thead>
+          <tbody>
+            ${sortedKeys.map(key => {
+              const [year, month] = key.split("-");
+              const m = months[key];
+              const lucro = m.faturamento - m.gasto;
+              const pct = m.faturamento > 0 ? (lucro / m.faturamento) * 100 : 0;
+              return `
+                <tr>
+                  <td>${MONTH_NAMES[Number(month) - 1]}/${year}</td>
+                  <td style="color:#2E7D46">${fmt(m.faturamento)}</td>
+                  <td style="color:#B23434">${fmt(m.gasto)}</td>
+                  <td><strong>${fmt(lucro)}</strong></td>
+                  <td>${pct.toFixed(1)}%</td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Ainda não há pedidos ou lançamentos suficientes pra gerar o resumo.</p>`}
+    </div>
+
+    <div class="admin-card">
+      <h2>Faturamento por produto</h2>
+      ${categoryRows.length ? `
+        <table>
+          <thead><tr><th>Produto</th><th>Faturamento</th></tr></thead>
+          <tbody>
+            ${categoryRows.map(([cat, val]) => `<tr><td>${cat}</td><td style="color:#2E7D46">${fmt(val)}</td></tr>`).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Nenhum item de pedido encontrado ainda.</p>`}
+    </div>
+
+    <p class="hint" style="text-align:center">Faturamento e gastos vêm dos lançamentos de "Entrada" e "Saída" do Financeiro (inclui vendas do site, WhatsApp etc). O quadro "faturamento por produto" cobre só as vendas feitas pelo site, já que é onde dá pra saber o que foi vendido. Este relatório é calculado automaticamente — não precisa lançar nada aqui.</p>
+  `;
+}
+
+/* ---------------- PRECIFICAÇÃO (receitas) ---------------- */
+
+async function loadPrecificacao(main) {
+  const [{ data: recipes, error: rErr }, { data: ingredients, error: iErr }] = await Promise.all([
+    sb.from("recipes").select("*, recipe_ingredients(*, ingredients(name, unit, cost_per_unit))").order("name", { ascending: true }),
+    sb.from("ingredients").select("*").order("name", { ascending: true }),
+  ]);
+  if (rErr) throw rErr;
+  if (iErr) throw iErr;
+  admin.data.recipes = recipes || [];
+  admin.data.ingredients = ingredients || [];
+  renderPrecificacao(main);
+}
+
+function recipeCost(recipe) {
+  return (recipe.recipe_ingredients || []).reduce((s, ri) => {
+    const cpu = ri.ingredients ? Number(ri.ingredients.cost_per_unit || 0) : 0;
+    return s + cpu * Number(ri.quantity);
+  }, 0);
+}
+
+function renderPrecificacao(main) {
+  const recipes = admin.data.recipes;
+  main.innerHTML = `
+    <div class="admin-topbar"><h1>Precificação</h1><button class="btn btn-pink" onclick="openRecipeForm()">+ Nova receita</button></div>
+    <div id="recipeFormArea"></div>
+    <div class="admin-card">
+      ${recipes.length ? `
+        <table>
+          <thead><tr><th>Receita</th><th>Rendimento</th><th>Custo total</th><th>Custo por unidade</th><th></th></tr></thead>
+          <tbody>
+            ${recipes.map(r => {
+              const cost = recipeCost(r);
+              const unitCost = r.yield_qty > 0 ? cost / r.yield_qty : 0;
+              return `
+                <tr>
+                  <td><strong>${r.name}</strong></td>
+                  <td>${r.yield_qty} ${r.yield_unit}</td>
+                  <td>${fmt(cost)}</td>
+                  <td>${fmt(unitCost)}</td>
+                  <td><button class="btn btn-outline btn-sm" onclick="openRecipeDetail('${r.id}')">Abrir</button></td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Nenhuma receita cadastrada ainda.</p>`}
+    </div>
+  `;
+}
+
+function openRecipeForm() {
+  document.getElementById("recipeFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>Nova receita</h2>
+      <div class="form-grid">
+        <label>Nome da receita<input type="text" id="rpName" placeholder="Ex: Cascone banhado"></label>
+        <label>Rendimento (quantidade)<input type="number" step="0.01" id="rpYieldQty" placeholder="Ex: 50"></label>
+        <label>Unidade do rendimento<input type="text" id="rpYieldUnit" placeholder="Ex: unidades"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveRecipe()">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('recipeFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveRecipe() {
+  const name = document.getElementById("rpName").value.trim();
+  const yieldQty = Number(document.getElementById("rpYieldQty").value) || 1;
+  const yieldUnit = document.getElementById("rpYieldUnit").value.trim() || "unidades";
+  if (!name) { alert("Informe o nome da receita."); return; }
+  const { error } = await sb.from("recipes").insert({ name, yield_qty: yieldQty, yield_unit: yieldUnit });
+  if (error) { console.error(error); alert("Não foi possível salvar a receita."); return; }
+  document.getElementById("recipeFormArea").innerHTML = "";
+  await loadPrecificacao(document.getElementById("adminMain"));
+}
+
+function openRecipeDetail(recipeId) {
+  const recipe = admin.data.recipes.find(r => r.id === recipeId);
+  if (!recipe) return;
+  const ingredients = admin.data.ingredients;
+  const cost = recipeCost(recipe);
+  const unitCost = recipe.yield_qty > 0 ? cost / recipe.yield_qty : 0;
+
+  document.getElementById("recipeFormArea").innerHTML = `
+    <div class="admin-card">
+      <div class="admin-topbar" style="margin-bottom:6px"><h2 style="margin:0">${recipe.name}</h2><button class="btn btn-outline btn-sm" onclick="document.getElementById('recipeFormArea').innerHTML=''">Fechar</button></div>
+      <p class="hint">Rendimento: ${recipe.yield_qty} ${recipe.yield_unit}</p>
+
+      <table>
+        <thead><tr><th>Ingrediente</th><th>Quantidade</th><th>Custo</th><th></th></tr></thead>
+        <tbody>
+          ${(recipe.recipe_ingredients || []).map(ri => `
+            <tr>
+              <td>${ri.ingredients ? ri.ingredients.name : "—"}</td>
+              <td>${ri.quantity} ${ri.ingredients ? ri.ingredients.unit : ""}</td>
+              <td>${fmt(Number(ri.ingredients?.cost_per_unit || 0) * Number(ri.quantity))}</td>
+              <td><button class="btn btn-outline btn-sm" onclick="removeRecipeIngredient('${ri.id}', '${recipeId}')">Remover</button></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+
+      <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+        <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:var(--muted)">Ingrediente
+          <select id="riIngredient" style="border:1.5px solid var(--border);border-radius:10px;padding:9px 11px">
+            ${ingredients.map(i => `<option value="${i.id}">${i.name} (${i.unit})</option>`).join("")}
+          </select>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:var(--muted)">Quantidade usada
+          <input type="number" step="0.001" id="riQuantity" style="border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;width:110px">
+        </label>
+        <button class="btn btn-pink btn-sm" onclick="addRecipeIngredient('${recipeId}')">+ Adicionar ingrediente</button>
+      </div>
+
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+        <strong>Custo total da receita: ${fmt(cost)}</strong><br>
+        <strong>Custo por ${recipe.yield_unit.replace(/s$/, "")}: ${fmt(unitCost)}</strong>
+      </div>
+
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+        <p class="cart-section-title" style="margin:0 0 8px">Simulador de preço de venda</p>
+        <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+          <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:var(--muted)">Margem desejada (%)
+            <input type="number" step="1" id="rpMargin" placeholder="Ex: 150" style="border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;width:110px">
+          </label>
+          <button class="btn btn-outline btn-sm" onclick="calcSuggestedPrice(${unitCost})">Calcular</button>
+        </div>
+        <p id="rpSuggestedPrice" class="hint" style="margin-top:8px"></p>
+      </div>
+    </div>
+  `;
+}
+
+async function addRecipeIngredient(recipeId) {
+  const ingredientId = document.getElementById("riIngredient").value;
+  const quantity = Number(document.getElementById("riQuantity").value);
+  if (!ingredientId || !quantity || quantity <= 0) { alert("Escolha um ingrediente e uma quantidade válida."); return; }
+  const { error } = await sb.from("recipe_ingredients").insert({ recipe_id: recipeId, ingredient_id: ingredientId, quantity });
+  if (error) { console.error(error); alert("Não foi possível adicionar o ingrediente."); return; }
+  await loadPrecificacao(document.getElementById("adminMain"));
+  openRecipeDetail(recipeId);
+}
+
+async function removeRecipeIngredient(recipeIngredientId, recipeId) {
+  const { error } = await sb.from("recipe_ingredients").delete().eq("id", recipeIngredientId);
+  if (error) { console.error(error); alert("Não foi possível remover."); return; }
+  await loadPrecificacao(document.getElementById("adminMain"));
+  openRecipeDetail(recipeId);
+}
+
+function calcSuggestedPrice(unitCost) {
+  const margin = Number(document.getElementById("rpMargin").value);
+  const el = document.getElementById("rpSuggestedPrice");
+  if (!margin && margin !== 0) { el.textContent = "Informe a margem desejada."; return; }
+  const price = unitCost * (1 + margin / 100);
+  const profit = price - unitCost;
+  el.innerHTML = `Preço de venda sugerido: <strong>${fmt(price)}</strong> — lucro de ${fmt(profit)} por unidade.`;
 }
 
 /* ---------------- FIDELIDADE ---------------- */
