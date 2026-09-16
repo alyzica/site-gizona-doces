@@ -93,6 +93,7 @@ function renderShell() {
           <button class="${admin.tab === 'orders' ? 'active' : ''}" onclick="setTab('orders')">Pedidos</button>
           <button class="${admin.tab === 'products' ? 'active' : ''}" onclick="setTab('products')">Produtos</button>
           <button class="${admin.tab === 'customers' ? 'active' : ''}" onclick="setTab('customers')">Clientes</button>
+          <button class="${admin.tab === 'caixa' ? 'active' : ''}" onclick="setTab('caixa')">Caixa</button>
           <button class="${admin.tab === 'financeiro' ? 'active' : ''}" onclick="setTab('financeiro')">Financeiro</button>
           <button class="${admin.tab === 'resultados' ? 'active' : ''}" onclick="setTab('resultados')">Resultados</button>
           <button class="${admin.tab === 'estoque' ? 'active' : ''}" onclick="setTab('estoque')">Estoque</button>
@@ -117,6 +118,7 @@ async function loadTab() {
     else if (admin.tab === "orders") await loadOrders(main);
     else if (admin.tab === "products") await loadProducts(main);
     else if (admin.tab === "customers") await loadCustomers(main);
+    else if (admin.tab === "caixa") await loadCaixa(main);
     else if (admin.tab === "financeiro") await loadFinanceiro(main);
     else if (admin.tab === "resultados") await loadResultados(main);
     else if (admin.tab === "estoque") await loadEstoque(main);
@@ -184,30 +186,58 @@ async function loadDashboard(main) {
 async function loadOrders(main) {
   const { data: orders } = await sb.from("orders").select("*").order("created_at", { ascending: false });
   admin.data.orders = orders || [];
+  admin.data.orderFilter = admin.data.orderFilter || "all";
   renderOrdersTable(main);
 }
+
+function paymentSummary(o) {
+  const parts = [];
+  if (o.payment_method_1 && o.payment_amount_1) parts.push(`${o.payment_method_1} ${fmt(o.payment_amount_1)}`);
+  if (o.payment_method_2 && o.payment_amount_2) parts.push(`${o.payment_method_2} ${fmt(o.payment_amount_2)}`);
+  if (parts.length) return parts.join(" + ");
+  if (o.payment_method === "pix") return "PIX";
+  if (o.payment_method === "credito") return "Crédito";
+  return "—";
+}
+
+function setOrderFilter(filter) {
+  admin.data.orderFilter = filter;
+  renderOrdersTable(document.getElementById("adminMain"));
+}
+
 function renderOrdersTable(main) {
-  const orders = admin.data.orders;
+  const filter = admin.data.orderFilter || "all";
+  const orders = admin.data.orders.filter(o => filter === "all" ? true : (o.origin || "site") === filter);
   main.innerHTML = `
-    <div class="admin-topbar"><h1>Pedidos</h1></div>
+    <div class="admin-topbar"><h1>Pedidos</h1><button class="btn btn-pink" onclick="openManualOrderForm()">+ Lançar pedido manual</button></div>
+    <p class="hint">Pedidos do site e pedidos lançados manualmente (WhatsApp, Instagram, presencial etc). Tudo editável.</p>
+    <div class="tabs-row" style="display:flex;gap:8px;margin-bottom:14px">
+      <button class="btn ${filter === "all" ? "btn-pink" : "btn-outline"} btn-sm" onclick="setOrderFilter('all')">Todos</button>
+      <button class="btn ${filter === "site" ? "btn-pink" : "btn-outline"} btn-sm" onclick="setOrderFilter('site')">Site</button>
+      <button class="btn ${filter === "manual" ? "btn-pink" : "btn-outline"} btn-sm" onclick="setOrderFilter('manual')">Manual</button>
+    </div>
+    <div id="orderFormArea"></div>
     <div class="admin-card">
       ${orders.length ? `
         <table>
-          <thead><tr><th>Nº</th><th>Cliente</th><th>Data evento</th><th>Total</th><th>Status</th><th>Pagamento</th><th></th></tr></thead>
+          <thead><tr><th>Nº</th><th>Cliente</th><th>Origem</th><th>Total</th><th>Pagamento</th><th>Status</th><th></th></tr></thead>
           <tbody>
             ${orders.map(o => `
               <tr>
                 <td>${o.order_number}</td>
                 <td>${o.customer_name}<br><small style="color:var(--muted)">${o.customer_phone}</small></td>
-                <td>${o.event_date ? new Date(o.event_date + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                <td><span class="badge-status ${o.origin === "manual" ? "pending" : "confirmed"}">${o.origin === "manual" ? "Manual" : "Site"}</span></td>
                 <td>${fmt(o.total)}</td>
+                <td>${paymentSummary(o)}</td>
                 <td>
                   <select onchange="updateOrderStatus('${o.id}', this.value)">
                     ${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}" ${o.status === k ? "selected" : ""}>${v}</option>`).join("")}
                   </select>
                 </td>
-                <td>${o.payment_method === "pix" ? "PIX" : o.payment_method === "credito" ? "Crédito" : "—"}</td>
-                <td><button class="btn btn-danger btn-sm" onclick="deleteOrder('${o.id}')">Excluir</button></td>
+                <td style="display:flex;gap:6px">
+                  <button class="btn btn-outline btn-sm" onclick="openOrderEditForm('${o.id}')">Editar</button>
+                  <button class="btn btn-danger btn-sm" onclick="deleteOrder('${o.id}')">Excluir</button>
+                </td>
               </tr>
             `).join("")}
           </tbody>
@@ -216,16 +246,146 @@ function renderOrdersTable(main) {
     </div>
   `;
 }
+
 async function updateOrderStatus(id, status) {
-  await sb.from("orders").update({ status }).eq("id", id);
+  const { error } = await sb.from("orders").update({ status }).eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível atualizar o status."); return; }
   const o = admin.data.orders.find(o => o.id === id);
   if (o) o.status = status;
+  if (status === "completed") {
+    // a receita automática é criada por um trigger no banco (sem duplicar).
+    // só avisamos o usuário aqui.
+    setTimeout(() => alert("Pedido marcado como concluído — a receita entra automaticamente no Financeiro."), 50);
+  }
 }
+
 async function deleteOrder(id) {
   if (!confirm("Tem certeza que deseja excluir este pedido? Essa ação não pode ser desfeita.")) return;
   await sb.from("orders").delete().eq("id", id);
   admin.data.orders = admin.data.orders.filter(o => o.id !== id);
   renderOrdersTable(document.getElementById("adminMain"));
+}
+
+const PAYMENT_OPTIONS = ["Pix", "Cartão", "Dinheiro", "Outro"];
+
+function orderFormFields(o) {
+  o = o || {};
+  return `
+    <div class="form-grid">
+      <label>Cliente<input type="text" id="ofName" value="${o.customer_name || ""}"></label>
+      <label>Telefone/WhatsApp<input type="text" id="ofPhone" value="${o.customer_phone || ""}"></label>
+      <label>Produto / descrição<input type="text" id="ofProduct" value="${o.product_desc || (o.items && o.items[0] ? o.items[0].product_name : "") || ""}" placeholder="Ex: 2 caixas de brigadeiro"></label>
+      <label>Valor total do pedido (R$)<input type="number" step="0.01" id="ofTotal" value="${o.total || ""}"></label>
+      <label>Status
+        <select id="ofStatus">
+          ${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}" ${o.status === k ? "selected" : ""}>${v}</option>`).join("")}
+        </select>
+      </label>
+      <label>Pagamento 1
+        <select id="ofPay1">
+          ${PAYMENT_OPTIONS.map(p => `<option ${o.payment_method_1 === p ? "selected" : ""}>${p}</option>`).join("")}
+        </select>
+      </label>
+      <label>Valor pagamento 1 (R$)<input type="number" step="0.01" id="ofPay1Amount" value="${o.payment_amount_1 || ""}"></label>
+      <label>Pagamento 2 (opcional)
+        <select id="ofPay2">
+          <option value="">Nenhum</option>
+          ${PAYMENT_OPTIONS.map(p => `<option ${o.payment_method_2 === p ? "selected" : ""}>${p}</option>`).join("")}
+        </select>
+      </label>
+      <label>Valor pagamento 2 (R$)<input type="number" step="0.01" id="ofPay2Amount" value="${o.payment_amount_2 || ""}"></label>
+      <label class="span-2">Observação<input type="text" id="ofObs" value="${o.observations || ""}"></label>
+    </div>
+    <p class="hint" id="ofPaySumHint" style="margin-top:8px"></p>
+  `;
+}
+
+function checkPaymentSum() {
+  const total = Number(document.getElementById("ofTotal").value) || 0;
+  const p1 = Number(document.getElementById("ofPay1Amount").value) || 0;
+  const p2 = Number(document.getElementById("ofPay2Amount").value) || 0;
+  const hint = document.getElementById("ofPaySumHint");
+  const soma = p1 + p2;
+  if (Math.abs(soma - total) > 0.01) {
+    hint.innerHTML = `⚠️ A soma dos pagamentos (${fmt(soma)}) é diferente do valor total (${fmt(total)}).`;
+  } else {
+    hint.innerHTML = `✓ Soma dos pagamentos confere com o total.`;
+  }
+}
+
+function openManualOrderForm() {
+  document.getElementById("orderFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>Lançar pedido manual</h2>
+      <p class="hint">Use pra pedidos que aconteceram fora do site (WhatsApp, Instagram, presencial, indicação etc). Entra normalmente no histórico e no Financeiro.</p>
+      ${orderFormFields({})}
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveManualOrder()">Salvar pedido</button>
+        <button class="btn btn-outline" onclick="document.getElementById('orderFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+  ["ofTotal", "ofPay1Amount", "ofPay2Amount"].forEach(id => document.getElementById(id).addEventListener("input", checkPaymentSum));
+}
+
+async function saveManualOrder() {
+  const name = document.getElementById("ofName").value.trim();
+  const phone = document.getElementById("ofPhone").value.trim();
+  const product = document.getElementById("ofProduct").value.trim();
+  const total = Number(document.getElementById("ofTotal").value);
+  if (!name || !phone || !total) { alert("Preencha ao menos cliente, telefone e valor total."); return; }
+
+  const payload = {
+    origin: "manual",
+    customer_name: name,
+    customer_phone: phone,
+    items: [{ product_name: product || "Pedido manual", category: "manual", quantity: 1, unit_price: total, subtotal: total }],
+    total,
+    status: document.getElementById("ofStatus").value,
+    payment_method_1: document.getElementById("ofPay1").value || null,
+    payment_amount_1: Number(document.getElementById("ofPay1Amount").value) || null,
+    payment_method_2: document.getElementById("ofPay2").value || null,
+    payment_amount_2: Number(document.getElementById("ofPay2Amount").value) || null,
+    observations: document.getElementById("ofObs").value.trim() || null,
+  };
+  const { error } = await sb.from("orders").insert(payload);
+  if (error) { console.error(error); alert("Não foi possível salvar o pedido."); return; }
+  document.getElementById("orderFormArea").innerHTML = "";
+  await loadOrders(document.getElementById("adminMain"));
+}
+
+function openOrderEditForm(id) {
+  const o = admin.data.orders.find(o => o.id === id);
+  if (!o) return;
+  document.getElementById("orderFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>Editar pedido ${o.order_number}</h2>
+      ${orderFormFields(o)}
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveOrderEdit('${id}')">Salvar alterações</button>
+        <button class="btn btn-outline" onclick="document.getElementById('orderFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+  ["ofTotal", "ofPay1Amount", "ofPay2Amount"].forEach(idAttr => document.getElementById(idAttr).addEventListener("input", checkPaymentSum));
+}
+
+async function saveOrderEdit(id) {
+  const payload = {
+    customer_name: document.getElementById("ofName").value.trim(),
+    customer_phone: document.getElementById("ofPhone").value.trim(),
+    total: Number(document.getElementById("ofTotal").value),
+    status: document.getElementById("ofStatus").value,
+    payment_method_1: document.getElementById("ofPay1").value || null,
+    payment_amount_1: Number(document.getElementById("ofPay1Amount").value) || null,
+    payment_method_2: document.getElementById("ofPay2").value || null,
+    payment_amount_2: Number(document.getElementById("ofPay2Amount").value) || null,
+    observations: document.getElementById("ofObs").value.trim() || null,
+  };
+  const { error } = await sb.from("orders").update(payload).eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível salvar as alterações."); return; }
+  document.getElementById("orderFormArea").innerHTML = "";
+  await loadOrders(document.getElementById("adminMain"));
 }
 
 /* ---------------- PRODUTOS ---------------- */
@@ -806,27 +966,34 @@ async function sendCustomerPasswordReset(email) {
   alert("E-mail de redefinição de senha enviado para " + email + ".");
 }
 
-/* ---------------- FINANCEIRO (Caixa) ---------------- */
+/* ---------------- CAIXA (100% manual: entrada, saída, retirada) ---------------- */
 
-async function loadFinanceiro(main) {
+async function loadCaixa(main) {
   const { data: entries, error } = await sb.from("cash_entries").select("*").order("entry_date", { ascending: false }).order("created_at", { ascending: false });
   if (error) throw error;
   admin.data.cashEntries = entries || [];
-  renderFinanceiro(main);
+  renderCaixa(main);
 }
 
-function renderFinanceiro(main) {
+const CAIXA_TYPE_LABEL = { entrada: "Entrada", saida: "Saída", retirada: "Retirada" };
+const CAIXA_TYPE_BADGE = { entrada: "completed", saida: "cancelled", retirada: "production" };
+const CAIXA_TYPE_COLOR = { entrada: "#2E7D46", saida: "#B23434", retirada: "#6A2CC4" };
+
+function renderCaixa(main) {
   const entries = admin.data.cashEntries;
   const totalEntradas = entries.filter(e => e.type === "entrada").reduce((s, e) => s + Number(e.amount), 0);
   const totalSaidas = entries.filter(e => e.type === "saida").reduce((s, e) => s + Number(e.amount), 0);
-  const saldo = totalEntradas - totalSaidas;
+  const totalRetiradas = entries.filter(e => e.type === "retirada").reduce((s, e) => s + Number(e.amount), 0);
+  const saldo = totalEntradas - totalSaidas - totalRetiradas;
 
   main.innerHTML = `
-    <div class="admin-topbar"><h1>Financeiro</h1><button class="btn btn-pink" onclick="openCashForm()">+ Novo lançamento</button></div>
+    <div class="admin-topbar"><h1>Caixa</h1><button class="btn btn-pink" onclick="openCashForm()">+ Nova movimentação</button></div>
+    <p class="hint">Controle 100% manual — nada aqui é lançado sozinho pelo sistema.</p>
 
     <div class="stat-grid">
       <div class="stat-card"><div class="label">Entradas</div><div class="value" style="color:#2E7D46">${fmt(totalEntradas)}</div></div>
       <div class="stat-card"><div class="label">Saídas</div><div class="value" style="color:#B23434">${fmt(totalSaidas)}</div></div>
+      <div class="stat-card"><div class="label">Retiradas</div><div class="value" style="color:#6A2CC4">${fmt(totalRetiradas)}</div></div>
       <div class="stat-card"><div class="label">Saldo</div><div class="value">${fmt(saldo)}</div></div>
     </div>
 
@@ -840,16 +1007,16 @@ function renderFinanceiro(main) {
             ${entries.map(e => `
               <tr>
                 <td>${new Date(e.entry_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
-                <td><span class="badge-status ${e.type === "entrada" ? "completed" : "cancelled"}">${e.type === "entrada" ? "Entrada" : "Saída"}</span></td>
+                <td><span class="badge-status ${CAIXA_TYPE_BADGE[e.type]}">${CAIXA_TYPE_LABEL[e.type]}</span></td>
                 <td>${e.description}</td>
                 <td>${e.payment_method || "—"}</td>
-                <td><strong style="color:${e.type === "entrada" ? "#2E7D46" : "#B23434"}">${e.type === "entrada" ? "+" : "−"} ${fmt(e.amount)}</strong></td>
+                <td><strong style="color:${CAIXA_TYPE_COLOR[e.type]}">${e.type === "entrada" ? "+" : "−"} ${fmt(e.amount)}</strong></td>
                 <td><button class="btn btn-outline btn-sm" onclick="deleteCashEntry('${e.id}')">Excluir</button></td>
               </tr>
             `).join("")}
           </tbody>
         </table>
-      ` : `<p class="center-msg">Nenhum lançamento ainda.</p>`}
+      ` : `<p class="center-msg">Nenhuma movimentação ainda.</p>`}
     </div>
   `;
 }
@@ -858,13 +1025,14 @@ function openCashForm() {
   const today = new Date().toISOString().slice(0, 10);
   document.getElementById("cashFormArea").innerHTML = `
     <div class="admin-card">
-      <h2>Novo lançamento</h2>
+      <h2>Nova movimentação de caixa</h2>
       <div class="form-grid">
         <label>Data<input type="date" id="ceDate" value="${today}"></label>
         <label>Tipo
           <select id="ceType">
             <option value="entrada">Entrada</option>
             <option value="saida">Saída</option>
+            <option value="retirada">Retirada</option>
           </select>
         </label>
         <label>Descrição<input type="text" id="ceDescription" placeholder="Ex: Ana Paula - geladinho, ou Compra atacadão"></label>
@@ -901,12 +1069,145 @@ async function saveCashEntry() {
   const { error } = await sb.from("cash_entries").insert(payload);
   if (error) { console.error(error); alert("Não foi possível salvar o lançamento."); return; }
   document.getElementById("cashFormArea").innerHTML = "";
-  await loadFinanceiro(document.getElementById("adminMain"));
+  await loadCaixa(document.getElementById("adminMain"));
 }
 
 async function deleteCashEntry(id) {
-  if (!confirm("Excluir este lançamento?")) return;
+  if (!confirm("Excluir esta movimentação?")) return;
   const { error } = await sb.from("cash_entries").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível excluir."); return; }
+  await loadCaixa(document.getElementById("adminMain"));
+}
+
+/* ---------------- FINANCEIRO (Faturamento automático do site + manual, e Despesas) ---------------- */
+
+async function loadFinanceiro(main) {
+  const [{ data: revenue, error: rErr }, { data: expenses, error: eErr }] = await Promise.all([
+    sb.from("revenue_entries").select("*").order("entry_date", { ascending: false }),
+    sb.from("expense_entries").select("*").order("entry_date", { ascending: false }),
+  ]);
+  if (rErr) throw rErr;
+  if (eErr) throw eErr;
+  admin.data.revenueEntries = revenue || [];
+  admin.data.expenseEntries = expenses || [];
+  renderFinanceiro(main);
+}
+
+function renderFinanceiro(main) {
+  const revenue = admin.data.revenueEntries;
+  const expenses = admin.data.expenseEntries;
+  const totalFaturamento = revenue.reduce((s, r) => s + Number(r.amount), 0);
+  const totalDespesas = expenses.reduce((s, e) => s + Number(e.amount), 0);
+  const resultado = totalFaturamento - totalDespesas;
+
+  main.innerHTML = `
+    <div class="admin-topbar"><h1>Financeiro</h1><button class="btn btn-pink" onclick="openFinanceForm()">+ Lançamento manual</button></div>
+    <p class="hint">Quando um pedido do site é marcado como "Concluído", a receita entra aqui sozinha — sem duplicar. Pedidos de fora do site e despesas são lançados manualmente.</p>
+
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">Faturamento</div><div class="value" style="color:#2E7D46">${fmt(totalFaturamento)}</div></div>
+      <div class="stat-card"><div class="label">Despesas</div><div class="value" style="color:#B23434">${fmt(totalDespesas)}</div></div>
+      <div class="stat-card"><div class="label">Resultado</div><div class="value">${fmt(resultado)}</div></div>
+    </div>
+
+    <div id="financeFormArea"></div>
+
+    <div class="admin-card">
+      <h2>Faturamento</h2>
+      ${revenue.length ? `
+        <table>
+          <thead><tr><th>Data</th><th>Descrição</th><th>Origem</th><th>Valor</th><th></th></tr></thead>
+          <tbody>
+            ${revenue.map(r => `
+              <tr>
+                <td>${new Date(r.entry_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
+                <td>${r.description}</td>
+                <td><span class="badge-status ${r.source === "site" ? "confirmed" : "pending"}">${r.source === "site" ? "Automático (site)" : "Manual"}</span></td>
+                <td><strong style="color:#2E7D46">${fmt(r.amount)}</strong></td>
+                <td>${r.source === "manual" ? `<button class="btn btn-outline btn-sm" onclick="deleteRevenueEntry('${r.id}')">Excluir</button>` : ""}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Nenhuma receita ainda.</p>`}
+    </div>
+
+    <div class="admin-card">
+      <h2>Despesas</h2>
+      ${expenses.length ? `
+        <table>
+          <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Valor</th><th></th></tr></thead>
+          <tbody>
+            ${expenses.map(e => `
+              <tr>
+                <td>${new Date(e.entry_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
+                <td>${e.description}</td>
+                <td>${e.category || "—"}</td>
+                <td><strong style="color:#B23434">${fmt(e.amount)}</strong></td>
+                <td><button class="btn btn-outline btn-sm" onclick="deleteExpenseEntry('${e.id}')">Excluir</button></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Nenhuma despesa ainda.</p>`}
+    </div>
+  `;
+}
+
+function openFinanceForm() {
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById("financeFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>Lançamento financeiro manual</h2>
+      <div class="form-grid">
+        <label>Tipo
+          <select id="feType">
+            <option value="receita">Receita (venda fora do site)</option>
+            <option value="despesa">Despesa</option>
+          </select>
+        </label>
+        <label>Data<input type="date" id="feDate" value="${today}"></label>
+        <label>Categoria (opcional, só despesa)<input type="text" id="feCategory" placeholder="Ex: Ingredientes, Embalagem"></label>
+        <label>Valor (R$)<input type="number" step="0.01" min="0" id="feAmount" placeholder="0,00"></label>
+        <label class="span-2">Descrição<input type="text" id="feDescription" placeholder="Ex: Venda WhatsApp - Ana Paula"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveFinanceEntry()">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('financeFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveFinanceEntry() {
+  const type = document.getElementById("feType").value;
+  const entry_date = document.getElementById("feDate").value;
+  const description = document.getElementById("feDescription").value.trim();
+  const amount = Number(document.getElementById("feAmount").value);
+  if (!entry_date || !description || !amount) { alert("Preencha data, descrição e valor."); return; }
+
+  if (type === "receita") {
+    const { error } = await sb.from("revenue_entries").insert({ entry_date, description, amount, source: "manual" });
+    if (error) { console.error(error); alert("Não foi possível salvar a receita."); return; }
+  } else {
+    const category = document.getElementById("feCategory").value.trim() || null;
+    const { error } = await sb.from("expense_entries").insert({ entry_date, description, amount, category });
+    if (error) { console.error(error); alert("Não foi possível salvar a despesa."); return; }
+  }
+  document.getElementById("financeFormArea").innerHTML = "";
+  await loadFinanceiro(document.getElementById("adminMain"));
+}
+
+async function deleteRevenueEntry(id) {
+  if (!confirm("Excluir esta receita manual?")) return;
+  const { error } = await sb.from("revenue_entries").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível excluir."); return; }
+  await loadFinanceiro(document.getElementById("adminMain"));
+}
+
+async function deleteExpenseEntry(id) {
+  if (!confirm("Excluir esta despesa?")) return;
+  const { error } = await sb.from("expense_entries").delete().eq("id", id);
   if (error) { console.error(error); alert("Não foi possível excluir."); return; }
   await loadFinanceiro(document.getElementById("adminMain"));
 }
@@ -1076,23 +1377,27 @@ async function saveMovement(ingredientId, type) {
 const MONTH_NAMES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 
 async function loadResultados(main) {
-  const [{ data: orders, error: oErr }, { data: cash, error: cErr }] = await Promise.all([
+  const [{ data: orders, error: oErr }, { data: revenue, error: rErr }, { data: expenses, error: eErr }] = await Promise.all([
     sb.from("orders").select("id, total, status, items, created_at"),
-    sb.from("cash_entries").select("entry_date, type, amount"),
+    sb.from("revenue_entries").select("entry_date, amount"),
+    sb.from("expense_entries").select("entry_date, amount"),
   ]);
   if (oErr) throw oErr;
-  if (cErr) throw cErr;
+  if (rErr) throw rErr;
+  if (eErr) throw eErr;
   admin.data.resultOrders = orders || [];
-  admin.data.resultCash = cash || [];
+  admin.data.resultRevenue = revenue || [];
+  admin.data.resultExpenses = expenses || [];
   renderResultados(main);
 }
 
 function renderResultados(main) {
   const orders = admin.data.resultOrders.filter(o => o.status !== "cancelled");
-  const cash = admin.data.resultCash;
+  const revenue = admin.data.resultRevenue;
+  const expenses = admin.data.resultExpenses;
 
-  // agrupa por mês (AAAA-MM) — faturamento e gasto vêm do Financeiro (Caixa),
-  // que é onde toda venda entra (site, WhatsApp etc.)
+  // agrupa por mês (AAAA-MM) — faturamento vem do Financeiro (site + manual),
+  // despesas também vêm do Financeiro
   const months = {};
   function monthKey(dateStr) { return dateStr ? dateStr.slice(0, 7) : null; }
   function ensure(key) {
@@ -1100,11 +1405,13 @@ function renderResultados(main) {
     return months[key];
   }
 
-  cash.forEach(c => {
-    const key = monthKey(c.entry_date);
-    if (!key) return;
-    if (c.type === "entrada") ensure(key).faturamento += Number(c.amount || 0);
-    else ensure(key).gasto += Number(c.amount || 0);
+  revenue.forEach(r => {
+    const key = monthKey(r.entry_date);
+    if (key) ensure(key).faturamento += Number(r.amount || 0);
+  });
+  expenses.forEach(e => {
+    const key = monthKey(e.entry_date);
+    if (key) ensure(key).gasto += Number(e.amount || 0);
   });
 
   const sortedKeys = Object.keys(months).sort();
@@ -1120,8 +1427,8 @@ function renderResultados(main) {
   });
   const categoryRows = Object.entries(byCategory).sort(([, a], [, b]) => b - a);
 
-  const totalFaturamento = cash.filter(c => c.type === "entrada").reduce((s, c) => s + Number(c.amount || 0), 0);
-  const totalGasto = cash.filter(c => c.type === "saida").reduce((s, c) => s + Number(c.amount || 0), 0);
+  const totalFaturamento = revenue.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const totalGasto = expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
   const totalLucro = totalFaturamento - totalGasto;
 
   main.innerHTML = `
@@ -1171,7 +1478,7 @@ function renderResultados(main) {
       ` : `<p class="center-msg">Nenhum item de pedido encontrado ainda.</p>`}
     </div>
 
-    <p class="hint" style="text-align:center">Faturamento e gastos vêm dos lançamentos de "Entrada" e "Saída" do Financeiro (inclui vendas do site, WhatsApp etc). O quadro "faturamento por produto" cobre só as vendas feitas pelo site, já que é onde dá pra saber o que foi vendido. Este relatório é calculado automaticamente — não precisa lançar nada aqui.</p>
+    <p class="hint" style="text-align:center">Faturamento e despesas vêm do Financeiro (a receita entra sozinha quando um pedido do site é concluído; o resto é lançado manualmente). O quadro "faturamento por produto" cobre só as vendas feitas pelo site. Este relatório é calculado automaticamente — não precisa lançar nada aqui.</p>
   `;
 }
 
@@ -1293,17 +1600,19 @@ function openRecipeDetail(recipeId) {
       </div>
 
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-        <strong>Custo total da receita: ${fmt(cost)}</strong><br>
-        <strong>Custo por ${recipe.yield_unit.replace(/s$/, "")}: ${fmt(unitCost)}</strong>
+        <strong>Custo dos ingredientes: ${fmt(cost)}</strong>
       </div>
 
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
         <p class="cart-section-title" style="margin:0 0 8px">Simulador de preço de venda</p>
         <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
-          <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:var(--muted)">Margem desejada (%)
+          <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:var(--muted)">Custos variáveis (%)
+            <input type="number" step="1" id="rpVariablePct" placeholder="Ex: 20" style="border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;width:110px">
+          </label>
+          <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:var(--muted)">Markup sobre o custo (%)
             <input type="number" step="1" id="rpMargin" placeholder="Ex: 150" style="border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;width:110px">
           </label>
-          <button class="btn btn-outline btn-sm" onclick="calcSuggestedPrice(${unitCost})">Calcular</button>
+          <button class="btn btn-outline btn-sm" onclick="calcSuggestedPrice(${cost}, ${recipe.yield_qty})">Calcular</button>
         </div>
         <p id="rpSuggestedPrice" class="hint" style="margin-top:8px"></p>
       </div>
@@ -1328,13 +1637,24 @@ async function removeRecipeIngredient(recipeIngredientId, recipeId) {
   openRecipeDetail(recipeId);
 }
 
-function calcSuggestedPrice(unitCost) {
-  const margin = Number(document.getElementById("rpMargin").value);
+function calcSuggestedPrice(ingredientsCost, yieldQty) {
+  const variablePct = Math.max(0, Number(document.getElementById("rpVariablePct").value) || 0);
+  const marginInput = Number(document.getElementById("rpMargin").value);
   const el = document.getElementById("rpSuggestedPrice");
-  if (!margin && margin !== 0) { el.textContent = "Informe a margem desejada."; return; }
-  const price = unitCost * (1 + margin / 100);
-  const profit = price - unitCost;
-  el.innerHTML = `Preço de venda sugerido: <strong>${fmt(price)}</strong> — lucro de ${fmt(profit)} por unidade.`;
+  if (marginInput === undefined || Number.isNaN(marginInput)) { el.textContent = "Informe o markup desejado."; return; }
+  const markup = Math.max(0, marginInput); // nunca permite markup negativo (preço abaixo do custo)
+
+  const custoAjustado = ingredientsCost * (1 + variablePct / 100);
+  const custoUnitario = yieldQty > 0 ? custoAjustado / yieldQty : 0;
+  const preco = custoUnitario * (1 + markup / 100);
+  const lucro = preco - custoUnitario;
+
+  el.innerHTML = `
+    Custos variáveis: <strong>${fmt(ingredientsCost * (variablePct / 100))}</strong><br>
+    Custo total ajustado: <strong>${fmt(custoAjustado)}</strong><br>
+    Custo por unidade: <strong>${fmt(custoUnitario)}</strong><br>
+    Preço de venda (markup de ${markup}% sobre o custo): <strong>${fmt(preco)}</strong> — lucro de ${fmt(lucro)} por unidade.
+  `;
 }
 
 /* ---------------- FIDELIDADE ---------------- */
