@@ -95,9 +95,10 @@ function renderShell() {
           <button class="${admin.tab === 'customers' ? 'active' : ''}" onclick="setTab('customers')">Clientes</button>
           <button class="${admin.tab === 'caixa' ? 'active' : ''}" onclick="setTab('caixa')">Caixa</button>
           <button class="${admin.tab === 'financeiro' ? 'active' : ''}" onclick="setTab('financeiro')">Financeiro</button>
-          <button class="${admin.tab === 'resultados' ? 'active' : ''}" onclick="setTab('resultados')">Resultados</button>
           <button class="${admin.tab === 'estoque' ? 'active' : ''}" onclick="setTab('estoque')">Estoque</button>
+          <button class="${admin.tab === 'receitas' ? 'active' : ''}" onclick="setTab('receitas')">Receitas</button>
           <button class="${admin.tab === 'precificacao' ? 'active' : ''}" onclick="setTab('precificacao')">Precificação</button>
+          <button class="${admin.tab === 'calendario' ? 'active' : ''}" onclick="setTab('calendario')">Calendário de Produção</button>
           <button class="${admin.tab === 'loyalty' ? 'active' : ''}" onclick="setTab('loyalty')">Fidelidade</button>
           <button class="${admin.tab === 'rewards' ? 'active' : ''}" onclick="setTab('rewards')">Mimos</button>
         </nav>
@@ -120,9 +121,10 @@ async function loadTab() {
     else if (admin.tab === "customers") await loadCustomers(main);
     else if (admin.tab === "caixa") await loadCaixa(main);
     else if (admin.tab === "financeiro") await loadFinanceiro(main);
-    else if (admin.tab === "resultados") await loadResultados(main);
     else if (admin.tab === "estoque") await loadEstoque(main);
+    else if (admin.tab === "receitas") await loadReceitas(main);
     else if (admin.tab === "precificacao") await loadPrecificacao(main);
+    else if (admin.tab === "calendario") await loadCalendario(main);
     else if (admin.tab === "loyalty") await loadLoyalty(main);
     else if (admin.tab === "rewards") await loadRewards(main);
   } catch (e) {
@@ -136,6 +138,7 @@ async function loadDashboard(main) {
   const { data: orders } = await sb.from("orders").select("*");
   const { data: customers } = await sb.from("customers").select("id");
   const { data: loyalty } = await sb.from("loyalty_cards").select("customer_id");
+  const { data: ingredients } = await sb.from("ingredients").select("name, unit, current_stock, min_stock");
 
   const active = (orders || []).filter(o => o.status !== "cancelled");
   const now = new Date();
@@ -147,6 +150,7 @@ async function loadDashboard(main) {
   const monthRevenue = monthOrders.reduce((s, o) => s + Number(o.total || 0), 0);
   const avgTicket = active.length ? totalRevenue / active.length : 0;
   const countByStatus = (s) => (orders || []).filter(o => o.status === s).length;
+  const lowStock = (ingredients || []).filter(i => Number(i.current_stock) <= Number(i.min_stock));
 
   const stats = [
     ["Receita do mês", fmt(monthRevenue)],
@@ -168,11 +172,22 @@ async function loadDashboard(main) {
 
   main.innerHTML = `
     <div class="admin-topbar"><h1>Dashboard</h1></div>
+
+    ${lowStock.length ? `
+      <div class="admin-card" style="border:1.5px solid #F3C0C0;background:#FDEDED">
+        <h2 style="color:#B23434">⚠️ Estoque baixo</h2>
+        <p class="hint">${lowStock.length} item${lowStock.length > 1 ? "ns" : ""} precisa${lowStock.length > 1 ? "m" : ""} de reposição:</p>
+        <ul class="guide-list">
+          ${lowStock.map(i => `<li>${i.name} — ${i.current_stock} ${i.unit} restantes (mínimo: ${i.min_stock} ${i.unit})</li>`).join("")}
+        </ul>
+      </div>
+    ` : ""}
+
     <div class="stat-grid">
       ${stats.map(([label, value]) => `<div class="stat-card"><div class="label">${label}</div><div class="value">${value}</div></div>`).join("")}
     </div>
     <div class="admin-card">
-      <h2>Calendário de produção</h2>
+      <h2>Pedidos por data de entrega</h2>
       ${dates.length ? `
         <table><thead><tr><th>Data do evento</th><th>Pedidos</th></tr></thead><tbody>
           ${dates.map(([d, c]) => `<tr><td>${new Date(d + "T00:00:00").toLocaleDateString("pt-BR")}</td><td>${c} pedido${c > 1 ? "s" : ""}</td></tr>`).join("")}
@@ -1000,12 +1015,17 @@ function renderCaixa(main) {
     <div id="cashFormArea"></div>
 
     <div class="admin-card">
+      <div class="admin-topbar" style="margin-bottom:10px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700"><input type="checkbox" id="caixaSelectAll" onchange="toggleAllCashEntries(this.checked)"> Selecionar todos</label>
+        <button class="btn btn-danger btn-sm" onclick="deleteSelectedCashEntries()">Excluir selecionadas</button>
+      </div>
       ${entries.length ? `
         <table>
-          <thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Pagamento</th><th>Valor</th><th></th></tr></thead>
+          <thead><tr><th></th><th>Data</th><th>Tipo</th><th>Descrição</th><th>Pagamento</th><th>Valor</th><th></th></tr></thead>
           <tbody>
             ${entries.map(e => `
               <tr>
+                <td><input type="checkbox" class="caixaCheck" value="${e.id}"></td>
                 <td>${new Date(e.entry_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
                 <td><span class="badge-status ${CAIXA_TYPE_BADGE[e.type]}">${CAIXA_TYPE_LABEL[e.type]}</span></td>
                 <td>${e.description}</td>
@@ -1076,6 +1096,19 @@ async function deleteCashEntry(id) {
   if (!confirm("Excluir esta movimentação?")) return;
   const { error } = await sb.from("cash_entries").delete().eq("id", id);
   if (error) { console.error(error); alert("Não foi possível excluir."); return; }
+  await loadCaixa(document.getElementById("adminMain"));
+}
+
+function toggleAllCashEntries(checked) {
+  document.querySelectorAll(".caixaCheck").forEach(cb => cb.checked = checked);
+}
+
+async function deleteSelectedCashEntries() {
+  const ids = Array.from(document.querySelectorAll(".caixaCheck:checked")).map(cb => cb.value);
+  if (!ids.length) { alert("Selecione ao menos uma movimentação."); return; }
+  if (!confirm(`Excluir ${ids.length} movimentação(ões) selecionada(s)? Essa ação não pode ser desfeita.`)) return;
+  const { error } = await sb.from("cash_entries").delete().in("id", ids);
+  if (error) { console.error(error); alert("Não foi possível excluir as movimentações selecionadas."); return; }
   await loadCaixa(document.getElementById("adminMain"));
 }
 
@@ -1229,30 +1262,48 @@ async function loadEstoque(main) {
 function renderEstoque(main) {
   const ingredients = admin.data.ingredients;
   const movements = admin.data.stockMovements;
+  const valorTotalEstoque = ingredients.reduce((s, i) => s + Number(i.current_stock || 0) * Number(i.cost_per_unit || 0), 0);
 
   main.innerHTML = `
     <div class="admin-topbar"><h1>Estoque</h1><button class="btn btn-pink" onclick="openIngredientForm()">+ Novo ingrediente</button></div>
+
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">Valor em estoque</div><div class="value" style="font-size:24px">${fmt(valorTotalEstoque)}</div></div>
+      <div class="stat-card"><div class="label">Itens cadastrados</div><div class="value">${ingredients.length}</div></div>
+      <div class="stat-card"><div class="label">Abaixo do mínimo</div><div class="value" style="color:#B23434">${ingredients.filter(i => Number(i.current_stock) <= Number(i.min_stock)).length}</div></div>
+    </div>
 
     <div id="ingredientFormArea"></div>
     <div id="movementFormArea"></div>
 
     <div class="admin-card">
-      <h2>Estoque em tempo real</h2>
+      <h2>Estoque</h2>
+      <p class="hint">Tudo editável direto na tabela — altere o campo e clique em "Salvar" na linha.</p>
       ${ingredients.length ? `
         <table>
-          <thead><tr><th>Ingrediente</th><th>Saldo</th><th>Mínimo</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Ingrediente</th><th>Qtd. comprada</th><th>Unidade</th><th>Valor pago</th><th>Custo/un.</th><th>Atual</th><th>Mínimo</th><th>Status</th><th></th></tr></thead>
           <tbody>
             ${ingredients.map(i => {
-              const low = Number(i.current_stock) < Number(i.min_stock);
+              const low = Number(i.current_stock) <= Number(i.min_stock);
               return `
                 <tr>
-                  <td><strong>${i.name}</strong></td>
-                  <td>${i.current_stock} ${i.unit}</td>
-                  <td>${i.min_stock} ${i.unit}</td>
-                  <td>${low ? `<span class="badge-status cancelled">Abaixo do mínimo</span>` : `<span class="badge-status completed">OK</span>`}</td>
-                  <td style="display:flex;gap:6px">
-                    <button class="btn btn-outline btn-sm" onclick="openMovementForm('${i.id}', 'entrada')">+ Entrada</button>
-                    <button class="btn btn-outline btn-sm" onclick="openMovementForm('${i.id}', 'saida')">− Saída</button>
+                  <td><input value="${i.name}" id="ing_name_${i.id}" style="border:1px solid var(--border);border-radius:7px;padding:6px;width:150px"></td>
+                  <td><input type="number" step="0.01" value="${i.package_qty ?? ""}" id="ing_pkgqty_${i.id}" style="border:1px solid var(--border);border-radius:7px;padding:6px;width:90px"></td>
+                  <td>
+                    <select id="ing_unit_${i.id}" style="border:1px solid var(--border);border-radius:7px;padding:6px">
+                      <option value="g" ${i.unit === "g" ? "selected" : ""}>g</option>
+                      <option value="ml" ${i.unit === "ml" ? "selected" : ""}>ml</option>
+                      <option value="uni" ${i.unit === "uni" ? "selected" : ""}>uni</option>
+                    </select>
+                  </td>
+                  <td><input type="number" step="0.01" value="${i.package_cost ?? ""}" id="ing_pkgcost_${i.id}" style="border:1px solid var(--border);border-radius:7px;padding:6px;width:90px"></td>
+                  <td>${fmt(i.cost_per_unit || 0)}/${i.unit}</td>
+                  <td><input type="number" step="0.01" value="${i.current_stock}" id="ing_current_${i.id}" style="border:1px solid var(--border);border-radius:7px;padding:6px;width:90px"></td>
+                  <td><input type="number" step="0.01" value="${i.min_stock}" id="ing_min_${i.id}" style="border:1px solid var(--border);border-radius:7px;padding:6px;width:90px"></td>
+                  <td>${low ? `<span class="badge-status cancelled">Atenção — comprar</span>` : `<span class="badge-status completed">Normal</span>`}</td>
+                  <td style="display:flex;gap:6px;flex-wrap:wrap">
+                    <button class="btn btn-outline btn-sm" onclick="saveIngredientEdit('${i.id}')">Salvar</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteIngredient('${i.id}')">Excluir</button>
                   </td>
                 </tr>
               `;
@@ -1260,6 +1311,19 @@ function renderEstoque(main) {
           </tbody>
         </table>
       ` : `<p class="center-msg">Nenhum ingrediente cadastrado ainda.</p>`}
+    </div>
+
+    <div class="admin-card">
+      <h2>Registrar movimentação rápida</h2>
+      <p class="hint">Atalho opcional — soma/subtrai do estoque atual e fica registrado no histórico abaixo. Você também pode editar "Atual" direto na tabela acima.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${ingredients.map(i => `
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-outline btn-sm" onclick="openMovementForm('${i.id}', 'entrada')">+ ${i.name}</button>
+            <button class="btn btn-outline btn-sm" onclick="openMovementForm('${i.id}', 'saida')">− ${i.name}</button>
+          </div>
+        `).join("")}
+      </div>
     </div>
 
     <div class="admin-card">
@@ -1282,6 +1346,30 @@ function renderEstoque(main) {
       ` : `<p class="center-msg">Nenhuma movimentação ainda.</p>`}
     </div>
   `;
+}
+
+async function saveIngredientEdit(id) {
+  const name = document.getElementById(`ing_name_${id}`).value.trim();
+  const unit = document.getElementById(`ing_unit_${id}`).value;
+  const packageQty = Number(document.getElementById(`ing_pkgqty_${id}`).value) || null;
+  const packageCost = Number(document.getElementById(`ing_pkgcost_${id}`).value) || null;
+  const currentStock = Number(document.getElementById(`ing_current_${id}`).value) || 0;
+  const minStock = Number(document.getElementById(`ing_min_${id}`).value) || 0;
+  const costPerUnit = (packageQty && packageCost) ? packageCost / packageQty : null;
+
+  const { error } = await sb.from("ingredients").update({
+    name, unit, package_qty: packageQty, package_cost: packageCost,
+    cost_per_unit: costPerUnit, current_stock: currentStock, min_stock: minStock,
+  }).eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível salvar."); return; }
+  await loadEstoque(document.getElementById("adminMain"));
+}
+
+async function deleteIngredient(id) {
+  if (!confirm("Excluir este ingrediente? Essa ação não pode ser desfeita.")) return;
+  const { error } = await sb.from("ingredients").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível excluir — verifique se ele não está sendo usado em alguma receita."); return; }
+  await loadEstoque(document.getElementById("adminMain"));
 }
 
 function openIngredientForm() {
@@ -1482,9 +1570,11 @@ function renderResultados(main) {
   `;
 }
 
-/* ---------------- PRECIFICAÇÃO (receitas) ---------------- */
+/* ---------------- RECEITAS ---------------- */
 
-async function loadPrecificacao(main) {
+const YIELD_UNITS = ["g", "kg", "ml", "l", "unidade"];
+
+async function loadReceitas(main) {
   const [{ data: recipes, error: rErr }, { data: ingredients, error: iErr }] = await Promise.all([
     sb.from("recipes").select("*, recipe_ingredients(*, ingredients(name, unit, cost_per_unit))").order("name", { ascending: true }),
     sb.from("ingredients").select("*").order("name", { ascending: true }),
@@ -1493,7 +1583,7 @@ async function loadPrecificacao(main) {
   if (iErr) throw iErr;
   admin.data.recipes = recipes || [];
   admin.data.ingredients = ingredients || [];
-  renderPrecificacao(main);
+  renderReceitas(main);
 }
 
 function recipeCost(recipe) {
@@ -1502,30 +1592,31 @@ function recipeCost(recipe) {
     return s + cpu * Number(ri.quantity);
   }, 0);
 }
+function recipeUnitCost(recipe) {
+  const cost = recipeCost(recipe);
+  return recipe.yield_qty > 0 ? cost / recipe.yield_qty : 0;
+}
 
-function renderPrecificacao(main) {
+function renderReceitas(main) {
   const recipes = admin.data.recipes;
   main.innerHTML = `
-    <div class="admin-topbar"><h1>Precificação</h1><button class="btn btn-pink" onclick="openRecipeForm()">+ Nova receita</button></div>
+    <div class="admin-topbar"><h1>Receitas</h1><button class="btn btn-pink" onclick="openRecipeForm()">+ Nova receita</button></div>
+    <p class="hint">Ingredientes usados vêm sempre do Cadastro de Ingredientes — o custo é calculado sozinho.</p>
     <div id="recipeFormArea"></div>
     <div class="admin-card">
       ${recipes.length ? `
         <table>
           <thead><tr><th>Receita</th><th>Rendimento</th><th>Custo total</th><th>Custo por unidade</th><th></th></tr></thead>
           <tbody>
-            ${recipes.map(r => {
-              const cost = recipeCost(r);
-              const unitCost = r.yield_qty > 0 ? cost / r.yield_qty : 0;
-              return `
+            ${recipes.map(r => `
                 <tr>
                   <td><strong>${r.name}</strong></td>
                   <td>${r.yield_qty} ${r.yield_unit}</td>
-                  <td>${fmt(cost)}</td>
-                  <td>${fmt(unitCost)}</td>
+                  <td>${fmt(recipeCost(r))}</td>
+                  <td>${fmt(recipeUnitCost(r))}/${r.yield_unit}</td>
                   <td><button class="btn btn-outline btn-sm" onclick="openRecipeDetail('${r.id}')">Abrir</button></td>
                 </tr>
-              `;
-            }).join("")}
+              `).join("")}
           </tbody>
         </table>
       ` : `<p class="center-msg">Nenhuma receita cadastrada ainda.</p>`}
@@ -1538,9 +1629,11 @@ function openRecipeForm() {
     <div class="admin-card">
       <h2>Nova receita</h2>
       <div class="form-grid">
-        <label>Nome da receita<input type="text" id="rpName" placeholder="Ex: Cascone banhado"></label>
-        <label>Rendimento (quantidade)<input type="number" step="0.01" id="rpYieldQty" placeholder="Ex: 50"></label>
-        <label>Unidade do rendimento<input type="text" id="rpYieldUnit" placeholder="Ex: unidades"></label>
+        <label>Nome da receita<input type="text" id="rpName" placeholder="Ex: Creme de Ninho"></label>
+        <label>Rendimento (quantidade)<input type="number" step="0.01" id="rpYieldQty" placeholder="Ex: 695"></label>
+        <label>Unidade do rendimento
+          <select id="rpYieldUnit">${YIELD_UNITS.map(u => `<option value="${u}">${u}</option>`).join("")}</select>
+        </label>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px">
         <button class="btn btn-pink" onclick="saveRecipe()">Salvar</button>
@@ -1553,12 +1646,20 @@ function openRecipeForm() {
 async function saveRecipe() {
   const name = document.getElementById("rpName").value.trim();
   const yieldQty = Number(document.getElementById("rpYieldQty").value) || 1;
-  const yieldUnit = document.getElementById("rpYieldUnit").value.trim() || "unidades";
+  const yieldUnit = document.getElementById("rpYieldUnit").value;
   if (!name) { alert("Informe o nome da receita."); return; }
   const { error } = await sb.from("recipes").insert({ name, yield_qty: yieldQty, yield_unit: yieldUnit });
   if (error) { console.error(error); alert("Não foi possível salvar a receita."); return; }
   document.getElementById("recipeFormArea").innerHTML = "";
-  await loadPrecificacao(document.getElementById("adminMain"));
+  await loadReceitas(document.getElementById("adminMain"));
+}
+
+async function deleteRecipe(recipeId) {
+  if (!confirm("Excluir esta receita? Essa ação não pode ser desfeita.")) return;
+  const { error } = await sb.from("recipes").delete().eq("id", recipeId);
+  if (error) { console.error(error); alert("Não foi possível excluir — verifique se ela não está sendo usada em alguma Precificação."); return; }
+  document.getElementById("recipeFormArea").innerHTML = "";
+  await loadReceitas(document.getElementById("adminMain"));
 }
 
 function openRecipeDetail(recipeId) {
@@ -1566,12 +1667,19 @@ function openRecipeDetail(recipeId) {
   if (!recipe) return;
   const ingredients = admin.data.ingredients;
   const cost = recipeCost(recipe);
-  const unitCost = recipe.yield_qty > 0 ? cost / recipe.yield_qty : 0;
+  const unitCost = recipeUnitCost(recipe);
 
   document.getElementById("recipeFormArea").innerHTML = `
     <div class="admin-card">
       <div class="admin-topbar" style="margin-bottom:6px"><h2 style="margin:0">${recipe.name}</h2><button class="btn btn-outline btn-sm" onclick="document.getElementById('recipeFormArea').innerHTML=''">Fechar</button></div>
-      <p class="hint">Rendimento: ${recipe.yield_qty} ${recipe.yield_unit}</p>
+
+      <div class="form-grid" style="margin-bottom:14px">
+        <label>Rendimento (quantidade)<input type="number" step="0.01" id="rpEditYieldQty" value="${recipe.yield_qty}"></label>
+        <label>Unidade do rendimento
+          <select id="rpEditYieldUnit">${YIELD_UNITS.map(u => `<option value="${u}" ${u === recipe.yield_unit ? "selected" : ""}>${u}</option>`).join("")}</select>
+        </label>
+        <button class="btn btn-outline btn-sm" style="align-self:end" onclick="saveRecipeYield('${recipeId}')">Salvar rendimento</button>
+      </div>
 
       <table>
         <thead><tr><th>Ingrediente</th><th>Quantidade</th><th>Custo</th><th></th></tr></thead>
@@ -1599,25 +1707,24 @@ function openRecipeDetail(recipeId) {
         <button class="btn btn-pink btn-sm" onclick="addRecipeIngredient('${recipeId}')">+ Adicionar ingrediente</button>
       </div>
 
-      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-        <strong>Custo dos ingredientes: ${fmt(cost)}</strong>
-      </div>
-
-      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-        <p class="cart-section-title" style="margin:0 0 8px">Simulador de preço de venda</p>
-        <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
-          <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:var(--muted)">Custos variáveis (%)
-            <input type="number" step="1" id="rpVariablePct" placeholder="Ex: 20" style="border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;width:110px">
-          </label>
-          <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:var(--muted)">Markup sobre o custo (%)
-            <input type="number" step="1" id="rpMargin" placeholder="Ex: 150" style="border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;width:110px">
-          </label>
-          <button class="btn btn-outline btn-sm" onclick="calcSuggestedPrice(${cost}, ${recipe.yield_qty})">Calcular</button>
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div>
+          <strong>Custo total da receita: ${fmt(cost)}</strong><br>
+          <strong>Custo por ${recipe.yield_unit}: ${fmt(unitCost)}</strong>
         </div>
-        <p id="rpSuggestedPrice" class="hint" style="margin-top:8px"></p>
+        <button class="btn btn-danger btn-sm" onclick="deleteRecipe('${recipeId}')">Excluir receita</button>
       </div>
     </div>
   `;
+}
+
+async function saveRecipeYield(recipeId) {
+  const yieldQty = Number(document.getElementById("rpEditYieldQty").value) || 1;
+  const yieldUnit = document.getElementById("rpEditYieldUnit").value;
+  const { error } = await sb.from("recipes").update({ yield_qty: yieldQty, yield_unit: yieldUnit }).eq("id", recipeId);
+  if (error) { console.error(error); alert("Não foi possível salvar o rendimento."); return; }
+  await loadReceitas(document.getElementById("adminMain"));
+  openRecipeDetail(recipeId);
 }
 
 async function addRecipeIngredient(recipeId) {
@@ -1626,35 +1733,372 @@ async function addRecipeIngredient(recipeId) {
   if (!ingredientId || !quantity || quantity <= 0) { alert("Escolha um ingrediente e uma quantidade válida."); return; }
   const { error } = await sb.from("recipe_ingredients").insert({ recipe_id: recipeId, ingredient_id: ingredientId, quantity });
   if (error) { console.error(error); alert("Não foi possível adicionar o ingrediente."); return; }
-  await loadPrecificacao(document.getElementById("adminMain"));
+  await loadReceitas(document.getElementById("adminMain"));
   openRecipeDetail(recipeId);
 }
 
 async function removeRecipeIngredient(recipeIngredientId, recipeId) {
   const { error } = await sb.from("recipe_ingredients").delete().eq("id", recipeIngredientId);
   if (error) { console.error(error); alert("Não foi possível remover."); return; }
-  await loadPrecificacao(document.getElementById("adminMain"));
+  await loadReceitas(document.getElementById("adminMain"));
   openRecipeDetail(recipeId);
 }
 
-function calcSuggestedPrice(ingredientsCost, yieldQty) {
-  const variablePct = Math.max(0, Number(document.getElementById("rpVariablePct").value) || 0);
-  const marginInput = Number(document.getElementById("rpMargin").value);
-  const el = document.getElementById("rpSuggestedPrice");
-  if (marginInput === undefined || Number.isNaN(marginInput)) { el.textContent = "Informe o markup desejado."; return; }
-  const markup = Math.max(0, marginInput); // nunca permite markup negativo (preço abaixo do custo)
+/* ---------------- PRECIFICAÇÃO (ingredientes e/ou receitas) ---------------- */
 
-  const custoAjustado = ingredientsCost * (1 + variablePct / 100);
-  const custoUnitario = yieldQty > 0 ? custoAjustado / yieldQty : 0;
-  const preco = custoUnitario * (1 + markup / 100);
-  const lucro = preco - custoUnitario;
+async function loadPrecificacao(main) {
+  const [{ data: pricings, error: pErr }, { data: ingredients, error: iErr }, { data: recipes, error: rErr }] = await Promise.all([
+    sb.from("pricings").select("*, pricing_items(*, ingredients(name, unit, cost_per_unit), recipes(name, yield_qty, yield_unit, recipe_ingredients(quantity, ingredients(cost_per_unit))))").order("name", { ascending: true }),
+    sb.from("ingredients").select("*").order("name", { ascending: true }),
+    sb.from("recipes").select("*, recipe_ingredients(quantity, ingredients(cost_per_unit))").order("name", { ascending: true }),
+  ]);
+  if (pErr) throw pErr;
+  if (iErr) throw iErr;
+  if (rErr) throw rErr;
+  admin.data.pricings = pricings || [];
+  admin.data.ingredients = ingredients || [];
+  admin.data.recipes = recipes || [];
+  renderPrecificacaoList(main);
+}
 
-  el.innerHTML = `
-    Custos variáveis: <strong>${fmt(ingredientsCost * (variablePct / 100))}</strong><br>
-    Custo total ajustado: <strong>${fmt(custoAjustado)}</strong><br>
-    Custo por unidade: <strong>${fmt(custoUnitario)}</strong><br>
-    Preço de venda (markup de ${markup}% sobre o custo): <strong>${fmt(preco)}</strong> — lucro de ${fmt(lucro)} por unidade.
+// custo de 1 unidade da própria receita (yield_unit), reaproveitado aqui pra não duplicar lógica
+function recipeCostFromRaw(recipe) {
+  return (recipe.recipe_ingredients || []).reduce((s, ri) => s + Number(ri.ingredients?.cost_per_unit || 0) * Number(ri.quantity), 0);
+}
+function recipeUnitCostFromRaw(recipe) {
+  const cost = recipeCostFromRaw(recipe);
+  return recipe.yield_qty > 0 ? cost / recipe.yield_qty : 0;
+}
+
+// custo de UM item de precificação (ingrediente direto OU quantidade usada de uma receita)
+function pricingItemCost(item) {
+  if (item.item_type === "ingredient") {
+    return Number(item.ingredients?.cost_per_unit || 0) * Number(item.quantity);
+  }
+  // item_type === "recipe": custo por unidade da receita × quantidade usada aqui
+  const r = item.recipes;
+  if (!r) return 0;
+  const totalCost = (r.recipe_ingredients || []).reduce((s, ri) => s + Number(ri.ingredients?.cost_per_unit || 0) * Number(ri.quantity), 0);
+  const unitCost = r.yield_qty > 0 ? totalCost / r.yield_qty : 0;
+  return unitCost * Number(item.quantity);
+}
+function pricingBaseCost(pricing) {
+  return (pricing.pricing_items || []).reduce((s, it) => s + pricingItemCost(it), 0);
+}
+
+function renderPrecificacaoList(main) {
+  const pricings = admin.data.pricings;
+  main.innerHTML = `
+    <div class="admin-topbar"><h1>Precificação</h1><button class="btn btn-pink" onclick="openPricingForm()">+ Nova precificação</button></div>
+    <p class="hint">Cada item pode ser um ingrediente direto ou uma receita/sub-receita já cadastrada.</p>
+    <div id="pricingFormArea"></div>
+    <div class="admin-card">
+      ${pricings.length ? `
+        <table>
+          <thead><tr><th>Produto</th><th>Custo base</th><th>Markup</th><th>Preço de venda</th><th></th></tr></thead>
+          <tbody>
+            ${pricings.map(p => {
+              const base = pricingBaseCost(p);
+              const adjusted = base * (1 + Number(p.variable_pct) / 100);
+              const unitCost = p.produced_qty > 0 ? adjusted / p.produced_qty : 0;
+              const sale = unitCost * (1 + Number(p.markup_pct) / 100);
+              return `
+                <tr>
+                  <td><strong>${p.name}</strong></td>
+                  <td>${fmt(unitCost)}/un.</td>
+                  <td>${p.markup_pct}%</td>
+                  <td><strong>${fmt(sale)}</strong></td>
+                  <td><button class="btn btn-outline btn-sm" onclick="openPricingDetail('${p.id}')">Abrir</button></td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Nenhuma precificação cadastrada ainda.</p>`}
+    </div>
   `;
+}
+
+function openPricingForm() {
+  document.getElementById("pricingFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>Nova precificação</h2>
+      <div class="form-grid">
+        <label>Nome do produto<input type="text" id="pcName" placeholder="Ex: Bolo de chocolate"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="savePricing()">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('pricingFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+async function savePricing() {
+  const name = document.getElementById("pcName").value.trim();
+  if (!name) { alert("Informe o nome do produto."); return; }
+  const { error } = await sb.from("pricings").insert({ name });
+  if (error) { console.error(error); alert("Não foi possível salvar."); return; }
+  document.getElementById("pricingFormArea").innerHTML = "";
+  await loadPrecificacao(document.getElementById("adminMain"));
+}
+
+async function deletePricing(id) {
+  if (!confirm("Excluir esta precificação? Essa ação não pode ser desfeita.")) return;
+  const { error } = await sb.from("pricings").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível excluir."); return; }
+  document.getElementById("pricingFormArea").innerHTML = "";
+  await loadPrecificacao(document.getElementById("adminMain"));
+}
+
+function openPricingDetail(pricingId) {
+  const p = admin.data.pricings.find(p => p.id === pricingId);
+  if (!p) return;
+  const ingredients = admin.data.ingredients;
+  const recipes = admin.data.recipes;
+
+  const base = pricingBaseCost(p);
+  const variablePct = Number(p.variable_pct) || 0;
+  const adjusted = base * (1 + variablePct / 100);
+  const unitCost = p.produced_qty > 0 ? adjusted / p.produced_qty : 0;
+  const markupPct = Number(p.markup_pct) || 0;
+  const sale = unitCost * (1 + markupPct / 100);
+  const profit = sale - unitCost;
+
+  document.getElementById("pricingFormArea").innerHTML = `
+    <div class="admin-card">
+      <div class="admin-topbar" style="margin-bottom:6px"><h2 style="margin:0">${p.name}</h2><button class="btn btn-outline btn-sm" onclick="document.getElementById('pricingFormArea').innerHTML=''">Fechar</button></div>
+
+      <table>
+        <thead><tr><th>Tipo</th><th>Item</th><th>Quantidade</th><th>Custo</th><th></th></tr></thead>
+        <tbody>
+          ${(p.pricing_items || []).map(it => `
+            <tr>
+              <td>${it.item_type === "ingredient" ? "Ingrediente" : "Receita"}</td>
+              <td>${it.item_type === "ingredient" ? (it.ingredients?.name || "—") : (it.recipes?.name || "—")}</td>
+              <td>${it.quantity} ${it.item_type === "ingredient" ? (it.ingredients?.unit || "") : (it.recipes?.yield_unit || "")}</td>
+              <td>${fmt(pricingItemCost(it))}</td>
+              <td><button class="btn btn-outline btn-sm" onclick="removePricingItem('${it.id}', '${pricingId}')">Remover</button></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+
+      <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+        <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:var(--muted)">Tipo
+          <select id="piType" onchange="renderPricingItemPicker()" style="border:1.5px solid var(--border);border-radius:10px;padding:9px 11px">
+            <option value="ingredient">Ingrediente</option>
+            <option value="recipe">Receita</option>
+          </select>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:var(--muted)">Item
+          <select id="piItem" style="border:1.5px solid var(--border);border-radius:10px;padding:9px 11px">
+            ${ingredients.map(i => `<option value="${i.id}">${i.name} (${i.unit})</option>`).join("")}
+          </select>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:var(--muted)">Quantidade
+          <input type="number" step="0.001" id="piQuantity" style="border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;width:110px">
+        </label>
+        <button class="btn btn-pink btn-sm" onclick="addPricingItem('${pricingId}')">+ Adicionar item</button>
+      </div>
+
+      <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+        <div class="form-grid">
+          <label>Quantidade produzida<input type="number" step="0.01" id="pcProducedQty" value="${p.produced_qty}"></label>
+          <label>Custos variáveis (%)<input type="number" step="1" id="pcVariablePct" value="${p.variable_pct}"></label>
+          <label>Markup sobre o custo (%)<input type="number" step="1" id="pcMarkupPct" value="${p.markup_pct}"></label>
+        </div>
+        <button class="btn btn-outline btn-sm" style="margin-top:10px" onclick="savePricingCalc('${pricingId}')">Recalcular e salvar</button>
+
+        <div class="callout" style="margin-top:16px">
+          Custo dos ingredientes/receitas: <strong>${fmt(base)}</strong><br>
+          Custos variáveis (${variablePct}%): <strong>${fmt(base * variablePct / 100)}</strong><br>
+          Custo total ajustado: <strong>${fmt(adjusted)}</strong><br>
+          Quantidade produzida: <strong>${p.produced_qty}</strong><br>
+          Custo unitário: <strong>${fmt(unitCost)}</strong><br>
+          <span style="font-size:15px">Preço de venda (markup de ${markupPct}% sobre o custo): <strong style="color:var(--pink)">${fmt(sale)}</strong></span><br>
+          Lucro por unidade: <strong>${fmt(profit)}</strong>
+        </div>
+      </div>
+
+      <div style="margin-top:16px;text-align:right">
+        <button class="btn btn-danger btn-sm" onclick="deletePricing('${pricingId}')">Excluir precificação</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderPricingItemPicker() {
+  const type = document.getElementById("piType").value;
+  const select = document.getElementById("piItem");
+  if (type === "ingredient") {
+    select.innerHTML = admin.data.ingredients.map(i => `<option value="${i.id}">${i.name} (${i.unit})</option>`).join("");
+  } else {
+    select.innerHTML = admin.data.recipes.map(r => `<option value="${r.id}">${r.name} (${r.yield_unit})</option>`).join("");
+  }
+}
+
+async function addPricingItem(pricingId) {
+  const type = document.getElementById("piType").value;
+  const itemId = document.getElementById("piItem").value;
+  const quantity = Number(document.getElementById("piQuantity").value);
+  if (!itemId || !quantity || quantity <= 0) { alert("Escolha um item e uma quantidade válida."); return; }
+  const payload = { pricing_id: pricingId, item_type: type, quantity };
+  if (type === "ingredient") payload.ingredient_id = itemId; else payload.recipe_id = itemId;
+  const { error } = await sb.from("pricing_items").insert(payload);
+  if (error) { console.error(error); alert("Não foi possível adicionar o item."); return; }
+  await loadPrecificacao(document.getElementById("adminMain"));
+  openPricingDetail(pricingId);
+}
+
+async function removePricingItem(itemId, pricingId) {
+  const { error } = await sb.from("pricing_items").delete().eq("id", itemId);
+  if (error) { console.error(error); alert("Não foi possível remover."); return; }
+  await loadPrecificacao(document.getElementById("adminMain"));
+  openPricingDetail(pricingId);
+}
+
+async function savePricingCalc(pricingId) {
+  const payload = {
+    produced_qty: Number(document.getElementById("pcProducedQty").value) || 1,
+    variable_pct: Math.max(0, Number(document.getElementById("pcVariablePct").value) || 0),
+    markup_pct: Math.max(0, Number(document.getElementById("pcMarkupPct").value) || 0), // nunca negativo: preço nunca fica abaixo do custo
+  };
+  const { error } = await sb.from("pricings").update(payload).eq("id", pricingId);
+  if (error) { console.error(error); alert("Não foi possível salvar."); return; }
+  await loadPrecificacao(document.getElementById("adminMain"));
+  openPricingDetail(pricingId);
+}
+
+/* ---------------- CALENDÁRIO DE PRODUÇÃO (100% manual) ---------------- */
+
+async function loadCalendario(main) {
+  const { data: events, error } = await sb.from("production_events").select("*").order("event_date", { ascending: true }).order("event_time", { ascending: true });
+  if (error) throw error;
+  admin.data.productionEvents = events || [];
+  const now = new Date();
+  admin.data.calYear = admin.data.calYear || now.getFullYear();
+  admin.data.calMonth = admin.data.calMonth ?? now.getMonth(); // 0-11
+  renderCalendario(main);
+}
+
+const MONTH_NAMES_CAL = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+
+function changeCalMonth(delta) {
+  let m = admin.data.calMonth + delta;
+  let y = admin.data.calYear;
+  if (m < 0) { m = 11; y--; }
+  if (m > 11) { m = 0; y++; }
+  admin.data.calMonth = m;
+  admin.data.calYear = y;
+  renderCalendario(document.getElementById("adminMain"));
+}
+
+function changeCalYear(delta) {
+  admin.data.calYear += delta;
+  renderCalendario(document.getElementById("adminMain"));
+}
+
+function renderCalendario(main) {
+  const year = admin.data.calYear;
+  const month = admin.data.calMonth;
+  const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
+  const events = admin.data.productionEvents.filter(e => e.event_date.startsWith(monthKey));
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const byDay = {};
+  events.forEach(e => {
+    const day = Number(e.event_date.split("-")[2]);
+    (byDay[day] = byDay[day] || []).push(e);
+  });
+
+  main.innerHTML = `
+    <div class="admin-topbar"><h1>Calendário de Produção</h1><button class="btn btn-pink" onclick="openEventForm()">+ Novo evento</button></div>
+    <p class="hint">Planner 100% manual — nada aqui é preenchido automaticamente pelos pedidos.</p>
+
+    <div class="admin-card">
+      <div class="admin-topbar" style="margin-bottom:0">
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-outline btn-sm" onclick="changeCalYear(-1)">« Ano</button>
+          <button class="btn btn-outline btn-sm" onclick="changeCalMonth(-1)">‹ Mês</button>
+          <h2 style="margin:0;min-width:180px;text-align:center">${MONTH_NAMES_CAL[month]} / ${year}</h2>
+          <button class="btn btn-outline btn-sm" onclick="changeCalMonth(1)">Mês ›</button>
+          <button class="btn btn-outline btn-sm" onclick="changeCalYear(1)">Ano »</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="eventFormArea"></div>
+
+    <div class="admin-card">
+      ${Object.keys(byDay).length ? `
+        ${Array.from({ length: daysInMonth }, (_, i) => i + 1).filter(d => byDay[d]).map(day => `
+          <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+            <strong>${String(day).padStart(2, "0")}/${String(month + 1).padStart(2, "0")}/${year}</strong>
+            ${byDay[day].map(e => `
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;padding:8px 10px;background:var(--pink-soft);border-radius:10px">
+                <div>
+                  <strong>${e.event_time ? e.event_time.slice(0, 5) + " — " : ""}${e.title}</strong>
+                  ${e.description ? `<div class="hint" style="margin:2px 0 0">${e.description}</div>` : ""}
+                  ${e.note ? `<div class="hint" style="margin:2px 0 0;font-style:italic">${e.note}</div>` : ""}
+                </div>
+                <div style="display:flex;gap:6px">
+                  <button class="btn btn-outline btn-sm" onclick="openEventForm('${e.id}')">Editar</button>
+                  <button class="btn btn-danger btn-sm" onclick="deleteEvent('${e.id}')">Excluir</button>
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        `).join("")}
+      ` : `<p class="center-msg">Nenhum evento cadastrado para ${MONTH_NAMES_CAL[month]}/${year}.</p>`}
+    </div>
+  `;
+}
+
+function openEventForm(eventId) {
+  const e = eventId ? admin.data.productionEvents.find(e => e.id === eventId) : null;
+  const defaultDate = `${admin.data.calYear}-${String(admin.data.calMonth + 1).padStart(2, "0")}-01`;
+  document.getElementById("eventFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>${e ? "Editar evento" : "Novo evento"}</h2>
+      <div class="form-grid">
+        <label>Data<input type="date" id="evDate" value="${e ? e.event_date : defaultDate}"></label>
+        <label>Horário (opcional)<input type="time" id="evTime" value="${e && e.event_time ? e.event_time.slice(0, 5) : ""}"></label>
+        <label class="span-2">Título<input type="text" id="evTitle" value="${e ? e.title : ""}" placeholder="Ex: Fazer massa do bolo da Ana"></label>
+        <label class="span-2">Descrição (opcional)<input type="text" id="evDescription" value="${e ? e.description || "" : ""}"></label>
+        <label class="span-2">Observação (opcional)<input type="text" id="evNote" value="${e ? e.note || "" : ""}"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveEvent(${e ? `'${e.id}'` : "null"})">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('eventFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveEvent(eventId) {
+  const payload = {
+    event_date: document.getElementById("evDate").value,
+    event_time: document.getElementById("evTime").value || null,
+    title: document.getElementById("evTitle").value.trim(),
+    description: document.getElementById("evDescription").value.trim() || null,
+    note: document.getElementById("evNote").value.trim() || null,
+  };
+  if (!payload.event_date || !payload.title) { alert("Preencha data e título."); return; }
+
+  const { error } = eventId
+    ? await sb.from("production_events").update(payload).eq("id", eventId)
+    : await sb.from("production_events").insert(payload);
+  if (error) { console.error(error); alert("Não foi possível salvar o evento."); return; }
+  document.getElementById("eventFormArea").innerHTML = "";
+  await loadCalendario(document.getElementById("adminMain"));
+}
+
+async function deleteEvent(eventId) {
+  if (!confirm("Excluir este evento?")) return;
+  const { error } = await sb.from("production_events").delete().eq("id", eventId);
+  if (error) { console.error(error); alert("Não foi possível excluir."); return; }
+  await loadCalendario(document.getElementById("adminMain"));
 }
 
 /* ---------------- FIDELIDADE ---------------- */
