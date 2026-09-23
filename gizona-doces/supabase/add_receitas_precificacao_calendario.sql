@@ -28,7 +28,9 @@ create table if not exists public.pricings (
   updated_at timestamptz not null default now()
 );
 
-alter table public.pricings enable row level security;
+alter table public.pricings
+  add column if not exists manual_sale_price numeric(10,2);
+
 create policy "admin acesso total pricings"
   on public.pricings for all
   using (public.is_admin())
@@ -66,8 +68,15 @@ create table if not exists public.production_events (
   title text not null,
   description text,
   note text,
+  category text not null default 'producao' check (category in ('encomenda', 'producao', 'outro')),
   created_at timestamptz not null default now()
 );
+
+alter table public.production_events
+  add column if not exists category text not null default 'producao';
+alter table public.production_events drop constraint if exists production_events_category_check;
+alter table public.production_events add constraint production_events_category_check
+  check (category in ('encomenda', 'producao', 'outro'));
 
 alter table public.production_events enable row level security;
 create policy "admin acesso total production_events"

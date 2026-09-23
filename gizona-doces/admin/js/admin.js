@@ -83,26 +83,44 @@ async function handleAdminLogout() {
 }
 
 /* ---------------- SHELL ---------------- */
+function navIcon(name) {
+  const paths = {
+    home: `<path d="M4 11l8-7 8 7v9a1 1 0 01-1 1h-4v-6H9v6H5a1 1 0 01-1-1v-9z"/>`,
+    bag: `<path d="M6 8h12l1 13H5L6 8z" fill="none"/><path d="M8 8V6a4 4 0 018 0v2" fill="none"/>`,
+    cube: `<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" fill="none"/><path d="M4 7.5L12 12l8-4.5M12 12v9" fill="none"/>`,
+    users: `<circle cx="9" cy="8" r="3" fill="none"/><path d="M3 20a6 6 0 0112 0" fill="none"/><path d="M15 8a3 3 0 110-6M21 20a6 6 0 00-6-6" fill="none"/>`,
+    wallet: `<rect x="3" y="6" width="18" height="13" rx="2" fill="none"/><path d="M16 12h2" /><path d="M3 9h18" fill="none"/>`,
+    chart: `<path d="M4 20V10M10 20V4M16 20v-7M22 20H2" fill="none"/>`,
+    box: `<path d="M3 8l9-5 9 5-9 5-9-5z" fill="none"/><path d="M3 8v8l9 5 9-5V8M12 13v8" fill="none"/>`,
+    book: `<path d="M5 4h9a3 3 0 013 3v13H8a3 3 0 00-3 3V4z" fill="none"/><path d="M17 4v16" fill="none"/>`,
+    calc: `<rect x="5" y="3" width="14" height="18" rx="2" fill="none"/><path d="M8 7h8M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01" fill="none"/>`,
+    calendar: `<rect x="3" y="5" width="18" height="16" rx="2" fill="none"/><path d="M3 10h18M8 3v4M16 3v4" fill="none"/>`,
+    crown: `<path d="M3 8l4 3 5-6 5 6 4-3-2 10H5L3 8z" fill="currentColor" stroke="none"/>`,
+    gift: `<rect x="4" y="9" width="16" height="11" rx="1" fill="none"/><path d="M4 13h16M12 9v11M12 9c-1.5-4-6-4-6-1.5S9 9 12 9zm0 0c1.5-4 6-4 6-1.5S15 9 12 9z" fill="none"/>`,
+  };
+  return `<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${paths[name] || ""}</svg>`;
+}
+
 function renderShell() {
   root.innerHTML = `
     <div class="admin-shell">
       <aside class="admin-sidebar">
         <div class="admin-logo"><img class="seal" src="../images/brand/icon.png" alt="Gizona Doces"><span>Painel Admin<br>Gizona Doces</span></div>
         <nav class="admin-nav">
-          <button class="${admin.tab === 'dashboard' ? 'active' : ''}" onclick="setTab('dashboard')">Dashboard</button>
-          <button class="${admin.tab === 'orders' ? 'active' : ''}" onclick="setTab('orders')">Pedidos</button>
-          <button class="${admin.tab === 'products' ? 'active' : ''}" onclick="setTab('products')">Produtos</button>
-          <button class="${admin.tab === 'customers' ? 'active' : ''}" onclick="setTab('customers')">Clientes</button>
-          <button class="${admin.tab === 'caixa' ? 'active' : ''}" onclick="setTab('caixa')">Caixa</button>
-          <button class="${admin.tab === 'financeiro' ? 'active' : ''}" onclick="setTab('financeiro')">Financeiro</button>
-          <button class="${admin.tab === 'estoque' ? 'active' : ''}" onclick="setTab('estoque')">Estoque</button>
-          <button class="${admin.tab === 'receitas' ? 'active' : ''}" onclick="setTab('receitas')">Receitas</button>
-          <button class="${admin.tab === 'precificacao' ? 'active' : ''}" onclick="setTab('precificacao')">Precificação</button>
-          <button class="${admin.tab === 'calendario' ? 'active' : ''}" onclick="setTab('calendario')">Calendário de Produção</button>
-          <button class="${admin.tab === 'loyalty' ? 'active' : ''}" onclick="setTab('loyalty')">Fidelidade</button>
-          <button class="${admin.tab === 'rewards' ? 'active' : ''}" onclick="setTab('rewards')">Mimos</button>
+          <button class="${admin.tab === 'dashboard' ? 'active' : ''}" onclick="setTab('dashboard')">${navIcon("home")}Dashboard</button>
+          <button class="${admin.tab === 'orders' ? 'active' : ''}" onclick="setTab('orders')">${navIcon("bag")}Pedidos</button>
+          <button class="${admin.tab === 'products' ? 'active' : ''}" onclick="setTab('products')">${navIcon("cube")}Produtos</button>
+          <button class="${admin.tab === 'customers' ? 'active' : ''}" onclick="setTab('customers')">${navIcon("users")}Clientes</button>
+          <button class="${admin.tab === 'caixa' ? 'active' : ''}" onclick="setTab('caixa')">${navIcon("wallet")}Caixa</button>
+          <button class="${admin.tab === 'financeiro' ? 'active' : ''}" onclick="setTab('financeiro')">${navIcon("chart")}Financeiro</button>
+          <button class="${admin.tab === 'estoque' ? 'active' : ''}" onclick="setTab('estoque')">${navIcon("box")}Estoque</button>
+          <button class="${admin.tab === 'receitas' ? 'active' : ''}" onclick="setTab('receitas')">${navIcon("book")}Receitas</button>
+          <button class="${admin.tab === 'precificacao' ? 'active' : ''}" onclick="setTab('precificacao')">${navIcon("calc")}Precificação</button>
+          <button class="${admin.tab === 'calendario' ? 'active' : ''}" onclick="setTab('calendario')">${navIcon("calendar")}Calendário</button>
+          <button class="${admin.tab === 'loyalty' ? 'active' : ''}" onclick="setTab('loyalty')">${navIcon("crown")}Fidelidade</button>
+          <button class="${admin.tab === 'rewards' ? 'active' : ''}" onclick="setTab('rewards')">${navIcon("gift")}Mimos</button>
         </nav>
-        <a href="../index.html" target="_blank" style="margin:0 12px 8px;color:#F1D9E1;font-size:12.5px;text-align:center;text-decoration:underline;">Ver site</a>
+        <a href="../index.html" target="_blank" style="margin:0 12px 8px;color:var(--muted);font-size:12.5px;text-align:center;text-decoration:underline;">Ver site</a>
         <button class="admin-logout" onclick="handleAdminLogout()">Sair</button>
       </aside>
       <main class="admin-main" id="adminMain"><div class="center-msg">Carregando...</div></main>
@@ -175,11 +193,16 @@ async function loadDashboard(main) {
 
     ${lowStock.length ? `
       <div class="admin-card" style="border:1.5px solid #F3C0C0;background:#FDEDED">
-        <h2 style="color:#B23434">⚠️ Estoque baixo</h2>
-        <p class="hint">${lowStock.length} item${lowStock.length > 1 ? "ns" : ""} precisa${lowStock.length > 1 ? "m" : ""} de reposição:</p>
-        <ul class="guide-list">
-          ${lowStock.map(i => `<li>${i.name} — ${i.current_stock} ${i.unit} restantes (mínimo: ${i.min_stock} ${i.unit})</li>`).join("")}
-        </ul>
+        <h2 style="color:#B23434;display:flex;align-items:center;gap:8px">⚠️ Estoque baixo</h2>
+        <p class="hint" style="margin-bottom:12px">${lowStock.length} item${lowStock.length > 1 ? "ns" : ""} precisa${lowStock.length > 1 ? "m" : ""} de reposição:</p>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${lowStock.map(i => `
+            <div style="background:#fff;border:1px solid #F3C0C0;border-radius:10px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
+              <strong>${i.name}</strong>
+              <span style="color:#B23434">${i.current_stock} ${i.unit} restantes <span style="color:var(--muted)">(mín. ${i.min_stock} ${i.unit})</span></span>
+            </div>
+          `).join("")}
+        </div>
       </div>
     ` : ""}
 
@@ -1907,6 +1930,7 @@ function openPricingDetail(pricingId) {
           <label>Quantidade produzida<input type="number" step="0.01" id="pcProducedQty" value="${p.produced_qty}"></label>
           <label>Custos variáveis (%)<input type="number" step="1" id="pcVariablePct" value="${p.variable_pct}"></label>
           <label>Markup sobre o custo (%)<input type="number" step="1" id="pcMarkupPct" value="${p.markup_pct}"></label>
+          <label>Preço de venda manual (R$, opcional)<input type="number" step="0.01" id="pcManualPrice" value="${p.manual_sale_price ?? ""}" placeholder="Deixe em branco pra usar o markup"></label>
         </div>
         <button class="btn btn-outline btn-sm" style="margin-top:10px" onclick="savePricingCalc('${pricingId}')">Recalcular e salvar</button>
 
@@ -1917,7 +1941,13 @@ function openPricingDetail(pricingId) {
           Quantidade produzida: <strong>${p.produced_qty}</strong><br>
           Custo unitário: <strong>${fmt(unitCost)}</strong><br>
           <span style="font-size:15px">Preço de venda (markup de ${markupPct}% sobre o custo): <strong style="color:var(--pink)">${fmt(sale)}</strong></span><br>
-          Lucro por unidade: <strong>${fmt(profit)}</strong>
+          Lucro por unidade (com markup): <strong>${fmt(profit)}</strong>
+          ${p.manual_sale_price ? `
+            <hr style="border:none;border-top:1px solid var(--border);margin:10px 0">
+            <span style="font-size:15px">Preço de venda que <u>você</u> definiu: <strong style="color:var(--pink)">${fmt(p.manual_sale_price)}</strong></span><br>
+            Lucro por unidade com esse preço: <strong style="color:${(p.manual_sale_price - unitCost) < 0 ? "#B23434" : "#2E7D46"}">${fmt(p.manual_sale_price - unitCost)}</strong>
+            ${p.manual_sale_price < unitCost ? `<br><span style="color:#B23434">⚠️ Esse preço está abaixo do custo unitário — você estaria vendendo no prejuízo.</span>` : ""}
+          ` : ""}
         </div>
       </div>
 
@@ -1959,10 +1989,12 @@ async function removePricingItem(itemId, pricingId) {
 }
 
 async function savePricingCalc(pricingId) {
+  const manualPriceRaw = document.getElementById("pcManualPrice").value;
   const payload = {
     produced_qty: Number(document.getElementById("pcProducedQty").value) || 1,
     variable_pct: Math.max(0, Number(document.getElementById("pcVariablePct").value) || 0),
     markup_pct: Math.max(0, Number(document.getElementById("pcMarkupPct").value) || 0), // nunca negativo: preço nunca fica abaixo do custo
+    manual_sale_price: manualPriceRaw === "" ? null : Number(manualPriceRaw),
   };
   const { error } = await sb.from("pricings").update(payload).eq("id", pricingId);
   if (error) { console.error(error); alert("Não foi possível salvar."); return; }
@@ -1999,6 +2031,17 @@ function changeCalYear(delta) {
   renderCalendario(document.getElementById("adminMain"));
 }
 
+const CAL_CATEGORY_COLOR = { encomenda: "#F06292", producao: "#6A9BD8", outro: "#8C6B76" };
+const CAL_CATEGORY_LABEL = { encomenda: "Encomenda", producao: "Produção", outro: "Outro" };
+const WEEKDAY_NAMES = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+function goToCalToday() {
+  const now = new Date();
+  admin.data.calYear = now.getFullYear();
+  admin.data.calMonth = now.getMonth();
+  renderCalendario(document.getElementById("adminMain"));
+}
+
 function renderCalendario(main) {
   const year = admin.data.calYear;
   const month = admin.data.calMonth;
@@ -2006,51 +2049,83 @@ function renderCalendario(main) {
   const events = admin.data.productionEvents.filter(e => e.event_date.startsWith(monthKey));
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstWeekday = new Date(year, month, 1).getDay(); // 0=Dom
   const byDay = {};
   events.forEach(e => {
     const day = Number(e.event_date.split("-")[2]);
     (byDay[day] = byDay[day] || []).push(e);
   });
 
+  const today = new Date();
+  const isCurrentMonth = today.getFullYear() === year && today.getMonth() === month;
+
+  const cells = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push("");
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
   main.innerHTML = `
     <div class="admin-topbar"><h1>Calendário de Produção</h1><button class="btn btn-pink" onclick="openEventForm()">+ Novo evento</button></div>
     <p class="hint">Planner 100% manual — nada aqui é preenchido automaticamente pelos pedidos.</p>
 
     <div class="admin-card">
-      <div class="admin-topbar" style="margin-bottom:0">
+      <div class="admin-topbar" style="margin-bottom:14px">
         <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn btn-outline btn-sm" onclick="changeCalYear(-1)">« Ano</button>
-          <button class="btn btn-outline btn-sm" onclick="changeCalMonth(-1)">‹ Mês</button>
-          <h2 style="margin:0;min-width:180px;text-align:center">${MONTH_NAMES_CAL[month]} / ${year}</h2>
-          <button class="btn btn-outline btn-sm" onclick="changeCalMonth(1)">Mês ›</button>
-          <button class="btn btn-outline btn-sm" onclick="changeCalYear(1)">Ano »</button>
+          <button class="btn btn-outline btn-sm" onclick="changeCalYear(-1)">«</button>
+          <button class="btn btn-outline btn-sm" onclick="changeCalMonth(-1)">‹</button>
+          <h2 style="margin:0;min-width:170px;text-align:center">${MONTH_NAMES_CAL[month]} ${year}</h2>
+          <button class="btn btn-outline btn-sm" onclick="changeCalMonth(1)">›</button>
+          <button class="btn btn-outline btn-sm" onclick="changeCalYear(1)">»</button>
         </div>
+        <button class="btn btn-outline btn-sm" onclick="goToCalToday()">Hoje</button>
+      </div>
+
+      <div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap">
+        ${Object.entries(CAL_CATEGORY_LABEL).map(([k, v]) => `
+          <span style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--muted)">
+            <span style="width:10px;height:10px;border-radius:50%;background:${CAL_CATEGORY_COLOR[k]};display:inline-block"></span>${v}
+          </span>
+        `).join("")}
+      </div>
+
+      <div class="cal-grid">
+        ${WEEKDAY_NAMES.map(w => `<div class="cal-weekday">${w}</div>`).join("")}
+        ${cells.map(d => {
+          if (!d) return `<div class="cal-cell cal-cell-empty"></div>`;
+          const dayEvents = byDay[d] || [];
+          const isToday = isCurrentMonth && today.getDate() === d;
+          return `
+            <div class="cal-cell ${isToday ? "cal-cell-today" : ""}">
+              <span class="cal-day-num">${d}</span>
+              ${dayEvents.map(e => `
+                <div class="cal-event" style="background:${CAL_CATEGORY_COLOR[e.category] || CAL_CATEGORY_COLOR.outro}" onclick="openEventForm('${e.id}')" title="${e.title}">
+                  ${e.event_time ? e.event_time.slice(0, 5) + " " : ""}${e.title}
+                </div>
+              `).join("")}
+            </div>
+          `;
+        }).join("")}
       </div>
     </div>
 
     <div id="eventFormArea"></div>
 
     <div class="admin-card">
-      ${Object.keys(byDay).length ? `
-        ${Array.from({ length: daysInMonth }, (_, i) => i + 1).filter(d => byDay[d]).map(day => `
-          <div style="padding:10px 0;border-bottom:1px solid var(--border)">
-            <strong>${String(day).padStart(2, "0")}/${String(month + 1).padStart(2, "0")}/${year}</strong>
-            ${byDay[day].map(e => `
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;padding:8px 10px;background:var(--pink-soft);border-radius:10px">
-                <div>
-                  <strong>${e.event_time ? e.event_time.slice(0, 5) + " — " : ""}${e.title}</strong>
-                  ${e.description ? `<div class="hint" style="margin:2px 0 0">${e.description}</div>` : ""}
-                  ${e.note ? `<div class="hint" style="margin:2px 0 0;font-style:italic">${e.note}</div>` : ""}
-                </div>
-                <div style="display:flex;gap:6px">
-                  <button class="btn btn-outline btn-sm" onclick="openEventForm('${e.id}')">Editar</button>
-                  <button class="btn btn-danger btn-sm" onclick="deleteEvent('${e.id}')">Excluir</button>
-                </div>
-              </div>
-            `).join("")}
+      <h2>Eventos de ${MONTH_NAMES_CAL[month]}</h2>
+      ${events.length ? events.sort((a, b) => a.event_date.localeCompare(b.event_date)).map(e => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="width:10px;height:10px;border-radius:50%;background:${CAL_CATEGORY_COLOR[e.category] || CAL_CATEGORY_COLOR.outro};display:inline-block;flex-shrink:0"></span>
+            <div>
+              <strong>${new Date(e.event_date + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })}${e.event_time ? " — " + e.event_time.slice(0, 5) : ""} · ${e.title}</strong>
+              ${e.description ? `<div class="hint" style="margin:2px 0 0">${e.description}</div>` : ""}
+            </div>
           </div>
-        `).join("")}
-      ` : `<p class="center-msg">Nenhum evento cadastrado para ${MONTH_NAMES_CAL[month]}/${year}.</p>`}
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-outline btn-sm" onclick="openEventForm('${e.id}')">Editar</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteEvent('${e.id}')">Excluir</button>
+          </div>
+        </div>
+      `).join("") : `<p class="center-msg">Nenhum evento cadastrado para ${MONTH_NAMES_CAL[month]}/${year}.</p>`}
     </div>
   `;
 }
@@ -2064,12 +2139,18 @@ function openEventForm(eventId) {
       <div class="form-grid">
         <label>Data<input type="date" id="evDate" value="${e ? e.event_date : defaultDate}"></label>
         <label>Horário (opcional)<input type="time" id="evTime" value="${e && e.event_time ? e.event_time.slice(0, 5) : ""}"></label>
+        <label>Categoria
+          <select id="evCategory">
+            ${Object.entries(CAL_CATEGORY_LABEL).map(([k, v]) => `<option value="${k}" ${e && e.category === k ? "selected" : ""}>${v}</option>`).join("")}
+          </select>
+        </label>
         <label class="span-2">Título<input type="text" id="evTitle" value="${e ? e.title : ""}" placeholder="Ex: Fazer massa do bolo da Ana"></label>
         <label class="span-2">Descrição (opcional)<input type="text" id="evDescription" value="${e ? e.description || "" : ""}"></label>
         <label class="span-2">Observação (opcional)<input type="text" id="evNote" value="${e ? e.note || "" : ""}"></label>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px">
         <button class="btn btn-pink" onclick="saveEvent(${e ? `'${e.id}'` : "null"})">Salvar</button>
+        ${e ? `<button class="btn btn-danger" onclick="deleteEvent('${e.id}')">Excluir</button>` : ""}
         <button class="btn btn-outline" onclick="document.getElementById('eventFormArea').innerHTML=''">Cancelar</button>
       </div>
     </div>
@@ -2080,6 +2161,7 @@ async function saveEvent(eventId) {
   const payload = {
     event_date: document.getElementById("evDate").value,
     event_time: document.getElementById("evTime").value || null,
+    category: document.getElementById("evCategory").value,
     title: document.getElementById("evTitle").value.trim(),
     description: document.getElementById("evDescription").value.trim() || null,
     note: document.getElementById("evNote").value.trim() || null,
@@ -2098,8 +2180,10 @@ async function deleteEvent(eventId) {
   if (!confirm("Excluir este evento?")) return;
   const { error } = await sb.from("production_events").delete().eq("id", eventId);
   if (error) { console.error(error); alert("Não foi possível excluir."); return; }
+  document.getElementById("eventFormArea").innerHTML = "";
   await loadCalendario(document.getElementById("adminMain"));
 }
+
 
 /* ---------------- FIDELIDADE ---------------- */
 
