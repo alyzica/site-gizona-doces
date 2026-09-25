@@ -4,7 +4,10 @@
 -- Rode no SQL Editor do Supabase, depois dos scripts anteriores.
 -- ============================================================
 
--- ---------- RECEITAS: normaliza valores antigos antes de travar a unidade ----------
+-- ---------- PEDIDOS: tipo (encomenda / delivery) — prepara pro filtro no admin ----------
+alter table public.orders
+  add column if not exists order_type text not null default 'encomenda' check (order_type in ('encomenda', 'delivery'));
+
 update public.recipes set yield_unit = 'unidade' where yield_unit in ('unidades', 'un', 'uni', 'Unidade', 'Unidades');
 update public.recipes set yield_unit = 'g' where yield_unit in ('gramas', 'G', 'Gramas');
 update public.recipes set yield_unit = 'kg' where yield_unit in ('quilos', 'KG', 'Kg');
@@ -31,6 +34,7 @@ create table if not exists public.pricings (
 alter table public.pricings
   add column if not exists manual_sale_price numeric(10,2);
 
+drop policy if exists "admin acesso total pricings" on public.pricings;
 create policy "admin acesso total pricings"
   on public.pricings for all
   using (public.is_admin())
@@ -53,6 +57,7 @@ create table if not exists public.pricing_items (
 );
 
 alter table public.pricing_items enable row level security;
+drop policy if exists "admin acesso total pricing_items" on public.pricing_items;
 create policy "admin acesso total pricing_items"
   on public.pricing_items for all
   using (public.is_admin())
@@ -79,6 +84,7 @@ alter table public.production_events add constraint production_events_category_c
   check (category in ('encomenda', 'producao', 'outro'));
 
 alter table public.production_events enable row level security;
+drop policy if exists "admin acesso total production_events" on public.production_events;
 create policy "admin acesso total production_events"
   on public.production_events for all
   using (public.is_admin())

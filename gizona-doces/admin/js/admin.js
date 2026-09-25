@@ -245,10 +245,18 @@ function setOrderFilter(filter) {
 
 function renderOrdersTable(main) {
   const filter = admin.data.orderFilter || "all";
-  const orders = admin.data.orders.filter(o => filter === "all" ? true : (o.origin || "site") === filter);
+  const typeFilter = admin.data.orderTypeFilter || "all";
+  const orders = admin.data.orders
+    .filter(o => filter === "all" ? true : (o.origin || "site") === filter)
+    .filter(o => typeFilter === "all" ? true : (o.order_type || "encomenda") === typeFilter);
   main.innerHTML = `
     <div class="admin-topbar"><h1>Pedidos</h1><button class="btn btn-pink" onclick="openManualOrderForm()">+ Lançar pedido manual</button></div>
     <p class="hint">Pedidos do site e pedidos lançados manualmente (WhatsApp, Instagram, presencial etc). Tudo editável.</p>
+    <div class="tabs-row" style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <button class="btn ${typeFilter === "all" ? "btn-pink" : "btn-outline"} btn-sm" onclick="setOrderTypeFilter('all')">Todos os tipos</button>
+      <button class="btn ${typeFilter === "encomenda" ? "btn-pink" : "btn-outline"} btn-sm" onclick="setOrderTypeFilter('encomenda')">Encomenda</button>
+      <button class="btn ${typeFilter === "delivery" ? "btn-pink" : "btn-outline"} btn-sm" onclick="setOrderTypeFilter('delivery')">Delivery</button>
+    </div>
     <div class="tabs-row" style="display:flex;gap:8px;margin-bottom:14px">
       <button class="btn ${filter === "all" ? "btn-pink" : "btn-outline"} btn-sm" onclick="setOrderFilter('all')">Todos</button>
       <button class="btn ${filter === "site" ? "btn-pink" : "btn-outline"} btn-sm" onclick="setOrderFilter('site')">Site</button>
@@ -258,12 +266,16 @@ function renderOrdersTable(main) {
     <div class="admin-card">
       ${orders.length ? `
         <table>
-          <thead><tr><th>Nº</th><th>Cliente</th><th>Origem</th><th>Total</th><th>Pagamento</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Nº</th><th>Cliente</th><th>Tipo</th><th>Origem</th><th>Total</th><th>Pagamento</th><th>Status</th><th></th></tr></thead>
           <tbody>
             ${orders.map(o => `
               <tr>
                 <td>${o.order_number}</td>
-                <td>${o.customer_name}<br><small style="color:var(--muted)">${o.customer_phone}</small></td>
+                <td>
+                  ${o.customer_name}<br><small style="color:var(--muted)">${o.customer_phone}</small>
+                  ${(o.order_type || "encomenda") === "encomenda" && o.event_date ? `<br><small style="color:var(--pink)">Evento: ${new Date(o.event_date + "T00:00:00").toLocaleDateString("pt-BR")}</small>` : ""}
+                </td>
+                <td><span class="badge-status ${(o.order_type || "encomenda") === "delivery" ? "production" : "confirmed"}">${(o.order_type || "encomenda") === "delivery" ? "Delivery" : "Encomenda"}</span></td>
                 <td><span class="badge-status ${o.origin === "manual" ? "pending" : "confirmed"}">${o.origin === "manual" ? "Manual" : "Site"}</span></td>
                 <td>${fmt(o.total)}</td>
                 <td>${paymentSummary(o)}</td>
@@ -280,9 +292,14 @@ function renderOrdersTable(main) {
             `).join("")}
           </tbody>
         </table>
-      ` : `<p class="center-msg">Nenhum pedido ainda.</p>`}
+      ` : `<p class="center-msg">Nenhum pedido encontrado com esse filtro.</p>`}
     </div>
   `;
+}
+
+function setOrderTypeFilter(type) {
+  admin.data.orderTypeFilter = type;
+  renderOrdersTable(document.getElementById("adminMain"));
 }
 
 async function updateOrderStatus(id, status) {
@@ -312,6 +329,13 @@ function orderFormFields(o) {
     <div class="form-grid">
       <label>Cliente<input type="text" id="ofName" value="${o.customer_name || ""}"></label>
       <label>Telefone/WhatsApp<input type="text" id="ofPhone" value="${o.customer_phone || ""}"></label>
+      <label>Tipo do pedido
+        <select id="ofOrderType">
+          <option value="encomenda" ${(o.order_type || "encomenda") === "encomenda" ? "selected" : ""}>Encomenda</option>
+          <option value="delivery" ${o.order_type === "delivery" ? "selected" : ""}>Delivery</option>
+        </select>
+      </label>
+      <label>Data do evento (encomenda)<input type="date" id="ofEventDate" value="${o.event_date || ""}"></label>
       <label>Produto / descrição<input type="text" id="ofProduct" value="${o.product_desc || (o.items && o.items[0] ? o.items[0].product_name : "") || ""}" placeholder="Ex: 2 caixas de brigadeiro"></label>
       <label>Valor total do pedido (R$)<input type="number" step="0.01" id="ofTotal" value="${o.total || ""}"></label>
       <label>Status
@@ -377,6 +401,8 @@ async function saveManualOrder() {
     origin: "manual",
     customer_name: name,
     customer_phone: phone,
+    order_type: document.getElementById("ofOrderType").value,
+    event_date: document.getElementById("ofEventDate").value || null,
     items: [{ product_name: product || "Pedido manual", category: "manual", quantity: 1, unit_price: total, subtotal: total }],
     total,
     status: document.getElementById("ofStatus").value,
@@ -412,6 +438,8 @@ async function saveOrderEdit(id) {
   const payload = {
     customer_name: document.getElementById("ofName").value.trim(),
     customer_phone: document.getElementById("ofPhone").value.trim(),
+    order_type: document.getElementById("ofOrderType").value,
+    event_date: document.getElementById("ofEventDate").value || null,
     total: Number(document.getElementById("ofTotal").value),
     status: document.getElementById("ofStatus").value,
     payment_method_1: document.getElementById("ofPay1").value || null,
@@ -1129,9 +1157,14 @@ function toggleAllCashEntries(checked) {
 async function deleteSelectedCashEntries() {
   const ids = Array.from(document.querySelectorAll(".caixaCheck:checked")).map(cb => cb.value);
   if (!ids.length) { alert("Selecione ao menos uma movimentação."); return; }
-  if (!confirm(`Excluir ${ids.length} movimentação(ões) selecionada(s)? Essa ação não pode ser desfeita.`)) return;
-  const { error } = await sb.from("cash_entries").delete().in("id", ids);
-  if (error) { console.error(error); alert("Não foi possível excluir as movimentações selecionadas."); return; }
+  const plural = ids.length > 1;
+  if (!confirm(`Excluir ${ids.length} movimentaç${plural ? "ões" : "ão"} selecionad${plural ? "as" : "a"}? Essa ação não pode ser desfeita.`)) return;
+  const { data, error } = await sb.from("cash_entries").delete().in("id", ids).select("id");
+  if (error) { console.error(error); alert("Não foi possível excluir: " + (error.message || JSON.stringify(error))); return; }
+  if (!data || data.length === 0) {
+    alert("O Supabase não retornou erro, mas nada foi excluído — provavelmente é uma permissão (RLS) bloqueando silenciosamente. Verifique se a política de exclusão de cash_entries está ativa pro seu usuário admin.");
+    return;
+  }
   await loadCaixa(document.getElementById("adminMain"));
 }
 
