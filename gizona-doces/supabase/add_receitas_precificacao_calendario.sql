@@ -4,7 +4,10 @@
 -- Rode no SQL Editor do Supabase, depois dos scripts anteriores.
 -- ============================================================
 
--- ---------- PEDIDOS: tipo (encomenda / delivery) — prepara pro filtro no admin ----------
+alter table public.expense_entries
+  add column if not exists payment_method text check (payment_method in ('dinheiro', 'pix', 'debito', 'credito')),
+  add column if not exists card_name text check (card_name in ('XP Investimentos', 'Nubank') or card_name is null);
+
 alter table public.orders
   add column if not exists order_type text not null default 'encomenda' check (order_type in ('encomenda', 'delivery'));
 
@@ -91,3 +94,6 @@ create policy "admin acesso total production_events"
   with check (public.is_admin());
 
 create index if not exists idx_production_events_date on public.production_events(event_date);
+
+alter table public.production_events
+  add column if not exists event_time_end time;

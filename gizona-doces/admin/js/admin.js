@@ -6,7 +6,7 @@ const admin = { session: null, isAdmin: false, tab: "dashboard", data: {} };
 
 function fmt(v) { return (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 
-const STATUS_LABEL = { pending: "Pendente", confirmed: "Confirmado", production: "Em Produção", completed: "Concluído", delivered: "Entregue", cancelled: "Cancelado" };
+const STATUS_LABEL = { pending: "Pendente", confirmed: "Confirmado", production: "Em Produção", delivered: "Entregue", cancelled: "Cancelado" };
 
 /* ---------------- Init ---------------- */
 (async function init() {
@@ -180,7 +180,7 @@ async function loadDashboard(main) {
     ["Pendentes", countByStatus("pending")],
     ["Confirmados", countByStatus("confirmed")],
     ["Em produção", countByStatus("production")],
-    ["Concluídos", countByStatus("completed") + countByStatus("delivered")],
+    ["Entregues", countByStatus("delivered")],
     ["Cancelados", countByStatus("cancelled")],
   ];
 
@@ -304,13 +304,13 @@ function setOrderTypeFilter(type) {
 
 async function updateOrderStatus(id, status) {
   const { error } = await sb.from("orders").update({ status }).eq("id", id);
-  if (error) { console.error(error); alert("Não foi possível atualizar o status."); return; }
+  if (error) { console.error(error); alert("Não foi possível atualizar o status: " + (error.message || JSON.stringify(error))); return; }
   const o = admin.data.orders.find(o => o.id === id);
   if (o) o.status = status;
-  if (status === "completed") {
+  if (status === "delivered") {
     // a receita automática é criada por um trigger no banco (sem duplicar).
     // só avisamos o usuário aqui.
-    setTimeout(() => alert("Pedido marcado como concluído — a receita entra automaticamente no Financeiro."), 50);
+    setTimeout(() => alert("Pedido marcado como entregue — a receita entra automaticamente no Financeiro."), 50);
   }
 }
 
@@ -1159,11 +1159,14 @@ async function deleteSelectedCashEntries() {
   if (!ids.length) { alert("Selecione ao menos uma movimentação."); return; }
   const plural = ids.length > 1;
   if (!confirm(`Excluir ${ids.length} movimentaç${plural ? "ões" : "ão"} selecionad${plural ? "as" : "a"}? Essa ação não pode ser desfeita.`)) return;
-  const { data, error } = await sb.from("cash_entries").delete().in("id", ids).select("id");
-  if (error) { console.error(error); alert("Não foi possível excluir: " + (error.message || JSON.stringify(error))); return; }
-  if (!data || data.length === 0) {
-    alert("O Supabase não retornou erro, mas nada foi excluído — provavelmente é uma permissão (RLS) bloqueando silenciosamente. Verifique se a política de exclusão de cash_entries está ativa pro seu usuário admin.");
-    return;
+
+  const failures = [];
+  for (const id of ids) {
+    const { error } = await sb.from("cash_entries").delete().eq("id", id);
+    if (error) failures.push(error.message || String(error));
+  }
+  if (failures.length) {
+    alert(`Não foi possível excluir ${failures.length} de ${ids.length} movimentação(ões). Erro: ${failures[0]}`);
   }
   await loadCaixa(document.getElementById("adminMain"));
 }
@@ -1182,6 +1185,23 @@ async function loadFinanceiro(main) {
   renderFinanceiro(main);
 }
 
+const CARD_NAMES = ["XP Investimentos", "Nubank"];
+const PAYMENT_METHOD_LABEL = { dinheiro: "Dinheiro", pix: "Pix", debito: "Débito", credito: "Crédito" };
+
+function monthGroupLabel(key) {
+  const [y, m] = key.split("-");
+  return `${MONTH_NAMES_CAL[Number(m) - 1]}/${y}`;
+}
+
+function groupByMonth(list, dateField) {
+  const groups = {};
+  list.forEach(item => {
+    const key = item[dateField] ? item[dateField].slice(0, 7) : "sem-data";
+    (groups[key] = groups[key] || []).push(item);
+  });
+  return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a)); // mais recente primeiro
+}
+
 function renderFinanceiro(main) {
   const revenue = admin.data.revenueEntries;
   const expenses = admin.data.expenseEntries;
@@ -1189,25 +1209,39 @@ function renderFinanceiro(main) {
   const totalDespesas = expenses.reduce((s, e) => s + Number(e.amount), 0);
   const resultado = totalFaturamento - totalDespesas;
 
+  // resumo anual por mês (entrada/saída/resultado)
+  const monthly = {};
+  function ensureMonth(key) { return (monthly[key] = monthly[key] || { in: 0, out: 0 }); }
+  revenue.forEach(r => { if (r.entry_date) ensureMonth(r.entry_date.slice(0, 7)).in += Number(r.amount); });
+  expenses.forEach(e => { if (e.entry_date) ensureMonth(e.entry_date.slice(0, 7)).out += Number(e.amount); });
+  const monthKeys = Object.keys(monthly).sort((a, b) => b.localeCompare(a));
+
+  // fatura por cartão de crédito
+  const cardTotals = {};
+  CARD_NAMES.forEach(c => cardTotals[c] = 0);
+  expenses.forEach(e => { if (e.payment_method === "credito" && e.card_name) cardTotals[e.card_name] = (cardTotals[e.card_name] || 0) + Number(e.amount); });
+
   main.innerHTML = `
     <div class="admin-topbar"><h1>Financeiro</h1><button class="btn btn-pink" onclick="openFinanceForm()">+ Lançamento manual</button></div>
-    <p class="hint">Quando um pedido do site é marcado como "Concluído", a receita entra aqui sozinha — sem duplicar. Pedidos de fora do site e despesas são lançados manualmente.</p>
+    <p class="hint">Quando um pedido do site é marcado como "Entregue", a receita entra aqui sozinha — sem duplicar. Pedidos de fora do site e despesas são lançados manualmente.</p>
 
     <div class="stat-grid">
       <div class="stat-card"><div class="label">Faturamento</div><div class="value" style="color:#2E7D46">${fmt(totalFaturamento)}</div></div>
       <div class="stat-card"><div class="label">Despesas</div><div class="value" style="color:#B23434">${fmt(totalDespesas)}</div></div>
       <div class="stat-card"><div class="label">Resultado</div><div class="value">${fmt(resultado)}</div></div>
+      ${CARD_NAMES.map(c => `<div class="stat-card"><div class="label">Fatura ${c}</div><div class="value" style="color:#6A2CC4">${fmt(cardTotals[c])}</div></div>`).join("")}
     </div>
 
     <div id="financeFormArea"></div>
 
     <div class="admin-card">
       <h2>Faturamento</h2>
-      ${revenue.length ? `
+      ${revenue.length ? groupByMonth(revenue, "entry_date").map(([key, items]) => `
+        <p class="cart-section-title" style="margin:14px 0 6px">${monthGroupLabel(key)}</p>
         <table>
           <thead><tr><th>Data</th><th>Descrição</th><th>Origem</th><th>Valor</th><th></th></tr></thead>
           <tbody>
-            ${revenue.map(r => `
+            ${items.map(r => `
               <tr>
                 <td>${new Date(r.entry_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
                 <td>${r.description}</td>
@@ -1218,29 +1252,61 @@ function renderFinanceiro(main) {
             `).join("")}
           </tbody>
         </table>
-      ` : `<p class="center-msg">Nenhuma receita ainda.</p>`}
+      `).join("") : `<p class="center-msg">Nenhuma receita ainda.</p>`}
     </div>
 
     <div class="admin-card">
       <h2>Despesas</h2>
-      ${expenses.length ? `
+      ${expenses.length ? groupByMonth(expenses, "entry_date").map(([key, items]) => `
+        <p class="cart-section-title" style="margin:14px 0 6px">${monthGroupLabel(key)}</p>
         <table>
-          <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Valor</th><th></th></tr></thead>
+          <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Pagamento</th><th>Valor</th><th></th></tr></thead>
           <tbody>
-            ${expenses.map(e => `
+            ${items.map(e => `
               <tr>
                 <td>${new Date(e.entry_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
                 <td>${e.description}</td>
                 <td>${e.category || "—"}</td>
+                <td>${e.payment_method ? PAYMENT_METHOD_LABEL[e.payment_method] + (e.card_name ? ` (${e.card_name})` : "") : "—"}</td>
                 <td><strong style="color:#B23434">${fmt(e.amount)}</strong></td>
                 <td><button class="btn btn-outline btn-sm" onclick="deleteExpenseEntry('${e.id}')">Excluir</button></td>
               </tr>
             `).join("")}
           </tbody>
         </table>
-      ` : `<p class="center-msg">Nenhuma despesa ainda.</p>`}
+      `).join("") : `<p class="center-msg">Nenhuma despesa ainda.</p>`}
+    </div>
+
+    <div class="admin-card">
+      <h2>Resumo anual por mês</h2>
+      ${monthKeys.length ? `
+        <table>
+          <thead><tr><th>Mês</th><th>Entrada</th><th>Saída</th><th>Resultado</th></tr></thead>
+          <tbody>
+            ${monthKeys.map(key => {
+              const m = monthly[key];
+              const res = m.in - m.out;
+              return `
+                <tr>
+                  <td>${key === "sem-data" ? "Sem data" : monthGroupLabel(key)}</td>
+                  <td style="color:#2E7D46">${fmt(m.in)}</td>
+                  <td style="color:#B23434">${fmt(m.out)}</td>
+                  <td><strong style="color:${res < 0 ? "#B23434" : "#2E7D46"}">${fmt(res)}</strong></td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Sem lançamentos suficientes ainda.</p>`}
     </div>
   `;
+}
+
+function updateFinanceFormFields() {
+  const type = document.getElementById("feType").value;
+  const payMethod = document.getElementById("fePayment") ? document.getElementById("fePayment").value : "";
+  document.getElementById("fePaymentWrap").style.display = type === "despesa" ? "flex" : "none";
+  document.getElementById("feCardWrap").style.display = (type === "despesa" && payMethod === "credito") ? "flex" : "none";
 }
 
 function openFinanceForm() {
@@ -1250,7 +1316,7 @@ function openFinanceForm() {
       <h2>Lançamento financeiro manual</h2>
       <div class="form-grid">
         <label>Tipo
-          <select id="feType">
+          <select id="feType" onchange="updateFinanceFormFields()">
             <option value="receita">Receita (venda fora do site)</option>
             <option value="despesa">Despesa</option>
           </select>
@@ -1258,6 +1324,20 @@ function openFinanceForm() {
         <label>Data<input type="date" id="feDate" value="${today}"></label>
         <label>Categoria (opcional, só despesa)<input type="text" id="feCategory" placeholder="Ex: Ingredientes, Embalagem"></label>
         <label>Valor (R$)<input type="number" step="0.01" min="0" id="feAmount" placeholder="0,00"></label>
+        <label id="fePaymentWrap" style="display:none">Forma de pagamento
+          <select id="fePayment" onchange="updateFinanceFormFields()">
+            <option value="">—</option>
+            <option value="dinheiro">Dinheiro</option>
+            <option value="pix">Pix</option>
+            <option value="debito">Débito</option>
+            <option value="credito">Crédito</option>
+          </select>
+        </label>
+        <label id="feCardWrap" style="display:none">Cartão
+          <select id="feCard">
+            ${CARD_NAMES.map(c => `<option>${c}</option>`).join("")}
+          </select>
+        </label>
         <label class="span-2">Descrição<input type="text" id="feDescription" placeholder="Ex: Venda WhatsApp - Ana Paula"></label>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px">
@@ -1280,7 +1360,9 @@ async function saveFinanceEntry() {
     if (error) { console.error(error); alert("Não foi possível salvar a receita."); return; }
   } else {
     const category = document.getElementById("feCategory").value.trim() || null;
-    const { error } = await sb.from("expense_entries").insert({ entry_date, description, amount, category });
+    const payment_method = document.getElementById("fePayment").value || null;
+    const card_name = payment_method === "credito" ? document.getElementById("feCard").value : null;
+    const { error } = await sb.from("expense_entries").insert({ entry_date, description, amount, category, payment_method, card_name });
     if (error) { console.error(error); alert("Não foi possível salvar a despesa."); return; }
   }
   document.getElementById("financeFormArea").innerHTML = "";
@@ -1321,7 +1403,13 @@ function renderEstoque(main) {
   const valorTotalEstoque = ingredients.reduce((s, i) => s + Number(i.current_stock || 0) * Number(i.cost_per_unit || 0), 0);
 
   main.innerHTML = `
-    <div class="admin-topbar"><h1>Estoque</h1><button class="btn btn-pink" onclick="openIngredientForm()">+ Novo ingrediente</button></div>
+    <div class="admin-topbar">
+      <h1>Estoque</h1>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-danger" onclick="deleteAllIngredients()">Apagar tudo</button>
+        <button class="btn btn-pink" onclick="openIngredientForm()">+ Novo ingrediente</button>
+      </div>
+    </div>
 
     <div class="stat-grid">
       <div class="stat-card"><div class="label">Valor em estoque</div><div class="value" style="font-size:24px">${fmt(valorTotalEstoque)}</div></div>
@@ -1425,6 +1513,16 @@ async function deleteIngredient(id) {
   if (!confirm("Excluir este ingrediente? Essa ação não pode ser desfeita.")) return;
   const { error } = await sb.from("ingredients").delete().eq("id", id);
   if (error) { console.error(error); alert("Não foi possível excluir — verifique se ele não está sendo usado em alguma receita."); return; }
+  await loadEstoque(document.getElementById("adminMain"));
+}
+
+async function deleteAllIngredients() {
+  const ingredients = admin.data.ingredients;
+  if (!ingredients.length) { alert("Não há nenhum ingrediente cadastrado."); return; }
+  const digitado = prompt(`Isso vai apagar TODOS os ${ingredients.length} ingredientes do estoque, sem volta. Digite APAGAR pra confirmar:`);
+  if (digitado !== "APAGAR") { if (digitado !== null) alert("Cancelado — o texto não bateu com \"APAGAR\"."); return; }
+  const { error } = await sb.from("ingredients").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+  if (error) { console.error(error); alert("Não foi possível apagar tudo: " + (error.message || JSON.stringify(error)) + " (provavelmente algum ingrediente está em uso numa receita)"); return; }
   await loadEstoque(document.getElementById("adminMain"));
 }
 
@@ -2068,6 +2166,13 @@ const CAL_CATEGORY_COLOR = { encomenda: "#F06292", producao: "#6A9BD8", outro: "
 const CAL_CATEGORY_LABEL = { encomenda: "Encomenda", producao: "Produção", outro: "Outro" };
 const WEEKDAY_NAMES = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
+function eventTimeLabel(e) {
+  if (!e.event_time) return "";
+  const start = e.event_time.slice(0, 5);
+  const end = e.event_time_end ? e.event_time_end.slice(0, 5) : "";
+  return end ? `${start}–${end} ` : `${start} `;
+}
+
 function goToCalToday() {
   const now = new Date();
   admin.data.calYear = now.getFullYear();
@@ -2131,7 +2236,7 @@ function renderCalendario(main) {
               <span class="cal-day-num">${d}</span>
               ${dayEvents.map(e => `
                 <div class="cal-event" style="background:${CAL_CATEGORY_COLOR[e.category] || CAL_CATEGORY_COLOR.outro}" onclick="openEventForm('${e.id}')" title="${e.title}">
-                  ${e.event_time ? e.event_time.slice(0, 5) + " " : ""}${e.title}
+                  ${eventTimeLabel(e)}${e.title}
                 </div>
               `).join("")}
             </div>
@@ -2149,7 +2254,7 @@ function renderCalendario(main) {
           <div style="display:flex;align-items:center;gap:10px">
             <span style="width:10px;height:10px;border-radius:50%;background:${CAL_CATEGORY_COLOR[e.category] || CAL_CATEGORY_COLOR.outro};display:inline-block;flex-shrink:0"></span>
             <div>
-              <strong>${new Date(e.event_date + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })}${e.event_time ? " — " + e.event_time.slice(0, 5) : ""} · ${e.title}</strong>
+              <strong>${new Date(e.event_date + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })}${e.event_time ? " — " + eventTimeLabel(e).trim() : ""} · ${e.title}</strong>
               ${e.description ? `<div class="hint" style="margin:2px 0 0">${e.description}</div>` : ""}
             </div>
           </div>
@@ -2163,15 +2268,17 @@ function renderCalendario(main) {
   `;
 }
 
-function openEventForm(eventId) {
-  const e = eventId ? admin.data.productionEvents.find(e => e.id === eventId) : null;
+function openEventForm(eventId, duplicateFrom) {
+  const e = eventId ? admin.data.productionEvents.find(e => e.id === eventId) : (duplicateFrom ? admin.data.productionEvents.find(e => e.id === duplicateFrom) : null);
+  const isDuplicate = !!duplicateFrom;
   const defaultDate = `${admin.data.calYear}-${String(admin.data.calMonth + 1).padStart(2, "0")}-01`;
   document.getElementById("eventFormArea").innerHTML = `
     <div class="admin-card">
-      <h2>${e ? "Editar evento" : "Novo evento"}</h2>
+      <h2>${isDuplicate ? "Duplicar evento" : e ? "Editar evento" : "Novo evento"}</h2>
       <div class="form-grid">
         <label>Data<input type="date" id="evDate" value="${e ? e.event_date : defaultDate}"></label>
-        <label>Horário (opcional)<input type="time" id="evTime" value="${e && e.event_time ? e.event_time.slice(0, 5) : ""}"></label>
+        <label>Horário início (opcional)<input type="time" id="evTime" value="${e && e.event_time ? e.event_time.slice(0, 5) : ""}"></label>
+        <label>Horário fim (opcional, pra intervalo)<input type="time" id="evTimeEnd" value="${e && e.event_time_end ? e.event_time_end.slice(0, 5) : ""}"></label>
         <label>Categoria
           <select id="evCategory">
             ${Object.entries(CAL_CATEGORY_LABEL).map(([k, v]) => `<option value="${k}" ${e && e.category === k ? "selected" : ""}>${v}</option>`).join("")}
@@ -2180,10 +2287,13 @@ function openEventForm(eventId) {
         <label class="span-2">Título<input type="text" id="evTitle" value="${e ? e.title : ""}" placeholder="Ex: Fazer massa do bolo da Ana"></label>
         <label class="span-2">Descrição (opcional)<input type="text" id="evDescription" value="${e ? e.description || "" : ""}"></label>
         <label class="span-2">Observação (opcional)<input type="text" id="evNote" value="${e ? e.note || "" : ""}"></label>
+        ${!eventId ? `<label class="span-2">Repetir também nestes dias (opcional)<input type="text" id="evRepeatDates" placeholder="Ex: 2026-09-20, 2026-09-27, 2026-10-04"></label>` : ""}
       </div>
+      ${!eventId ? `<p class="hint">Coloque outras datas separadas por vírgula, no formato AAAA-MM-DD, se quiser criar o mesmo evento em vários dias de uma vez.</p>` : ""}
       <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn btn-pink" onclick="saveEvent(${e ? `'${e.id}'` : "null"})">Salvar</button>
-        ${e ? `<button class="btn btn-danger" onclick="deleteEvent('${e.id}')">Excluir</button>` : ""}
+        <button class="btn btn-pink" onclick="saveEvent(${eventId ? `'${eventId}'` : "null"})">Salvar</button>
+        ${e && !isDuplicate ? `<button class="btn btn-outline" onclick="openEventForm(null, '${e.id}')">Duplicar</button>` : ""}
+        ${eventId ? `<button class="btn btn-danger" onclick="deleteEvent('${eventId}')">Excluir</button>` : ""}
         <button class="btn btn-outline" onclick="document.getElementById('eventFormArea').innerHTML=''">Cancelar</button>
       </div>
     </div>
@@ -2191,20 +2301,30 @@ function openEventForm(eventId) {
 }
 
 async function saveEvent(eventId) {
-  const payload = {
-    event_date: document.getElementById("evDate").value,
+  const basePayload = {
     event_time: document.getElementById("evTime").value || null,
+    event_time_end: document.getElementById("evTimeEnd").value || null,
     category: document.getElementById("evCategory").value,
     title: document.getElementById("evTitle").value.trim(),
     description: document.getElementById("evDescription").value.trim() || null,
     note: document.getElementById("evNote").value.trim() || null,
   };
-  if (!payload.event_date || !payload.title) { alert("Preencha data e título."); return; }
+  const mainDate = document.getElementById("evDate").value;
+  if (!mainDate || !basePayload.title) { alert("Preencha data e título."); return; }
 
-  const { error } = eventId
-    ? await sb.from("production_events").update(payload).eq("id", eventId)
-    : await sb.from("production_events").insert(payload);
-  if (error) { console.error(error); alert("Não foi possível salvar o evento."); return; }
+  if (eventId) {
+    const { error } = await sb.from("production_events").update({ ...basePayload, event_date: mainDate }).eq("id", eventId);
+    if (error) { console.error(error); alert("Não foi possível salvar o evento."); return; }
+  } else {
+    const repeatField = document.getElementById("evRepeatDates");
+    const extraDates = repeatField && repeatField.value.trim()
+      ? repeatField.value.split(",").map(d => d.trim()).filter(Boolean)
+      : [];
+    const allDates = [mainDate, ...extraDates];
+    const rows = allDates.map(d => ({ ...basePayload, event_date: d }));
+    const { error } = await sb.from("production_events").insert(rows);
+    if (error) { console.error(error); alert("Não foi possível salvar o evento: " + (error.message || JSON.stringify(error))); return; }
+  }
   document.getElementById("eventFormArea").innerHTML = "";
   await loadCalendario(document.getElementById("adminMain"));
 }
