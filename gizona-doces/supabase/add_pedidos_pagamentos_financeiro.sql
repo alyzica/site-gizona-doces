@@ -30,9 +30,10 @@ create table if not exists public.revenue_entries (
 
 -- garante que um mesmo pedido nunca gera 2 receitas automáticas
 create unique index if not exists idx_revenue_entries_order_id
-  on public.revenue_entries(order_id) where order_id is not null;
+  on public.revenue_entries(order_id);
 
 alter table public.revenue_entries enable row level security;
+drop policy if exists "admin acesso total revenue_entries" on public.revenue_entries;
 create policy "admin acesso total revenue_entries"
   on public.revenue_entries for all
   using (public.is_admin())
@@ -49,22 +50,29 @@ create table if not exists public.expense_entries (
 );
 
 alter table public.expense_entries enable row level security;
+drop policy if exists "admin acesso total expense_entries" on public.expense_entries;
 create policy "admin acesso total expense_entries"
   on public.expense_entries for all
   using (public.is_admin())
   with check (public.is_admin());
 
--- ---------- AUTOMAÇÃO: pedido concluído → lança receita automática (sem duplicar) ----------
+-- ---------- AUTOMAÇÃO: pedido entregue → lança receita automática (sem duplicar) ----------
+-- (versão corrigida; a versão definitiva/idempotente está em fix_order_completion_trigger_v3.sql)
 create or replace function public.fn_order_completed_to_revenue()
 returns trigger
 language plpgsql
 security definer
 as $$
 begin
-  if new.status = 'completed' and (old.status is distinct from 'completed') then
-    insert into public.revenue_entries (entry_date, description, amount, source, order_id)
-    values (current_date, 'Pedido ' || new.order_number, new.total, 'site', new.id)
-    on conflict (order_id) do nothing;
+  if new.status = 'delivered' and (old.status is distinct from 'delivered') then
+    begin
+      if not exists (select 1 from public.revenue_entries where order_id = new.id) then
+        insert into public.revenue_entries (entry_date, description, amount, source, order_id)
+        values (current_date, 'Pedido ' || new.order_number, new.total, 'site', new.id);
+      end if;
+    exception when others then
+      raise warning 'Receita automática do pedido % falhou: %', new.order_number, sqlerrm;
+    end;
   end if;
   return new;
 end;

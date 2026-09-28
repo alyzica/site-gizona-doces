@@ -97,3 +97,4 @@ tr:last-child td{border-bottom:none;}
 .crop-open-btn{margin-top:8px;width:100%}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 @media(max-width:520px){.admin-main{padding:20px 16px}.cropper-overlay{padding:12px}.cropper-box{padding:18px 14px}.cropper-viewport{width:min(280px,78vw);height:min(280px,78vw)}}
+.form-grid textarea,.admin-form textarea{font-family:inherit;resize:vertical;line-height:1.5;}

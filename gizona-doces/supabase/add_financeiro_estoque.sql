@@ -17,6 +17,7 @@ create table if not exists public.cash_entries (
 
 alter table public.cash_entries enable row level security;
 
+drop policy if exists "admin acesso total cash_entries" on public.cash_entries;
 create policy "admin acesso total cash_entries"
   on public.cash_entries for all
   using (public.is_admin())
@@ -37,6 +38,7 @@ create table if not exists public.ingredients (
 
 alter table public.ingredients enable row level security;
 
+drop policy if exists "admin acesso total ingredients" on public.ingredients;
 create policy "admin acesso total ingredients"
   on public.ingredients for all
   using (public.is_admin())
@@ -55,6 +57,7 @@ create table if not exists public.stock_movements (
 
 alter table public.stock_movements enable row level security;
 
+drop policy if exists "admin acesso total stock_movements" on public.stock_movements;
 create policy "admin acesso total stock_movements"
   on public.stock_movements for all
   using (public.is_admin())

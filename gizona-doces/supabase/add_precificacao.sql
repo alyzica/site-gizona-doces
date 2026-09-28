@@ -13,6 +13,7 @@ create table if not exists public.recipes (
 );
 
 alter table public.recipes enable row level security;
+drop policy if exists "admin acesso total recipes" on public.recipes;
 create policy "admin acesso total recipes"
   on public.recipes for all
   using (public.is_admin())
@@ -27,6 +28,7 @@ create table if not exists public.recipe_ingredients (
 );
 
 alter table public.recipe_ingredients enable row level security;
+drop policy if exists "admin acesso total recipe_ingredients" on public.recipe_ingredients;
 create policy "admin acesso total recipe_ingredients"
   on public.recipe_ingredients for all
   using (public.is_admin())

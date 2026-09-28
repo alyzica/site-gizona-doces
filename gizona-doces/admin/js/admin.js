@@ -307,11 +307,31 @@ async function updateOrderStatus(id, status) {
   if (error) { console.error(error); alert("Não foi possível atualizar o status: " + (error.message || JSON.stringify(error))); return; }
   const o = admin.data.orders.find(o => o.id === id);
   if (o) o.status = status;
-  if (status === "delivered") {
-    // a receita automática é criada por um trigger no banco (sem duplicar).
-    // só avisamos o usuário aqui.
-    setTimeout(() => alert("Pedido marcado como entregue — a receita entra automaticamente no Financeiro."), 50);
+  if (status === "delivered" && o) {
+    await ensureRevenueForOrder(o);
   }
+}
+
+// Garante a receita automática mesmo se o gatilho do banco falhar por algum motivo —
+// confere se já existe antes de criar, então nunca duplica.
+async function ensureRevenueForOrder(order) {
+  const { data: existing, error: checkError } = await sb.from("revenue_entries").select("id").eq("order_id", order.id).maybeSingle();
+  if (checkError) { console.error(checkError); return; }
+  if (existing) return; // já lançada (pelo gatilho ou por essa mesma função antes)
+
+  const { error: insertError } = await sb.from("revenue_entries").insert({
+    entry_date: new Date().toISOString().slice(0, 10),
+    description: "Pedido " + order.order_number,
+    amount: order.total,
+    source: "site",
+    order_id: order.id,
+  });
+  if (insertError) {
+    console.error(insertError);
+    alert("O status foi salvo, mas não consegui lançar a receita automaticamente no Financeiro: " + (insertError.message || JSON.stringify(insertError)) + ". Você pode lançar manualmente por enquanto.");
+    return;
+  }
+  setTimeout(() => alert("Pedido marcado como entregue — a receita entrou no Financeiro."), 50);
 }
 
 async function deleteOrder(id) {
@@ -1160,13 +1180,24 @@ async function deleteSelectedCashEntries() {
   const plural = ids.length > 1;
   if (!confirm(`Excluir ${ids.length} movimentaç${plural ? "ões" : "ão"} selecionad${plural ? "as" : "a"}? Essa ação não pode ser desfeita.`)) return;
 
-  const failures = [];
-  for (const id of ids) {
-    const { error } = await sb.from("cash_entries").delete().eq("id", id);
-    if (error) failures.push(error.message || String(error));
+  const btn = document.querySelector('button[onclick="deleteSelectedCashEntries()"]');
+  if (btn) { btn.disabled = true; btn.textContent = "Excluindo..."; }
+
+  // Em lotes pequenos: mandar centenas de IDs de uma vez estoura o tamanho do pedido.
+  const CHUNK = 40;
+  let deleted = 0;
+  let firstError = null;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const { data, error } = await sb.from("cash_entries").delete().in("id", chunk).select("id");
+    if (error) { firstError = error.message || String(error); break; }
+    deleted += data ? data.length : 0;
   }
-  if (failures.length) {
-    alert(`Não foi possível excluir ${failures.length} de ${ids.length} movimentação(ões). Erro: ${failures[0]}`);
+
+  if (firstError) {
+    alert(`Foram excluídas ${deleted} de ${ids.length}. Parou por causa deste erro: ${firstError}`);
+  } else if (deleted < ids.length) {
+    alert(`Só ${deleted} de ${ids.length} foram excluídas. As outras não foram apagadas — provavelmente é uma permissão (RLS) da tabela cash_entries no Supabase.`);
   }
   await loadCaixa(document.getElementById("adminMain"));
 }
@@ -1235,6 +1266,29 @@ function renderFinanceiro(main) {
     <div id="financeFormArea"></div>
 
     <div class="admin-card">
+      <h2>Resumo anual por mês</h2>
+      ${monthKeys.length ? `
+        <table>
+          <thead><tr><th>Mês</th><th>Entrada</th><th>Saída</th><th>Resultado</th></tr></thead>
+          <tbody>
+            ${monthKeys.map(key => {
+              const m = monthly[key];
+              const res = m.in - m.out;
+              return `
+                <tr>
+                  <td>${key === "sem-data" ? "Sem data" : monthGroupLabel(key)}</td>
+                  <td style="color:#2E7D46">${fmt(m.in)}</td>
+                  <td style="color:#B23434">${fmt(m.out)}</td>
+                  <td><strong style="color:${res < 0 ? "#B23434" : "#2E7D46"}">${fmt(res)}</strong></td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Sem lançamentos suficientes ainda.</p>`}
+    </div>
+
+    <div class="admin-card">
       <h2>Faturamento</h2>
       ${revenue.length ? groupByMonth(revenue, "entry_date").map(([key, items]) => `
         <p class="cart-section-title" style="margin:14px 0 6px">${monthGroupLabel(key)}</p>
@@ -1277,28 +1331,6 @@ function renderFinanceiro(main) {
       `).join("") : `<p class="center-msg">Nenhuma despesa ainda.</p>`}
     </div>
 
-    <div class="admin-card">
-      <h2>Resumo anual por mês</h2>
-      ${monthKeys.length ? `
-        <table>
-          <thead><tr><th>Mês</th><th>Entrada</th><th>Saída</th><th>Resultado</th></tr></thead>
-          <tbody>
-            ${monthKeys.map(key => {
-              const m = monthly[key];
-              const res = m.in - m.out;
-              return `
-                <tr>
-                  <td>${key === "sem-data" ? "Sem data" : monthGroupLabel(key)}</td>
-                  <td style="color:#2E7D46">${fmt(m.in)}</td>
-                  <td style="color:#B23434">${fmt(m.out)}</td>
-                  <td><strong style="color:${res < 0 ? "#B23434" : "#2E7D46"}">${fmt(res)}</strong></td>
-                </tr>
-              `;
-            }).join("")}
-          </tbody>
-        </table>
-      ` : `<p class="center-msg">Sem lançamentos suficientes ainda.</p>`}
-    </div>
   `;
 }
 
@@ -2255,7 +2287,7 @@ function renderCalendario(main) {
             <span style="width:10px;height:10px;border-radius:50%;background:${CAL_CATEGORY_COLOR[e.category] || CAL_CATEGORY_COLOR.outro};display:inline-block;flex-shrink:0"></span>
             <div>
               <strong>${new Date(e.event_date + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })}${e.event_time ? " — " + eventTimeLabel(e).trim() : ""} · ${e.title}</strong>
-              ${e.description ? `<div class="hint" style="margin:2px 0 0">${e.description}</div>` : ""}
+              ${e.description ? `<div class="hint" style="margin:2px 0 0;white-space:pre-line">${escapeHtml(e.description)}</div>` : ""}
             </div>
           </div>
           <div style="display:flex;gap:6px">
@@ -2266,6 +2298,10 @@ function renderCalendario(main) {
       `).join("") : `<p class="center-msg">Nenhum evento cadastrado para ${MONTH_NAMES_CAL[month]}/${year}.</p>`}
     </div>
   `;
+}
+
+function escapeHtml(str) {
+  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function openEventForm(eventId, duplicateFrom) {
@@ -2285,7 +2321,7 @@ function openEventForm(eventId, duplicateFrom) {
           </select>
         </label>
         <label class="span-2">Título<input type="text" id="evTitle" value="${e ? e.title : ""}" placeholder="Ex: Fazer massa do bolo da Ana"></label>
-        <label class="span-2">Descrição (opcional)<input type="text" id="evDescription" value="${e ? e.description || "" : ""}"></label>
+        <label class="span-2">Descrição (opcional)<textarea id="evDescription" rows="4" placeholder="Pode usar Enter pra separar em tópicos/parágrafos">${e ? escapeHtml(e.description || "") : ""}</textarea></label>
         <label class="span-2">Observação (opcional)<input type="text" id="evNote" value="${e ? e.note || "" : ""}"></label>
         ${!eventId ? `<label class="span-2">Repetir também nestes dias (opcional)<input type="text" id="evRepeatDates" placeholder="Ex: 2026-09-20, 2026-09-27, 2026-10-04"></label>` : ""}
       </div>
