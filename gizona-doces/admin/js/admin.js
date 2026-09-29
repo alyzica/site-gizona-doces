@@ -113,7 +113,8 @@ function renderShell() {
           <button class="${admin.tab === 'customers' ? 'active' : ''}" onclick="setTab('customers')">${navIcon("users")}Clientes</button>
           <button class="${admin.tab === 'caixa' ? 'active' : ''}" onclick="setTab('caixa')">${navIcon("wallet")}Caixa</button>
           <button class="${admin.tab === 'financeiro' ? 'active' : ''}" onclick="setTab('financeiro')">${navIcon("chart")}Financeiro</button>
-          <button class="${admin.tab === 'estoque' ? 'active' : ''}" onclick="setTab('estoque')">${navIcon("box")}Estoque</button>
+          <button class="${admin.tab === 'estoque' ? 'active' : ''}" onclick="setTab('estoque')">${navIcon("box")}Estoque de Insumos</button>
+          <button class="${admin.tab === 'estoque_produtos' ? 'active' : ''}" onclick="setTab('estoque_produtos')">${navIcon("cube")}Estoque de Produtos</button>
           <button class="${admin.tab === 'receitas' ? 'active' : ''}" onclick="setTab('receitas')">${navIcon("book")}Receitas</button>
           <button class="${admin.tab === 'precificacao' ? 'active' : ''}" onclick="setTab('precificacao')">${navIcon("calc")}Precificação</button>
           <button class="${admin.tab === 'calendario' ? 'active' : ''}" onclick="setTab('calendario')">${navIcon("calendar")}Calendário</button>
@@ -140,6 +141,7 @@ async function loadTab() {
     else if (admin.tab === "caixa") await loadCaixa(main);
     else if (admin.tab === "financeiro") await loadFinanceiro(main);
     else if (admin.tab === "estoque") await loadEstoque(main);
+    else if (admin.tab === "estoque_produtos") await loadEstoqueProdutos(main);
     else if (admin.tab === "receitas") await loadReceitas(main);
     else if (admin.tab === "precificacao") await loadPrecificacao(main);
     else if (admin.tab === "calendario") await loadCalendario(main);
@@ -309,6 +311,11 @@ async function updateOrderStatus(id, status) {
   if (o) o.status = status;
   if (status === "delivered" && o) {
     await ensureRevenueForOrder(o);
+    await tryAutoDeductFinishedStock(o);
+  }
+  if (status === "cancelled" && o) {
+    // o gatilho do banco já remove, mas garantimos aqui também (sem risco: DELETE em linha que já não existe não dá erro)
+    await sb.from("revenue_entries").delete().eq("order_id", o.id);
   }
 }
 
@@ -357,7 +364,12 @@ function orderFormFields(o) {
       </label>
       <label>Data do evento (encomenda)<input type="date" id="ofEventDate" value="${o.event_date || ""}"></label>
       <label>Produto / descrição<input type="text" id="ofProduct" value="${o.product_desc || (o.items && o.items[0] ? o.items[0].product_name : "") || ""}" placeholder="Ex: 2 caixas de brigadeiro"></label>
-      <label>Valor total do pedido (R$)<input type="number" step="0.01" id="ofTotal" value="${o.total || ""}"></label>
+      <input type="hidden" id="ofBaseTotal" value="${o.total || 0}">
+      <label>Valor total do pedido (R$)<input type="number" step="0.01" id="ofTotal" value="${o.total || ""}" oninput="document.getElementById('ofBaseTotal').value = (Number(this.value)||0) - (Number(document.getElementById('ofAdjustment').value)||0)"></label>
+      <label>Ajuste (frete/desconto) R$ <small style="font-weight:400">— positivo soma, negativo desconta</small>
+        <input type="number" step="0.01" id="ofAdjustment" value="${o.adjustment_amount || ""}" placeholder="Ex: 10 ou -15" oninput="recalcOrderTotal()">
+      </label>
+      <label class="span-2">Observação do ajuste (opcional)<input type="text" id="ofAdjustmentNote" value="${o.adjustment_note || ""}" placeholder="Ex: Frete combinado por fora"></label>
       <label>Status
         <select id="ofStatus">
           ${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}" ${o.status === k ? "selected" : ""}>${v}</option>`).join("")}
@@ -380,6 +392,12 @@ function orderFormFields(o) {
     </div>
     <p class="hint" id="ofPaySumHint" style="margin-top:8px"></p>
   `;
+}
+
+function recalcOrderTotal() {
+  const base = Number(document.getElementById("ofBaseTotal").value) || 0;
+  const adj = Number(document.getElementById("ofAdjustment").value) || 0;
+  document.getElementById("ofTotal").value = (base + adj).toFixed(2);
 }
 
 function checkPaymentSum() {
@@ -425,6 +443,8 @@ async function saveManualOrder() {
     event_date: document.getElementById("ofEventDate").value || null,
     items: [{ product_name: product || "Pedido manual", category: "manual", quantity: 1, unit_price: total, subtotal: total }],
     total,
+    adjustment_amount: Number(document.getElementById("ofAdjustment").value) || 0,
+    adjustment_note: document.getElementById("ofAdjustmentNote").value.trim() || null,
     status: document.getElementById("ofStatus").value,
     payment_method_1: document.getElementById("ofPay1").value || null,
     payment_amount_1: Number(document.getElementById("ofPay1Amount").value) || null,
@@ -461,6 +481,8 @@ async function saveOrderEdit(id) {
     order_type: document.getElementById("ofOrderType").value,
     event_date: document.getElementById("ofEventDate").value || null,
     total: Number(document.getElementById("ofTotal").value),
+    adjustment_amount: Number(document.getElementById("ofAdjustment").value) || 0,
+    adjustment_note: document.getElementById("ofAdjustmentNote").value.trim() || null,
     status: document.getElementById("ofStatus").value,
     payment_method_1: document.getElementById("ofPay1").value || null,
     payment_amount_1: Number(document.getElementById("ofPay1Amount").value) || null,
@@ -1436,7 +1458,7 @@ function renderEstoque(main) {
 
   main.innerHTML = `
     <div class="admin-topbar">
-      <h1>Estoque</h1>
+      <h1>Estoque de Insumos</h1>
       <div style="display:flex;gap:8px">
         <button class="btn btn-danger" onclick="deleteAllIngredients()">Apagar tudo</button>
         <button class="btn btn-pink" onclick="openIngredientForm()">+ Novo ingrediente</button>
@@ -1754,6 +1776,264 @@ function renderResultados(main) {
 
     <p class="hint" style="text-align:center">Faturamento e despesas vêm do Financeiro (a receita entra sozinha quando um pedido do site é concluído; o resto é lançado manualmente). O quadro "faturamento por produto" cobre só as vendas feitas pelo site. Este relatório é calculado automaticamente — não precisa lançar nada aqui.</p>
   `;
+}
+
+/* ---------------- ESTOQUE DE PRODUTOS (doces finais/sabores) ---------------- */
+
+async function loadEstoqueProdutos(main) {
+  const [{ data: products, error: pErr }, { data: entries, error: eErr }, { data: sales, error: sErr }] = await Promise.all([
+    sb.from("finished_products").select("*").order("name", { ascending: true }),
+    sb.from("finished_product_entries").select("*, finished_products(name, flavor, unit)").order("entry_date", { ascending: false }).limit(50),
+    sb.from("finished_product_sales").select("*, finished_products(name, flavor, unit)").order("sale_date", { ascending: false }).limit(50),
+  ]);
+  if (pErr) throw pErr;
+  if (eErr) throw eErr;
+  if (sErr) throw sErr;
+  admin.data.finishedProducts = products || [];
+  admin.data.finishedEntries = entries || [];
+  admin.data.finishedSales = sales || [];
+
+  // pra calcular total vendido/faturado por produto, busca TODAS as vendas (sem limite)
+  const { data: allSales } = await sb.from("finished_product_sales").select("finished_product_id, quantity, subtotal");
+  admin.data.finishedAllSales = allSales || [];
+
+  renderEstoqueProdutos(main);
+}
+
+function productLabel(p) {
+  return p.flavor ? `${p.name} — ${p.flavor}` : p.name;
+}
+
+function renderEstoqueProdutos(main) {
+  const products = admin.data.finishedProducts;
+  const entries = admin.data.finishedEntries;
+  const sales = admin.data.finishedSales;
+  const allSales = admin.data.finishedAllSales;
+
+  main.innerHTML = `
+    <div class="admin-topbar"><h1>Estoque de Produtos</h1><button class="btn btn-pink" onclick="openFinishedProductForm()">+ Novo produto/sabor</button></div>
+    <p class="hint">Cadastre os doces prontos (ex: Geladinho — Ninho com Nutella) conforme for produzindo. As vendas do site baixam esse estoque sozinhas quando dá pra identificar o produto; senão, registre a venda manualmente aqui.</p>
+
+    <div id="finishedProductFormArea"></div>
+    <div id="finishedEntryFormArea"></div>
+    <div id="finishedSaleFormArea"></div>
+
+    <div class="admin-card">
+      <h2>Produtos e sabores</h2>
+      ${products.length ? `
+        <table>
+          <thead><tr><th>Produto</th><th>Estoque atual</th><th>Vendido (total)</th><th>Faturado</th><th></th></tr></thead>
+          <tbody>
+            ${products.map(p => {
+              const vendas = allSales.filter(s => s.finished_product_id === p.id);
+              const totalQtd = vendas.reduce((s, v) => s + Number(v.quantity), 0);
+              const totalFat = vendas.reduce((s, v) => s + Number(v.subtotal), 0);
+              return `
+                <tr>
+                  <td><strong>${productLabel(p)}</strong></td>
+                  <td>${p.current_stock} ${p.unit}</td>
+                  <td>${totalQtd} ${p.unit}</td>
+                  <td style="color:#2E7D46">${fmt(totalFat)}</td>
+                  <td style="display:flex;gap:6px;flex-wrap:wrap">
+                    <button class="btn btn-outline btn-sm" onclick="openFinishedEntryForm('${p.id}')">+ Entrada</button>
+                    <button class="btn btn-outline btn-sm" onclick="openFinishedSaleForm('${p.id}')">+ Venda</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteFinishedProduct('${p.id}')">Excluir</button>
+                  </td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Nenhum produto cadastrado ainda.</p>`}
+    </div>
+
+    <div class="admin-card">
+      <h2>Últimas entradas (produção)</h2>
+      ${entries.length ? `
+        <table>
+          <thead><tr><th>Data</th><th>Produto</th><th>Descrição</th><th>Quantidade</th><th>Valor</th></tr></thead>
+          <tbody>
+            ${entries.map(e => `
+              <tr>
+                <td>${new Date(e.entry_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
+                <td>${e.finished_products ? productLabel(e.finished_products) : "—"}</td>
+                <td>${e.description || "—"}</td>
+                <td>${e.quantity} ${e.finished_products ? e.finished_products.unit : ""}</td>
+                <td>${e.value ? fmt(e.value) : "—"}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Nenhuma entrada registrada ainda.</p>`}
+    </div>
+
+    <div class="admin-card">
+      <h2>Últimas vendas</h2>
+      ${sales.length ? `
+        <table>
+          <thead><tr><th>Data</th><th>Produto</th><th>Origem</th><th>Quantidade</th><th>Valor</th></tr></thead>
+          <tbody>
+            ${sales.map(s => `
+              <tr>
+                <td>${new Date(s.sale_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
+                <td>${s.finished_products ? productLabel(s.finished_products) : "—"}</td>
+                <td><span class="badge-status ${s.order_id ? "confirmed" : "pending"}">${s.order_id ? "Pedido" : "Manual"}</span></td>
+                <td>${s.quantity} ${s.finished_products ? s.finished_products.unit : ""}</td>
+                <td style="color:#2E7D46">${fmt(s.subtotal)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      ` : `<p class="center-msg">Nenhuma venda registrada ainda.</p>`}
+    </div>
+  `;
+}
+
+function openFinishedProductForm() {
+  document.getElementById("finishedProductFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>Novo produto/sabor</h2>
+      <div class="form-grid">
+        <label>Produto<input type="text" id="fpName" placeholder="Ex: Geladinho, Bolo de Pote, Brigadeiro"></label>
+        <label>Sabor (opcional)<input type="text" id="fpFlavor" placeholder="Ex: Ninho com Nutella"></label>
+        <label>Unidade
+          <select id="fpUnit">
+            <option value="uni">uni</option>
+            <option value="g">g</option>
+            <option value="kg">kg</option>
+          </select>
+        </label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveFinishedProduct()">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('finishedProductFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveFinishedProduct() {
+  const name = document.getElementById("fpName").value.trim();
+  const flavor = document.getElementById("fpFlavor").value.trim() || null;
+  const unit = document.getElementById("fpUnit").value;
+  if (!name) { alert("Informe o nome do produto."); return; }
+  const { error } = await sb.from("finished_products").insert({ name, flavor, unit });
+  if (error) { console.error(error); alert("Não foi possível salvar: " + (error.message || JSON.stringify(error))); return; }
+  document.getElementById("finishedProductFormArea").innerHTML = "";
+  await loadEstoqueProdutos(document.getElementById("adminMain"));
+}
+
+async function deleteFinishedProduct(id) {
+  if (!confirm("Excluir este produto/sabor? Essa ação não pode ser desfeita.")) return;
+  const { error } = await sb.from("finished_products").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível excluir: " + (error.message || JSON.stringify(error))); return; }
+  await loadEstoqueProdutos(document.getElementById("adminMain"));
+}
+
+function openFinishedEntryForm(productId) {
+  const p = admin.data.finishedProducts.find(p => p.id === productId);
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById("finishedEntryFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>Nova entrada — ${productLabel(p)}</h2>
+      <p class="hint">Estoque atual: <strong>${p.current_stock} ${p.unit}</strong></p>
+      <div class="form-grid">
+        <label>Data<input type="date" id="feEntryDate" value="${today}"></label>
+        <label>Quantidade produzida (${p.unit})<input type="number" step="0.01" min="0.01" id="feEntryQty"></label>
+        <label>Descrição (opcional)<input type="text" id="feEntryDesc" placeholder="Ex: Leva de sábado"></label>
+        <label>Valor (opcional)<input type="number" step="0.01" id="feEntryValue"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveFinishedEntry('${productId}')">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('finishedEntryFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveFinishedEntry(productId) {
+  const qty = Number(document.getElementById("feEntryQty").value);
+  const date = document.getElementById("feEntryDate").value;
+  if (!qty || qty <= 0 || !date) { alert("Informe data e uma quantidade válida."); return; }
+  const description = document.getElementById("feEntryDesc").value.trim() || null;
+  const value = document.getElementById("feEntryValue").value ? Number(document.getElementById("feEntryValue").value) : null;
+
+  const { error: insErr } = await sb.from("finished_product_entries").insert({
+    finished_product_id: productId, entry_date: date, description, quantity: qty, value,
+  });
+  if (insErr) { console.error(insErr); alert("Não foi possível registrar a entrada."); return; }
+
+  const p = admin.data.finishedProducts.find(p => p.id === productId);
+  const { error: updErr } = await sb.from("finished_products").update({ current_stock: Number(p.current_stock) + qty }).eq("id", productId);
+  if (updErr) { console.error(updErr); alert("Entrada salva, mas não consegui atualizar o saldo."); }
+
+  document.getElementById("finishedEntryFormArea").innerHTML = "";
+  await loadEstoqueProdutos(document.getElementById("adminMain"));
+}
+
+function openFinishedSaleForm(productId) {
+  const p = admin.data.finishedProducts.find(p => p.id === productId);
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById("finishedSaleFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>Registrar venda — ${productLabel(p)}</h2>
+      <p class="hint">Estoque atual: <strong>${p.current_stock} ${p.unit}</strong> — use isso pra vendas que não vieram de um pedido do site (WhatsApp, presencial etc).</p>
+      <div class="form-grid">
+        <label>Data<input type="date" id="fsSaleDate" value="${today}"></label>
+        <label>Quantidade vendida (${p.unit})<input type="number" step="0.01" min="0.01" id="fsQty"></label>
+        <label>Valor unitário (R$)<input type="number" step="0.01" min="0" id="fsUnitPrice"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveFinishedSale('${productId}')">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('finishedSaleFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveFinishedSale(productId) {
+  const qty = Number(document.getElementById("fsQty").value);
+  const date = document.getElementById("fsSaleDate").value;
+  const unitPrice = Number(document.getElementById("fsUnitPrice").value) || 0;
+  if (!qty || qty <= 0 || !date) { alert("Informe data e uma quantidade válida."); return; }
+
+  const { error: insErr } = await sb.from("finished_product_sales").insert({
+    finished_product_id: productId, sale_date: date, quantity: qty, unit_price: unitPrice, subtotal: qty * unitPrice,
+  });
+  if (insErr) { console.error(insErr); alert("Não foi possível registrar a venda."); return; }
+
+  const p = admin.data.finishedProducts.find(p => p.id === productId);
+  const newStock = Math.max(0, Number(p.current_stock) - qty);
+  const { error: updErr } = await sb.from("finished_products").update({ current_stock: newStock }).eq("id", productId);
+  if (updErr) { console.error(updErr); alert("Venda salva, mas não consegui atualizar o saldo."); }
+
+  document.getElementById("finishedSaleFormArea").innerHTML = "";
+  await loadEstoqueProdutos(document.getElementById("adminMain"));
+}
+
+// Tenta achar automaticamente o produto/sabor correspondente a um item de pedido,
+// pelo nome (comparação simples, sem acento/maiúsculas). Se achar exatamente um, baixa o estoque.
+async function tryAutoDeductFinishedStock(order) {
+  const { data: products } = await sb.from("finished_products").select("*");
+  if (!products || !products.length) return;
+  const normalize = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  for (const item of order.items || []) {
+    const itemName = normalize(item.product_name);
+    const matches = products.filter(p => itemName.includes(normalize(p.name)) && (!p.flavor || itemName.includes(normalize(p.flavor))));
+    if (matches.length !== 1) continue; // sem match ou ambíguo — não mexe, fica pro ajuste manual
+    const p = matches[0];
+    const qty = Number(item.quantity) || 1;
+
+    const { data: already } = await sb.from("finished_product_sales").select("id").eq("order_id", order.id).eq("finished_product_id", p.id).maybeSingle();
+    if (already) continue; // já baixado antes (evita duplicar se marcar entregue de novo)
+
+    await sb.from("finished_product_sales").insert({
+      finished_product_id: p.id, order_id: order.id, sale_date: new Date().toISOString().slice(0, 10),
+      quantity: qty, unit_price: Number(item.unit_price) || 0, subtotal: Number(item.subtotal) || 0,
+    });
+    await sb.from("finished_products").update({ current_stock: Math.max(0, Number(p.current_stock) - qty) }).eq("id", p.id);
+  }
 }
 
 /* ---------------- RECEITAS ---------------- */
