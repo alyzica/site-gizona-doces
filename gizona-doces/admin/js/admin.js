@@ -311,7 +311,6 @@ async function updateOrderStatus(id, status) {
   if (o) o.status = status;
   if (status === "delivered" && o) {
     await ensureRevenueForOrder(o);
-    await tryAutoDeductFinishedStock(o);
   }
   if (status === "cancelled" && o) {
     // o gatilho do banco já remove, mas garantimos aqui também (sem risco: DELETE em linha que já não existe não dá erro)
@@ -1778,262 +1777,172 @@ function renderResultados(main) {
   `;
 }
 
-/* ---------------- ESTOQUE DE PRODUTOS (doces finais/sabores) ---------------- */
+/* ---------------- ESTOQUE DE PRODUTOS (por leva de produção, igual à planilha) ---------------- */
 
 async function loadEstoqueProdutos(main) {
-  const [{ data: products, error: pErr }, { data: entries, error: eErr }, { data: sales, error: sErr }] = await Promise.all([
-    sb.from("finished_products").select("*").order("name", { ascending: true }),
-    sb.from("finished_product_entries").select("*, finished_products(name, flavor, unit)").order("entry_date", { ascending: false }).limit(50),
-    sb.from("finished_product_sales").select("*, finished_products(name, flavor, unit)").order("sale_date", { ascending: false }).limit(50),
-  ]);
-  if (pErr) throw pErr;
-  if (eErr) throw eErr;
-  if (sErr) throw sErr;
-  admin.data.finishedProducts = products || [];
-  admin.data.finishedEntries = entries || [];
-  admin.data.finishedSales = sales || [];
-
-  // pra calcular total vendido/faturado por produto, busca TODAS as vendas (sem limite)
-  const { data: allSales } = await sb.from("finished_product_sales").select("finished_product_id, quantity, subtotal");
-  admin.data.finishedAllSales = allSales || [];
-
+  const { data: batches, error } = await sb.from("production_batches").select("*, batch_items(*)").order("batch_date", { ascending: false });
+  if (error) throw error;
+  admin.data.batches = batches || [];
   renderEstoqueProdutos(main);
 }
 
-function productLabel(p) {
-  return p.flavor ? `${p.name} — ${p.flavor}` : p.name;
-}
-
 function renderEstoqueProdutos(main) {
-  const products = admin.data.finishedProducts;
-  const entries = admin.data.finishedEntries;
-  const sales = admin.data.finishedSales;
-  const allSales = admin.data.finishedAllSales;
-
+  const batches = admin.data.batches;
   main.innerHTML = `
-    <div class="admin-topbar"><h1>Estoque de Produtos</h1><button class="btn btn-pink" onclick="openFinishedProductForm()">+ Novo produto/sabor</button></div>
-    <p class="hint">Cadastre os doces prontos (ex: Geladinho — Ninho com Nutella) conforme for produzindo. As vendas do site baixam esse estoque sozinhas quando dá pra identificar o produto; senão, registre a venda manualmente aqui.</p>
+    <div class="admin-topbar"><h1>Estoque de Produtos</h1><button class="btn btn-pink" onclick="openBatchForm()">+ Nova leva</button></div>
+    <p class="hint">Cada leva de produção vira uma tabela, igual na planilha (ex: "Geladinhos 18/07"). Cadastre os sabores e a quantidade produzida; conforme for vendendo, você seleciona o sabor e dá baixa.</p>
+    <div id="batchFormArea"></div>
+    <div id="batchItemFormArea"></div>
+    <div id="batchSaleFormArea"></div>
 
-    <div id="finishedProductFormArea"></div>
-    <div id="finishedEntryFormArea"></div>
-    <div id="finishedSaleFormArea"></div>
-
-    <div class="admin-card">
-      <h2>Produtos e sabores</h2>
-      ${products.length ? `
-        <table>
-          <thead><tr><th>Produto</th><th>Estoque atual</th><th>Vendido (total)</th><th>Faturado</th><th></th></tr></thead>
-          <tbody>
-            ${products.map(p => {
-              const vendas = allSales.filter(s => s.finished_product_id === p.id);
-              const totalQtd = vendas.reduce((s, v) => s + Number(v.quantity), 0);
-              const totalFat = vendas.reduce((s, v) => s + Number(v.subtotal), 0);
-              return `
-                <tr>
-                  <td><strong>${productLabel(p)}</strong></td>
-                  <td>${p.current_stock} ${p.unit}</td>
-                  <td>${totalQtd} ${p.unit}</td>
-                  <td style="color:#2E7D46">${fmt(totalFat)}</td>
-                  <td style="display:flex;gap:6px;flex-wrap:wrap">
-                    <button class="btn btn-outline btn-sm" onclick="openFinishedEntryForm('${p.id}')">+ Entrada</button>
-                    <button class="btn btn-outline btn-sm" onclick="openFinishedSaleForm('${p.id}')">+ Venda</button>
-                    <button class="btn btn-danger btn-sm" onclick="deleteFinishedProduct('${p.id}')">Excluir</button>
-                  </td>
-                </tr>
-              `;
-            }).join("")}
-          </tbody>
-        </table>
-      ` : `<p class="center-msg">Nenhum produto cadastrado ainda.</p>`}
-    </div>
-
-    <div class="admin-card">
-      <h2>Últimas entradas (produção)</h2>
-      ${entries.length ? `
-        <table>
-          <thead><tr><th>Data</th><th>Produto</th><th>Descrição</th><th>Quantidade</th><th>Valor</th></tr></thead>
-          <tbody>
-            ${entries.map(e => `
-              <tr>
-                <td>${new Date(e.entry_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
-                <td>${e.finished_products ? productLabel(e.finished_products) : "—"}</td>
-                <td>${e.description || "—"}</td>
-                <td>${e.quantity} ${e.finished_products ? e.finished_products.unit : ""}</td>
-                <td>${e.value ? fmt(e.value) : "—"}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      ` : `<p class="center-msg">Nenhuma entrada registrada ainda.</p>`}
-    </div>
-
-    <div class="admin-card">
-      <h2>Últimas vendas</h2>
-      ${sales.length ? `
-        <table>
-          <thead><tr><th>Data</th><th>Produto</th><th>Origem</th><th>Quantidade</th><th>Valor</th></tr></thead>
-          <tbody>
-            ${sales.map(s => `
-              <tr>
-                <td>${new Date(s.sale_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
-                <td>${s.finished_products ? productLabel(s.finished_products) : "—"}</td>
-                <td><span class="badge-status ${s.order_id ? "confirmed" : "pending"}">${s.order_id ? "Pedido" : "Manual"}</span></td>
-                <td>${s.quantity} ${s.finished_products ? s.finished_products.unit : ""}</td>
-                <td style="color:#2E7D46">${fmt(s.subtotal)}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      ` : `<p class="center-msg">Nenhuma venda registrada ainda.</p>`}
-    </div>
+    ${batches.length ? batches.map(b => {
+      const items = b.batch_items || [];
+      const totalProduzido = items.reduce((s, i) => s + Number(i.quantity_produced), 0);
+      const totalVendido = items.reduce((s, i) => s + Number(i.quantity_sold), 0);
+      const totalFaturado = items.reduce((s, i) => s + Number(i.quantity_sold) * Number(i.unit_price || 0), 0);
+      return `
+        <div class="admin-card">
+          <div class="admin-topbar" style="margin-bottom:6px">
+            <h2 style="margin:0">${b.name} <small style="color:var(--muted);font-weight:400">(${new Date(b.batch_date + "T00:00:00").toLocaleDateString("pt-BR")})</small></h2>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-outline btn-sm" onclick="openBatchItemForm('${b.id}')">+ Sabor</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteBatch('${b.id}')">Excluir leva</button>
+            </div>
+          </div>
+          ${items.length ? `
+            <table>
+              <thead><tr><th>Sabor</th><th>Produzido</th><th>Vendido</th><th>Restante</th><th>Preço un.</th><th></th></tr></thead>
+              <tbody>
+                ${items.map(i => {
+                  const restante = Number(i.quantity_produced) - Number(i.quantity_sold);
+                  return `
+                    <tr>
+                      <td><strong>${i.product_name}</strong></td>
+                      <td>${i.quantity_produced}</td>
+                      <td>${i.quantity_sold}</td>
+                      <td style="color:${restante <= 0 ? "#B23434" : "var(--ink)"}">${restante}</td>
+                      <td>${i.unit_price ? fmt(i.unit_price) : "—"}</td>
+                      <td style="display:flex;gap:6px;flex-wrap:wrap">
+                        <button class="btn btn-outline btn-sm" onclick="openBatchSaleForm('${i.id}')">Vender</button>
+                        <button class="btn btn-outline btn-sm" onclick="deleteBatchItem('${i.id}', '${b.id}')">Excluir</button>
+                      </td>
+                    </tr>
+                  `;
+                }).join("")}
+              </tbody>
+            </table>
+            <p class="hint" style="margin-top:10px">Total produzido: <strong>${totalProduzido}</strong> · Total vendido: <strong>${totalVendido}</strong> · Faturado: <strong style="color:#2E7D46">${fmt(totalFaturado)}</strong></p>
+          ` : `<p class="center-msg">Nenhum sabor cadastrado nessa leva ainda.</p>`}
+        </div>
+      `;
+    }).join("") : `<div class="admin-card"><p class="center-msg">Nenhuma leva de produção cadastrada ainda.</p></div>`}
   `;
 }
 
-function openFinishedProductForm() {
-  document.getElementById("finishedProductFormArea").innerHTML = `
+function openBatchForm() {
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById("batchFormArea").innerHTML = `
     <div class="admin-card">
-      <h2>Novo produto/sabor</h2>
+      <h2>Nova leva de produção</h2>
       <div class="form-grid">
-        <label>Produto<input type="text" id="fpName" placeholder="Ex: Geladinho, Bolo de Pote, Brigadeiro"></label>
-        <label>Sabor (opcional)<input type="text" id="fpFlavor" placeholder="Ex: Ninho com Nutella"></label>
-        <label>Unidade
-          <select id="fpUnit">
-            <option value="uni">uni</option>
-            <option value="g">g</option>
-            <option value="kg">kg</option>
-          </select>
-        </label>
+        <label>Nome da leva<input type="text" id="bName" placeholder="Ex: Geladinhos 18/07"></label>
+        <label>Data<input type="date" id="bDate" value="${today}"></label>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn btn-pink" onclick="saveFinishedProduct()">Salvar</button>
-        <button class="btn btn-outline" onclick="document.getElementById('finishedProductFormArea').innerHTML=''">Cancelar</button>
+        <button class="btn btn-pink" onclick="saveBatch()">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('batchFormArea').innerHTML=''">Cancelar</button>
       </div>
     </div>
   `;
 }
 
-async function saveFinishedProduct() {
-  const name = document.getElementById("fpName").value.trim();
-  const flavor = document.getElementById("fpFlavor").value.trim() || null;
-  const unit = document.getElementById("fpUnit").value;
-  if (!name) { alert("Informe o nome do produto."); return; }
-  const { error } = await sb.from("finished_products").insert({ name, flavor, unit });
+async function saveBatch() {
+  const name = document.getElementById("bName").value.trim();
+  const batch_date = document.getElementById("bDate").value;
+  if (!name || !batch_date) { alert("Preencha o nome e a data da leva."); return; }
+  const { error } = await sb.from("production_batches").insert({ name, batch_date });
   if (error) { console.error(error); alert("Não foi possível salvar: " + (error.message || JSON.stringify(error))); return; }
-  document.getElementById("finishedProductFormArea").innerHTML = "";
+  document.getElementById("batchFormArea").innerHTML = "";
   await loadEstoqueProdutos(document.getElementById("adminMain"));
 }
 
-async function deleteFinishedProduct(id) {
-  if (!confirm("Excluir este produto/sabor? Essa ação não pode ser desfeita.")) return;
-  const { error } = await sb.from("finished_products").delete().eq("id", id);
+async function deleteBatch(batchId) {
+  if (!confirm("Excluir esta leva e todos os sabores dela? Essa ação não pode ser desfeita.")) return;
+  const { error } = await sb.from("production_batches").delete().eq("id", batchId);
   if (error) { console.error(error); alert("Não foi possível excluir: " + (error.message || JSON.stringify(error))); return; }
   await loadEstoqueProdutos(document.getElementById("adminMain"));
 }
 
-function openFinishedEntryForm(productId) {
-  const p = admin.data.finishedProducts.find(p => p.id === productId);
-  const today = new Date().toISOString().slice(0, 10);
-  document.getElementById("finishedEntryFormArea").innerHTML = `
+function openBatchItemForm(batchId) {
+  document.getElementById("batchItemFormArea").innerHTML = `
     <div class="admin-card">
-      <h2>Nova entrada — ${productLabel(p)}</h2>
-      <p class="hint">Estoque atual: <strong>${p.current_stock} ${p.unit}</strong></p>
+      <h2>Novo sabor</h2>
       <div class="form-grid">
-        <label>Data<input type="date" id="feEntryDate" value="${today}"></label>
-        <label>Quantidade produzida (${p.unit})<input type="number" step="0.01" min="0.01" id="feEntryQty"></label>
-        <label>Descrição (opcional)<input type="text" id="feEntryDesc" placeholder="Ex: Leva de sábado"></label>
-        <label>Valor (opcional)<input type="number" step="0.01" id="feEntryValue"></label>
+        <label>Sabor<input type="text" id="biName" placeholder="Ex: Ninho com Nutella"></label>
+        <label>Quantidade produzida<input type="number" step="1" min="0" id="biQty"></label>
+        <label>Preço de venda (R$, opcional)<input type="number" step="0.01" min="0" id="biPrice"></label>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn btn-pink" onclick="saveFinishedEntry('${productId}')">Salvar</button>
-        <button class="btn btn-outline" onclick="document.getElementById('finishedEntryFormArea').innerHTML=''">Cancelar</button>
+        <button class="btn btn-pink" onclick="saveBatchItem('${batchId}')">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('batchItemFormArea').innerHTML=''">Cancelar</button>
       </div>
     </div>
   `;
 }
 
-async function saveFinishedEntry(productId) {
-  const qty = Number(document.getElementById("feEntryQty").value);
-  const date = document.getElementById("feEntryDate").value;
-  if (!qty || qty <= 0 || !date) { alert("Informe data e uma quantidade válida."); return; }
-  const description = document.getElementById("feEntryDesc").value.trim() || null;
-  const value = document.getElementById("feEntryValue").value ? Number(document.getElementById("feEntryValue").value) : null;
-
-  const { error: insErr } = await sb.from("finished_product_entries").insert({
-    finished_product_id: productId, entry_date: date, description, quantity: qty, value,
-  });
-  if (insErr) { console.error(insErr); alert("Não foi possível registrar a entrada."); return; }
-
-  const p = admin.data.finishedProducts.find(p => p.id === productId);
-  const { error: updErr } = await sb.from("finished_products").update({ current_stock: Number(p.current_stock) + qty }).eq("id", productId);
-  if (updErr) { console.error(updErr); alert("Entrada salva, mas não consegui atualizar o saldo."); }
-
-  document.getElementById("finishedEntryFormArea").innerHTML = "";
+async function saveBatchItem(batchId) {
+  const product_name = document.getElementById("biName").value.trim();
+  const quantity_produced = Number(document.getElementById("biQty").value);
+  const unit_price = document.getElementById("biPrice").value ? Number(document.getElementById("biPrice").value) : null;
+  if (!product_name || !quantity_produced) { alert("Preencha o sabor e a quantidade produzida."); return; }
+  const { error } = await sb.from("batch_items").insert({ batch_id: batchId, product_name, quantity_produced, unit_price });
+  if (error) { console.error(error); alert("Não foi possível salvar: " + (error.message || JSON.stringify(error))); return; }
+  document.getElementById("batchItemFormArea").innerHTML = "";
   await loadEstoqueProdutos(document.getElementById("adminMain"));
 }
 
-function openFinishedSaleForm(productId) {
-  const p = admin.data.finishedProducts.find(p => p.id === productId);
-  const today = new Date().toISOString().slice(0, 10);
-  document.getElementById("finishedSaleFormArea").innerHTML = `
-    <div class="admin-card">
-      <h2>Registrar venda — ${productLabel(p)}</h2>
-      <p class="hint">Estoque atual: <strong>${p.current_stock} ${p.unit}</strong> — use isso pra vendas que não vieram de um pedido do site (WhatsApp, presencial etc).</p>
-      <div class="form-grid">
-        <label>Data<input type="date" id="fsSaleDate" value="${today}"></label>
-        <label>Quantidade vendida (${p.unit})<input type="number" step="0.01" min="0.01" id="fsQty"></label>
-        <label>Valor unitário (R$)<input type="number" step="0.01" min="0" id="fsUnitPrice"></label>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn btn-pink" onclick="saveFinishedSale('${productId}')">Salvar</button>
-        <button class="btn btn-outline" onclick="document.getElementById('finishedSaleFormArea').innerHTML=''">Cancelar</button>
-      </div>
-    </div>
-  `;
-}
-
-async function saveFinishedSale(productId) {
-  const qty = Number(document.getElementById("fsQty").value);
-  const date = document.getElementById("fsSaleDate").value;
-  const unitPrice = Number(document.getElementById("fsUnitPrice").value) || 0;
-  if (!qty || qty <= 0 || !date) { alert("Informe data e uma quantidade válida."); return; }
-
-  const { error: insErr } = await sb.from("finished_product_sales").insert({
-    finished_product_id: productId, sale_date: date, quantity: qty, unit_price: unitPrice, subtotal: qty * unitPrice,
-  });
-  if (insErr) { console.error(insErr); alert("Não foi possível registrar a venda."); return; }
-
-  const p = admin.data.finishedProducts.find(p => p.id === productId);
-  const newStock = Math.max(0, Number(p.current_stock) - qty);
-  const { error: updErr } = await sb.from("finished_products").update({ current_stock: newStock }).eq("id", productId);
-  if (updErr) { console.error(updErr); alert("Venda salva, mas não consegui atualizar o saldo."); }
-
-  document.getElementById("finishedSaleFormArea").innerHTML = "";
+async function deleteBatchItem(itemId, batchId) {
+  if (!confirm("Excluir este sabor da leva?")) return;
+  const { error } = await sb.from("batch_items").delete().eq("id", itemId);
+  if (error) { console.error(error); alert("Não foi possível excluir: " + (error.message || JSON.stringify(error))); return; }
   await loadEstoqueProdutos(document.getElementById("adminMain"));
 }
 
-// Tenta achar automaticamente o produto/sabor correspondente a um item de pedido,
-// pelo nome (comparação simples, sem acento/maiúsculas). Se achar exatamente um, baixa o estoque.
-async function tryAutoDeductFinishedStock(order) {
-  const { data: products } = await sb.from("finished_products").select("*");
-  if (!products || !products.length) return;
-  const normalize = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-
-  for (const item of order.items || []) {
-    const itemName = normalize(item.product_name);
-    const matches = products.filter(p => itemName.includes(normalize(p.name)) && (!p.flavor || itemName.includes(normalize(p.flavor))));
-    if (matches.length !== 1) continue; // sem match ou ambíguo — não mexe, fica pro ajuste manual
-    const p = matches[0];
-    const qty = Number(item.quantity) || 1;
-
-    const { data: already } = await sb.from("finished_product_sales").select("id").eq("order_id", order.id).eq("finished_product_id", p.id).maybeSingle();
-    if (already) continue; // já baixado antes (evita duplicar se marcar entregue de novo)
-
-    await sb.from("finished_product_sales").insert({
-      finished_product_id: p.id, order_id: order.id, sale_date: new Date().toISOString().slice(0, 10),
-      quantity: qty, unit_price: Number(item.unit_price) || 0, subtotal: Number(item.subtotal) || 0,
-    });
-    await sb.from("finished_products").update({ current_stock: Math.max(0, Number(p.current_stock) - qty) }).eq("id", p.id);
+function findBatchItem(itemId) {
+  for (const b of admin.data.batches) {
+    const item = (b.batch_items || []).find(i => i.id === itemId);
+    if (item) return item;
   }
+  return null;
+}
+
+function openBatchSaleForm(itemId) {
+  const item = findBatchItem(itemId);
+  if (!item) return;
+  const restante = Number(item.quantity_produced) - Number(item.quantity_sold);
+  document.getElementById("batchSaleFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>Vender — ${item.product_name}</h2>
+      <p class="hint">Restante em estoque: <strong>${restante}</strong></p>
+      <div class="form-grid">
+        <label>Quantidade vendida<input type="number" step="1" min="1" id="bsQty"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveBatchSale('${itemId}')">Confirmar venda</button>
+        <button class="btn btn-outline" onclick="document.getElementById('batchSaleFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveBatchSale(itemId) {
+  const qty = Number(document.getElementById("bsQty").value);
+  if (!qty || qty <= 0) { alert("Informe uma quantidade válida."); return; }
+  const item = findBatchItem(itemId);
+  const { error } = await sb.from("batch_items").update({ quantity_sold: Number(item.quantity_sold) + qty }).eq("id", itemId);
+  if (error) { console.error(error); alert("Não foi possível registrar a venda: " + (error.message || JSON.stringify(error))); return; }
+  document.getElementById("batchSaleFormArea").innerHTML = "";
+  await loadEstoqueProdutos(document.getElementById("adminMain"));
 }
 
 /* ---------------- RECEITAS ---------------- */
