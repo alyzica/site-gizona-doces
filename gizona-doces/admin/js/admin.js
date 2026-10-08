@@ -342,7 +342,9 @@ async function ensureRevenueForOrder(order) {
 
 async function deleteOrder(id) {
   if (!confirm("Tem certeza que deseja excluir este pedido? Essa ação não pode ser desfeita.")) return;
-  await sb.from("orders").delete().eq("id", id);
+  await sb.from("revenue_entries").delete().eq("order_id", id);
+  const { error: delErr } = await sb.from("orders").delete().eq("id", id);
+  if (delErr) { console.error(delErr); alert("Não foi possível excluir o pedido: " + (delErr.message || "")); return; }
   admin.data.orders = admin.data.orders.filter(o => o.id !== id);
   renderOrdersTable(document.getElementById("adminMain"));
 }
@@ -502,9 +504,15 @@ async function loadProducts(main) {
   renderProductsTable(main);
 }
 function renderProductsTable(main) {
-  const products = admin.data.products;
+  const tab = admin.data.productTab || "encomendas";
+  const products = admin.data.products.filter(p => tab === "delivery" ? p.category === "delivery" : p.category !== "delivery");
   main.innerHTML = `
     <div class="admin-topbar"><h1>Produtos</h1><button class="btn btn-pink" onclick="openProductForm()">+ Novo produto</button></div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button class="btn ${tab === "encomendas" ? "btn-pink" : "btn-outline"}" onclick="setProductTab('encomendas')">Encomendas</button>
+      <button class="btn ${tab === "delivery" ? "btn-pink" : "btn-outline"}" onclick="setProductTab('delivery')">Delivery</button>
+    </div>
+    ${tab === "delivery" ? `<p class="hint">Produtos de delivery são de uso interno por enquanto: o cliente ainda vê "Delivery em breve" no site. Eles alimentam o Estoque de Produtos.</p>` : ""}
     <div id="productFormArea"></div>
     <div class="admin-card">
       ${products.length ? `
@@ -515,7 +523,7 @@ function renderProductsTable(main) {
               <tr>
                 <td>${p.image_url ? `<img class="img-thumb" src="${p.image_url}" onerror="this.style.display='none'">` : ""}</td>
                 <td>${p.name}</td>
-                <td>${p.category === "brigadeiro" ? "Brigadeiro" : "Geladinho"}</td>
+                <td>${p.category === "brigadeiro" ? "Brigadeiro" : p.category === "geladinho" ? "Geladinho" : "Delivery"}</td>
                 <td>${fmt(p.price)}</td>
                 <td>${p.active ? "Sim" : "Não"}</td>
                 <td>
@@ -530,6 +538,10 @@ function renderProductsTable(main) {
     </div>
   `;
 }
+function setProductTab(t) {
+  admin.data.productTab = t;
+  renderProductsTable(document.getElementById("adminMain"));
+}
 function openProductForm(id) {
   const p = id ? admin.data.products.find(p => p.id === id) : null;
   document.getElementById("productFormArea").innerHTML = `
@@ -537,12 +549,12 @@ function openProductForm(id) {
       <h2>${p ? "Editar produto" : "Novo produto"}</h2>
       <div class="form-grid">
         <label>Nome<input id="pfName" value="${p ? p.name : ""}"></label>
-        <label>Categoria
+        ${(admin.data.productTab === "delivery" || (p && p.category === "delivery")) ? `<input type="hidden" id="pfCategory" value="delivery">` : `<label>Categoria
           <select id="pfCategory">
             <option value="brigadeiro" ${p && p.category === "brigadeiro" ? "selected" : ""}>Brigadeiro</option>
             <option value="geladinho" ${p && p.category === "geladinho" ? "selected" : ""}>Geladinho</option>
           </select>
-        </label>
+        </label>`}
         <label>Preço (R$)<input id="pfPrice" type="number" step="0.10" value="${p ? p.price : ""}"></label>
         <label>Ordem de exibição<input id="pfSort" type="number" value="${p ? p.sort_order : 0}"></label>
       </div>
@@ -907,8 +919,8 @@ async function saveProduct(id) {
     image2_position_y: Number(document.getElementById("pfImage2Y")?.value) || 50,
     active: document.getElementById("pfActive").checked,
   };
-  if (id) await sb.from("products").update(payload).eq("id", id);
-  else await sb.from("products").insert(payload);
+  const { error: pErr } = id ? await sb.from("products").update(payload).eq("id", id) : await sb.from("products").insert(payload);
+  if (pErr) { console.error(pErr); alert("Não foi possível salvar: " + (pErr.message || "") + (payload.category === "delivery" ? "\n\nRode o script add_delivery_estoque.sql no Supabase." : "")); return; }
   document.getElementById("productFormArea").innerHTML = "";
   await loadProducts(document.getElementById("adminMain"));
 }
@@ -1322,7 +1334,7 @@ function renderFinanceiro(main) {
                 <td>${r.description}</td>
                 <td><span class="badge-status ${r.source === "site" ? "confirmed" : "pending"}">${r.source === "site" ? "Automático (site)" : "Manual"}</span></td>
                 <td><strong style="color:#2E7D46">${fmt(r.amount)}</strong></td>
-                <td>${r.source === "manual" ? `<button class="btn btn-outline btn-sm" onclick="deleteRevenueEntry('${r.id}')">Excluir</button>` : ""}</td>
+                <td><button class="btn btn-outline btn-sm" onclick="deleteRevenueEntry('${r.id}')">Excluir</button></td>
               </tr>
             `).join("")}
           </tbody>
@@ -1423,7 +1435,7 @@ async function saveFinanceEntry() {
 }
 
 async function deleteRevenueEntry(id) {
-  if (!confirm("Excluir esta receita manual?")) return;
+  if (!confirm("Excluir esta entrada do Faturamento? Se ela veio de um pedido, o pedido continua existindo.")) return;
   const { error } = await sb.from("revenue_entries").delete().eq("id", id);
   if (error) { console.error(error); alert("Não foi possível excluir."); return; }
   await loadFinanceiro(document.getElementById("adminMain"));
@@ -1777,171 +1789,177 @@ function renderResultados(main) {
   `;
 }
 
-/* ---------------- ESTOQUE DE PRODUTOS (por leva de produção, igual à planilha) ---------------- */
+/* ---------------- ESTOQUE DE PRODUTOS (delivery, movido por vendas) ---------------- */
 
 async function loadEstoqueProdutos(main) {
-  const { data: batches, error } = await sb.from("production_batches").select("*, batch_items(*)").order("batch_date", { ascending: false });
-  if (error) throw error;
-  admin.data.batches = batches || [];
+  const [pr, ba, sa] = await Promise.all([
+    sb.from("products").select("*").eq("category", "delivery").order("sort_order").order("name"),
+    sb.from("delivery_stock_batches").select("*").order("produced_at", { ascending: false }),
+    sb.from("delivery_sales").select("*").order("sold_at", { ascending: false }),
+  ]);
+  if (pr.error) throw pr.error;
+  if (ba.error) throw ba.error;
+  if (sa.error) throw sa.error;
+  admin.data.dProducts = pr.data || [];
+  admin.data.dBatches = ba.data || [];
+  admin.data.dSales = sa.data || [];
   renderEstoqueProdutos(main);
 }
 
+function deliveryStockRows() {
+  return admin.data.dProducts.map(p => {
+    const bs = admin.data.dBatches.filter(b => b.product_id === p.id);
+    const ss = admin.data.dSales.filter(x => x.product_id === p.id);
+    const produced = bs.reduce((t, b) => t + Number(b.quantity), 0);
+    const sold = ss.reduce((t, x) => t + Number(x.quantity), 0);
+    const invoiced = ss.reduce((t, x) => t + Number(x.quantity) * Number(x.unit_price), 0);
+    const stock = produced - sold;
+    return { p, produced, sold, stock, invoiced, potential: Math.max(stock, 0) * Number(p.price) };
+  });
+}
+
 function renderEstoqueProdutos(main) {
-  const batches = admin.data.batches;
+  const rows = deliveryStockRows();
+  const totInv = rows.reduce((t, r) => t + r.invoiced, 0);
+  const totPot = rows.reduce((t, r) => t + r.potential, 0);
+  const recent = admin.data.dSales.slice(0, 15);
+  const nameOf = id => (admin.data.dProducts.find(p => p.id === id) || {}).name || "—";
   main.innerHTML = `
-    <div class="admin-topbar"><h1>Estoque de Produtos</h1><button class="btn btn-pink" onclick="openBatchForm()">+ Nova leva</button></div>
-    <p class="hint">Cada leva de produção vira uma tabela, igual na planilha (ex: "Geladinhos 18/07"). Cadastre os sabores e a quantidade produzida; conforme for vendendo, você seleciona o sabor e dá baixa.</p>
-    <div id="batchFormArea"></div>
-    <div id="batchItemFormArea"></div>
-    <div id="batchSaleFormArea"></div>
-
-    ${batches.length ? batches.map(b => {
-      const items = b.batch_items || [];
-      const totalProduzido = items.reduce((s, i) => s + Number(i.quantity_produced), 0);
-      const totalVendido = items.reduce((s, i) => s + Number(i.quantity_sold), 0);
-      const totalFaturado = items.reduce((s, i) => s + Number(i.quantity_sold) * Number(i.unit_price || 0), 0);
-      return `
-        <div class="admin-card">
-          <div class="admin-topbar" style="margin-bottom:6px">
-            <h2 style="margin:0">${b.name} <small style="color:var(--muted);font-weight:400">(${new Date(b.batch_date + "T00:00:00").toLocaleDateString("pt-BR")})</small></h2>
-            <div style="display:flex;gap:6px">
-              <button class="btn btn-outline btn-sm" onclick="openBatchItemForm('${b.id}')">+ Sabor</button>
-              <button class="btn btn-danger btn-sm" onclick="deleteBatch('${b.id}')">Excluir leva</button>
-            </div>
-          </div>
-          ${items.length ? `
-            <table>
-              <thead><tr><th>Sabor</th><th>Produzido</th><th>Vendido</th><th>Restante</th><th>Preço un.</th><th></th></tr></thead>
-              <tbody>
-                ${items.map(i => {
-                  const restante = Number(i.quantity_produced) - Number(i.quantity_sold);
-                  return `
-                    <tr>
-                      <td><strong>${i.product_name}</strong></td>
-                      <td>${i.quantity_produced}</td>
-                      <td>${i.quantity_sold}</td>
-                      <td style="color:${restante <= 0 ? "#B23434" : "var(--ink)"}">${restante}</td>
-                      <td>${i.unit_price ? fmt(i.unit_price) : "—"}</td>
-                      <td style="display:flex;gap:6px;flex-wrap:wrap">
-                        <button class="btn btn-outline btn-sm" onclick="openBatchSaleForm('${i.id}')">Vender</button>
-                        <button class="btn btn-outline btn-sm" onclick="deleteBatchItem('${i.id}', '${b.id}')">Excluir</button>
-                      </td>
-                    </tr>
-                  `;
-                }).join("")}
-              </tbody>
-            </table>
-            <p class="hint" style="margin-top:10px">Total produzido: <strong>${totalProduzido}</strong> · Total vendido: <strong>${totalVendido}</strong> · Faturado: <strong style="color:#2E7D46">${fmt(totalFaturado)}</strong></p>
-          ` : `<p class="center-msg">Nenhum sabor cadastrado nessa leva ainda.</p>`}
-        </div>
-      `;
-    }).join("") : `<div class="admin-card"><p class="center-msg">Nenhuma leva de produção cadastrada ainda.</p></div>`}
-  `;
-}
-
-function openBatchForm() {
-  const today = new Date().toISOString().slice(0, 10);
-  document.getElementById("batchFormArea").innerHTML = `
+    <div class="admin-topbar"><h1>Estoque de Produtos</h1>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="openStockSaleForm()">Registrar venda</button>
+        <button class="btn btn-pink" onclick="openStockBatchForm()">+ Nova leva</button>
+      </div>
+    </div>
+    <p class="hint">Produtos de delivery cadastrados na aba Produtos → Delivery. O estoque diminui sozinho com os pedidos do site e com as vendas que você registrar aqui.</p>
+    <div id="stockFormArea"></div>
     <div class="admin-card">
-      <h2>Nova leva de produção</h2>
-      <div class="form-grid">
-        <label>Nome da leva<input type="text" id="bName" placeholder="Ex: Geladinhos 18/07"></label>
-        <label>Data<input type="date" id="bDate" value="${today}"></label>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn btn-pink" onclick="saveBatch()">Salvar</button>
-        <button class="btn btn-outline" onclick="document.getElementById('batchFormArea').innerHTML=''">Cancelar</button>
-      </div>
+      <p class="hint" style="margin:0">Faturado: <strong style="color:#2E7D46">${fmt(totInv)}</strong> · Ainda a faturar (estoque × preço): <strong>${fmt(totPot)}</strong></p>
+    </div>
+    <div class="admin-card">
+      ${rows.length ? `<table>
+        <thead><tr><th>Produto</th><th>Produzido</th><th>Vendido</th><th>Estoque</th><th>Preço</th><th>Faturado</th><th>A faturar</th></tr></thead>
+        <tbody>${rows.map(r => `<tr>
+          <td><strong>${r.p.name}</strong></td><td>${r.produced}</td><td>${r.sold}</td>
+          <td style="color:${r.stock <= 0 ? "#B23434" : "var(--ink)"}"><strong>${r.stock}</strong></td>
+          <td>${fmt(r.p.price)}</td><td style="color:#2E7D46">${fmt(r.invoiced)}</td><td>${fmt(r.potential)}</td></tr>`).join("")}
+        </tbody></table>` : `<p class="center-msg">Cadastre primeiro os produtos na aba Produtos → Delivery.</p>`}
+    </div>
+    <div class="admin-card">
+      <h2>Últimas movimentações</h2>
+      ${recent.length ? `<table><thead><tr><th>Data</th><th>Produto</th><th>Qtd</th><th>Valor</th><th>Origem</th><th></th></tr></thead><tbody>
+        ${recent.map(x => `<tr><td>${new Date(x.sold_at + "T00:00:00").toLocaleDateString("pt-BR")}</td><td>${nameOf(x.product_id)}</td><td>${x.quantity}</td>
+          <td>${fmt(Number(x.quantity) * Number(x.unit_price))}</td>
+          <td><span class="badge-status ${x.source === "site" ? "confirmed" : "pending"}">${x.source === "site" ? "Site" : "Manual"}</span></td>
+          <td>${x.source === "manual" ? `<button class="btn btn-outline btn-sm" onclick="deleteStockSale('${x.id}')">Excluir</button>` : ""}</td></tr>`).join("")}
+      </tbody></table>` : `<p class="center-msg">Nenhuma venda ainda.</p>`}
+    </div>
+    <div class="admin-card">
+      <h2>Levas produzidas</h2>
+      ${admin.data.dBatches.length ? `<table><thead><tr><th>Data</th><th>Produto</th><th>Qtd</th><th>Valor un.</th><th></th></tr></thead><tbody>
+        ${admin.data.dBatches.map(b => `<tr><td>${new Date(b.produced_at + "T00:00:00").toLocaleDateString("pt-BR")}</td><td>${nameOf(b.product_id)}</td><td>${b.quantity}</td><td>${fmt(b.unit_price)}</td>
+          <td><button class="btn btn-outline btn-sm" onclick="deleteStockBatch('${b.id}')">Excluir</button></td></tr>`).join("")}
+      </tbody></table>` : `<p class="center-msg">Nenhuma leva registrada.</p>`}
     </div>
   `;
 }
 
-async function saveBatch() {
-  const name = document.getElementById("bName").value.trim();
-  const batch_date = document.getElementById("bDate").value;
-  if (!name || !batch_date) { alert("Preencha o nome e a data da leva."); return; }
-  const { error } = await sb.from("production_batches").insert({ name, batch_date });
-  if (error) { console.error(error); alert("Não foi possível salvar: " + (error.message || JSON.stringify(error))); return; }
-  document.getElementById("batchFormArea").innerHTML = "";
-  await loadEstoqueProdutos(document.getElementById("adminMain"));
+function stockProductOptions() {
+  return admin.data.dProducts.map(p => `<option value="${p.id}" data-price="${p.price}">${p.name}</option>`).join("");
+}
+function stockFillPrice() {
+  const sel = document.getElementById("stProduct");
+  const opt = sel && sel.options[sel.selectedIndex];
+  if (opt) document.getElementById("stPrice").value = opt.dataset.price || "";
 }
 
-async function deleteBatch(batchId) {
-  if (!confirm("Excluir esta leva e todos os sabores dela? Essa ação não pode ser desfeita.")) return;
-  const { error } = await sb.from("production_batches").delete().eq("id", batchId);
-  if (error) { console.error(error); alert("Não foi possível excluir: " + (error.message || JSON.stringify(error))); return; }
-  await loadEstoqueProdutos(document.getElementById("adminMain"));
-}
-
-function openBatchItemForm(batchId) {
-  document.getElementById("batchItemFormArea").innerHTML = `
-    <div class="admin-card">
-      <h2>Novo sabor</h2>
+function openStockBatchForm() {
+  if (!admin.data.dProducts.length) { alert("Cadastre antes um produto em Produtos → Delivery."); return; }
+  document.getElementById("stockFormArea").innerHTML = `
+    <div class="admin-card"><h2>Nova leva</h2>
       <div class="form-grid">
-        <label>Sabor<input type="text" id="biName" placeholder="Ex: Ninho com Nutella"></label>
-        <label>Quantidade produzida<input type="number" step="1" min="0" id="biQty"></label>
-        <label>Preço de venda (R$, opcional)<input type="number" step="0.01" min="0" id="biPrice"></label>
+        <label>Produto<select id="stProduct" onchange="stockFillPrice()">${stockProductOptions()}</select></label>
+        <label>Quantidade produzida<input type="number" min="1" step="1" id="stQty"></label>
+        <label>Valor de venda (R$)<input type="number" min="0" step="0.01" id="stPrice"></label>
+        <label>Data<input type="date" id="stDate" value="${new Date().toISOString().slice(0, 10)}"></label>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn btn-pink" onclick="saveBatchItem('${batchId}')">Salvar</button>
-        <button class="btn btn-outline" onclick="document.getElementById('batchItemFormArea').innerHTML=''">Cancelar</button>
+        <button class="btn btn-pink" onclick="saveStockBatch()">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('stockFormArea').innerHTML=''">Cancelar</button>
+      </div></div>`;
+  stockFillPrice();
+}
+
+async function saveStockBatch() {
+  const product_id = document.getElementById("stProduct").value;
+  const quantity = parseInt(document.getElementById("stQty").value);
+  const unit_price = Number(document.getElementById("stPrice").value) || 0;
+  const produced_at = document.getElementById("stDate").value;
+  if (!product_id || !quantity || quantity <= 0) { alert("Informe o produto e a quantidade."); return; }
+  const { error } = await sb.from("delivery_stock_batches").insert({ product_id, quantity, unit_price, produced_at });
+  if (error) { console.error(error); alert("Não foi possível salvar: " + (error.message || "")); return; }
+  // o preço informado passa a ser o preço do produto no delivery
+  await sb.from("products").update({ price: unit_price }).eq("id", product_id);
+  await loadEstoqueProdutos(document.getElementById("adminMain"));
+}
+
+async function deleteStockBatch(id) {
+  if (!confirm("Excluir esta leva? O estoque desse produto diminui.")) return;
+  const { error } = await sb.from("delivery_stock_batches").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível excluir."); return; }
+  await loadEstoqueProdutos(document.getElementById("adminMain"));
+}
+
+function openStockSaleForm() {
+  if (!admin.data.dProducts.length) { alert("Cadastre antes um produto em Produtos → Delivery."); return; }
+  document.getElementById("stockFormArea").innerHTML = `
+    <div class="admin-card"><h2>Registrar venda fora do site</h2>
+      <div class="form-grid">
+        <label>Produto<select id="stProduct" onchange="stockFillPrice()">${stockProductOptions()}</select></label>
+        <label>Quantidade<input type="number" min="1" step="1" id="stQty"></label>
+        <label>Valor unitário (R$)<input type="number" min="0" step="0.01" id="stPrice"></label>
+        <label>Data<input type="date" id="stDate" value="${new Date().toISOString().slice(0, 10)}"></label>
       </div>
-    </div>
-  `;
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="stRevenue" checked style="width:auto"> Lançar no Financeiro (Faturamento)</label>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveStockSale()">Registrar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('stockFormArea').innerHTML=''">Cancelar</button>
+      </div></div>`;
+  stockFillPrice();
 }
 
-async function saveBatchItem(batchId) {
-  const product_name = document.getElementById("biName").value.trim();
-  const quantity_produced = Number(document.getElementById("biQty").value);
-  const unit_price = document.getElementById("biPrice").value ? Number(document.getElementById("biPrice").value) : null;
-  if (!product_name || !quantity_produced) { alert("Preencha o sabor e a quantidade produzida."); return; }
-  const { error } = await sb.from("batch_items").insert({ batch_id: batchId, product_name, quantity_produced, unit_price });
-  if (error) { console.error(error); alert("Não foi possível salvar: " + (error.message || JSON.stringify(error))); return; }
-  document.getElementById("batchItemFormArea").innerHTML = "";
-  await loadEstoqueProdutos(document.getElementById("adminMain"));
-}
-
-async function deleteBatchItem(itemId, batchId) {
-  if (!confirm("Excluir este sabor da leva?")) return;
-  const { error } = await sb.from("batch_items").delete().eq("id", itemId);
-  if (error) { console.error(error); alert("Não foi possível excluir: " + (error.message || JSON.stringify(error))); return; }
-  await loadEstoqueProdutos(document.getElementById("adminMain"));
-}
-
-function findBatchItem(itemId) {
-  for (const b of admin.data.batches) {
-    const item = (b.batch_items || []).find(i => i.id === itemId);
-    if (item) return item;
+async function saveStockSale() {
+  const product_id = document.getElementById("stProduct").value;
+  const quantity = parseInt(document.getElementById("stQty").value);
+  const unit_price = Number(document.getElementById("stPrice").value) || 0;
+  const sold_at = document.getElementById("stDate").value;
+  if (!product_id || !quantity || quantity <= 0) { alert("Informe o produto e a quantidade."); return; }
+  const row = deliveryStockRows().find(r => r.p.id === product_id);
+  if (row && quantity > row.stock && !confirm(`Só há ${row.stock} em estoque. Registrar mesmo assim?`)) return;
+  let revenue_entry_id = null;
+  if (document.getElementById("stRevenue").checked && unit_price > 0) {
+    const { data: rev, error: rErr } = await sb.from("revenue_entries").insert({
+      entry_date: sold_at, description: `Venda delivery: ${row ? row.p.name : ""} (${quantity}x)`,
+      amount: quantity * unit_price, source: "manual",
+    }).select("id").single();
+    if (rErr) { console.error(rErr); alert("Não foi possível lançar no Financeiro: " + (rErr.message || "")); return; }
+    revenue_entry_id = rev.id;
   }
-  return null;
+  const { error } = await sb.from("delivery_sales").insert({ product_id, quantity, unit_price, source: "manual", sold_at, revenue_entry_id });
+  if (error) {
+    console.error(error);
+    if (revenue_entry_id) await sb.from("revenue_entries").delete().eq("id", revenue_entry_id);
+    alert("Não foi possível registrar: " + (error.message || "")); return;
+  }
+  await loadEstoqueProdutos(document.getElementById("adminMain"));
 }
 
-function openBatchSaleForm(itemId) {
-  const item = findBatchItem(itemId);
-  if (!item) return;
-  const restante = Number(item.quantity_produced) - Number(item.quantity_sold);
-  document.getElementById("batchSaleFormArea").innerHTML = `
-    <div class="admin-card">
-      <h2>Vender — ${item.product_name}</h2>
-      <p class="hint">Restante em estoque: <strong>${restante}</strong></p>
-      <div class="form-grid">
-        <label>Quantidade vendida<input type="number" step="1" min="1" id="bsQty"></label>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn btn-pink" onclick="saveBatchSale('${itemId}')">Confirmar venda</button>
-        <button class="btn btn-outline" onclick="document.getElementById('batchSaleFormArea').innerHTML=''">Cancelar</button>
-      </div>
-    </div>
-  `;
-}
-
-async function saveBatchSale(itemId) {
-  const qty = Number(document.getElementById("bsQty").value);
-  if (!qty || qty <= 0) { alert("Informe uma quantidade válida."); return; }
-  const item = findBatchItem(itemId);
-  const { error } = await sb.from("batch_items").update({ quantity_sold: Number(item.quantity_sold) + qty }).eq("id", itemId);
-  if (error) { console.error(error); alert("Não foi possível registrar a venda: " + (error.message || JSON.stringify(error))); return; }
-  document.getElementById("batchSaleFormArea").innerHTML = "";
+async function deleteStockSale(id) {
+  if (!confirm("Excluir esta venda? O estoque volta e o lançamento no Financeiro também sai.")) return;
+  const sale = admin.data.dSales.find(x => x.id === id);
+  if (sale && sale.revenue_entry_id) await sb.from("revenue_entries").delete().eq("id", sale.revenue_entry_id);
+  const { error } = await sb.from("delivery_sales").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível excluir."); return; }
   await loadEstoqueProdutos(document.getElementById("adminMain"));
 }
 
