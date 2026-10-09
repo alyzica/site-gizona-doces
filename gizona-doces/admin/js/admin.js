@@ -1949,7 +1949,7 @@ function renderEstoqueProdutos(main) {
       <h2>Levas produzidas</h2>
       ${admin.data.dBatches.length ? `<table><thead><tr><th>Data</th><th>Produto</th><th>Qtd</th><th>Valor un.</th><th></th></tr></thead><tbody>
         ${admin.data.dBatches.map(b => `<tr><td>${new Date(b.produced_at + "T00:00:00").toLocaleDateString("pt-BR")}</td><td>${nameOf(b.product_id)}</td><td>${b.quantity}</td><td>${fmt(b.unit_price)}</td>
-          <td><button class="btn btn-outline btn-sm" onclick="deleteStockBatch('${b.id}')">Excluir</button></td></tr>`).join("")}
+          <td style="display:flex;gap:6px"><button class="btn btn-outline btn-sm" onclick="openStockBatchForm('${b.id}');window.scrollTo(0,0)">Editar</button><button class="btn btn-danger btn-sm" onclick="deleteStockBatch('${b.id}')">Excluir</button></td></tr>`).join("")}
       </tbody></table>` : `<p class="center-msg">Nenhuma leva registrada.</p>`}
     </div>
   `;
@@ -1964,30 +1964,39 @@ function stockFillPrice() {
   if (opt) document.getElementById("stPrice").value = opt.dataset.price || "";
 }
 
-function openStockBatchForm() {
+function openStockBatchForm(id) {
   if (!admin.data.dProducts.length) { alert("Cadastre antes um produto em Produtos → Delivery."); return; }
+  const b = id ? admin.data.dBatches.find(x => x.id === id) : null;
   document.getElementById("stockFormArea").innerHTML = `
-    <div class="admin-card"><h2>Nova leva</h2>
+    <div class="admin-card"><h2>${b ? "Editar leva" : "Nova leva"}</h2>
       <div class="form-grid">
         <label>Produto<select id="stProduct" onchange="stockFillPrice()">${stockProductOptions()}</select></label>
-        <label>Quantidade produzida<input type="number" min="1" step="1" id="stQty"></label>
-        <label>Valor de venda (R$)<input type="number" min="0" step="0.01" id="stPrice"></label>
-        <label>Data<input type="date" id="stDate" value="${new Date().toISOString().slice(0, 10)}"></label>
+        <label>Quantidade produzida<input type="number" min="1" step="1" id="stQty" value="${b ? b.quantity : ""}"></label>
+        <label>Valor de venda (R$)<input type="number" min="0" step="0.01" id="stPrice" value="${b ? b.unit_price : ""}"></label>
+        <label>Data<input type="date" id="stDate" value="${b ? b.produced_at : new Date().toISOString().slice(0, 10)}"></label>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn btn-pink" onclick="saveStockBatch()">Salvar</button>
+        <button class="btn btn-pink" onclick="saveStockBatch('${id || ""}')">Salvar</button>
         <button class="btn btn-outline" onclick="document.getElementById('stockFormArea').innerHTML=''">Cancelar</button>
       </div></div>`;
-  stockFillPrice();
+  if (b) document.getElementById("stProduct").value = b.product_id; else stockFillPrice();
 }
 
-async function saveStockBatch() {
+async function saveStockBatch(id) {
   const product_id = document.getElementById("stProduct").value;
   const quantity = parseInt(document.getElementById("stQty").value);
   const unit_price = Number(document.getElementById("stPrice").value) || 0;
   const produced_at = document.getElementById("stDate").value;
   if (!product_id || !quantity || quantity <= 0) { alert("Informe o produto e a quantidade."); return; }
-  const { error } = await sb.from("delivery_stock_batches").insert({ product_id, quantity, unit_price, produced_at });
+  if (id) {
+    const row = deliveryStockRows().find(r => r.p.id === product_id);
+    const old = admin.data.dBatches.find(x => x.id === id);
+    const newStock = (row ? row.stock : 0) - (old && old.product_id === product_id ? Number(old.quantity) : 0) + quantity;
+    if (newStock < 0 && !confirm("Com essa quantidade o estoque ficaria negativo (já foi vendido mais do que isso). Salvar mesmo assim?")) return;
+  }
+  const { error } = id
+    ? await sb.from("delivery_stock_batches").update({ product_id, quantity, unit_price, produced_at }).eq("id", id)
+    : await sb.from("delivery_stock_batches").insert({ product_id, quantity, unit_price, produced_at });
   if (error) { console.error(error); alert("Não foi possível salvar: " + (error.message || "")); return; }
   // o preço informado passa a ser o preço do produto no delivery
   await sb.from("products").update({ price: unit_price }).eq("id", product_id);
