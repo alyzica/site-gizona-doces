@@ -270,7 +270,13 @@ function renderOrdersTable(main) {
       <button class="btn ${filter === "manual" ? "btn-pink" : "btn-outline"} btn-sm" onclick="setOrderFilter('manual')">Manual</button>
     </div>
     <div id="orderFormArea"></div>
-    ${orders.length ? groupByMonth(orders, "order_date_key").map(([key, list]) => {
+    ${(() => {
+      const pend = orders.filter(o => o.status !== "cancelled" && pendingAmount(o) > 0);
+      const total = pend.reduce((t, o) => t + pendingAmount(o), 0);
+      return `<div class="admin-card" style="border-left:4px solid #E0A100"><p class="hint" style="margin:0">⏳ Vendas pendentes: <strong style="color:#B77B00;font-size:18px">${fmt(total)}</strong> · ${pend.length} cliente(s) com pagamento pendente</p></div>`;
+    })()}
+    ${orders.length ? groupByMonth(orders, "order_date_key").map(([key, listRaw]) => {
+      const list = [...listRaw].sort((a, b) => (pendingAmount(b) > 0 && b.status !== "cancelled" ? 1 : 0) - (pendingAmount(a) > 0 && a.status !== "cancelled" ? 1 : 0));
       const valid = list.filter(o => o.status !== "cancelled");
       const tot = valid.reduce((t, o) => t + Number(o.total || 0), 0);
       return `
@@ -283,7 +289,7 @@ function renderOrdersTable(main) {
           <thead><tr><th>Data</th><th>Nº</th><th>Cliente</th><th>Tipo</th><th>Origem</th><th>Total</th><th>Pagamento</th><th>Status</th><th></th></tr></thead>
           <tbody>
             ${list.map(o => `
-              <tr>
+              <tr style="${pendingAmount(o) > 0 && o.status !== "cancelled" ? "background:#FFF6DD" : ""}">
                 <td>${o.order_date_key ? new Date(o.order_date_key + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                 <td>${o.order_number}</td>
                 <td>
@@ -363,7 +369,15 @@ async function deleteOrder(id) {
   renderOrdersTable(document.getElementById("adminMain"));
 }
 
-const PAYMENT_OPTIONS = ["Pix", "Cartão", "Dinheiro", "Outro"];
+const PAYMENT_OPTIONS = ["Pix", "Cartão", "Dinheiro", "Outro", "Pendente"];
+
+// parte ainda não paga do pedido (pagamento marcado como "Pendente")
+function pendingAmount(o) {
+  let t = 0;
+  if (o.payment_method_1 === "Pendente") t += Number(o.payment_amount_1) || Number(o.total) || 0;
+  if (o.payment_method_2 === "Pendente") t += Number(o.payment_amount_2) || 0;
+  return t;
+}
 
 function orderFormFields(o) {
   o = o || {};
@@ -2985,14 +2999,13 @@ function openRewardForm(id) {
         <textarea id="rfDescription" rows="3">${reward ? reward.description || "" : ""}</textarea>
       </label>
 
-      <label style="display:block;margin-top:10px">
-        URL da imagem
-        <input
-          id="rfImage"
-          value="${reward ? reward.image_url || "" : ""}"
-          placeholder="https://..."
-        >
-      </label>
+      <div class="photo-upload-box" style="margin-top:10px">
+        <p class="photo-upload-label">Foto do mimo</p>
+        <div id="rfImagePreview" class="photo-preview">${reward && reward.image_url ? `<img src="${reward.image_url}" style="--img-scale:1;--img-x:50%;--img-y:50%">` : "Sem foto"}</div>
+        <input type="hidden" id="rfImage" value="${reward ? reward.image_url || "" : ""}">
+        <input type="file" accept="image/*" onchange="handleRewardPhoto(this)">
+        <p id="rfImageStatus" class="photo-status"></p>
+      </div>
 
       <label style="
         display:flex;
@@ -3031,6 +3044,29 @@ function openRewardForm(id) {
       </div>
     </div>
   `;
+}
+
+async function handleRewardPhoto(inputEl) {
+  const file = inputEl.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById("rfImageStatus");
+  statusEl.textContent = "Comprimindo...";
+  try {
+    const compressed = await compressImage(file);
+    statusEl.textContent = "Enviando...";
+    const fileName = `rewards/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+    const { error } = await sb.storage.from("photos").upload(fileName, compressed, { contentType: "image/jpeg" });
+    if (error) throw error;
+    const { data: urlData } = sb.storage.from("photos").getPublicUrl(fileName);
+    document.getElementById("rfImage").value = urlData.publicUrl;
+    document.getElementById("rfImagePreview").innerHTML = `<img src="${urlData.publicUrl}" style="--img-scale:1;--img-x:50%;--img-y:50%">`;
+    statusEl.textContent = `Pronto (${(compressed.size / 1024).toFixed(0)} KB)`;
+  } catch (e) {
+    console.error(e);
+    statusEl.textContent = `Não foi possível enviar: ${e.message || "tente novamente."}`;
+  } finally {
+    inputEl.value = "";
+  }
 }
 
 async function saveReward(id) {

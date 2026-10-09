@@ -330,7 +330,7 @@ function renderDashboard() {
         </div>
       </div>
       <button class="btn btn-primary btn-block btn-lg" onclick="go('category')" style="display:inline-flex;align-items:center;justify-content:center;gap:8px">
-        <svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M6 8h12l-1 12H7L6 8z" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 8V6a3 3 0 016 0v2" stroke="#fff" stroke-width="1.8"/></svg>Fazer uma encomenda
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M6 8h12l-1 12H7L6 8z" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 8V6a3 3 0 016 0v2" stroke="#fff" stroke-width="1.8"/></svg>Faça seu pedido
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <div class="dash-links">
@@ -475,7 +475,7 @@ function renderCover() {
     <section class="screen cover-screen">
       <img class="cover-logo" src="images/brand/logo.png" alt="Gizona Doces">
       <p class="cover-sub">Brigadeiro Gourmet e Geladinho Gourmet para festas — feitos à mão, encomenda a encomenda.</p>
-      <button class="btn btn-primary btn-lg" onclick="go('category')">Fazer minha encomenda</button>
+      <button class="btn btn-primary btn-lg" onclick="go('category')">Faça seu pedido</button>
       <p class="cover-insta">@gizonadoces</p>
     </section>
   `;
@@ -641,8 +641,7 @@ function renderBrigadeiroFlavors() {
           `;
         }).join("")}
       </div>
-      ${isComplete ? `<div class="subtotal-box"><span>Subtotal brigadeiros</span><strong>${fmt(subtotal)}</strong></div>` : ""}
-      ${navButtons({ back: "brigadeiro-box", next: isComplete ? "cart" : null, nextLabel: "Ir para o carrinho" })}
+      ${stickySubtotal({ back: "brigadeiro-box", total: isComplete ? subtotal : 0, enabled: isComplete })}
     </section>
   `;
 }
@@ -745,8 +744,7 @@ function renderGeladinhoFlavors() {
           `;
         }).join("")}
       </div>
-      ${isValid ? `<div class="subtotal-box"><span>Subtotal geladinhos</span><strong>${fmt(subtotal)}</strong></div>` : ""}
-      ${navButtons({ back: "geladinho-info", next: isValid ? "cart" : null, nextLabel: "Ir para o carrinho" })}
+      ${stickySubtotal({ back: "geladinho-info", total: subtotal, enabled: isValid })}
     </section>
   `;
 }
@@ -1088,7 +1086,7 @@ function renderConfirmation() {
       <img class="cover-seal" src="images/brand/icon.png" alt="Gizona Doces">
       <h2 class="confirm-title">Pedido enviado!</h2>
       <p class="hint">Seu pedido foi enviado pelo WhatsApp. A Gizona vai confirmar disponibilidade e pagamento por lá.</p>
-      <button class="btn btn-ghost" onclick="resetOrder()">Fazer nova encomenda</button>
+      <button class="btn btn-ghost" onclick="resetOrder()">Fazer novo pedido</button>
     </section>
   `;
 }
@@ -1105,6 +1103,16 @@ function resetOrder() {
 }
 
 /* ---------------- HELPERS ---------------- */
+function stickySubtotal({ back, total, enabled }) {
+  return `
+    <div class="sticky-subtotal">
+      <strong>Subtotal: ${fmt(total)}</strong>
+      <button ${enabled ? `onclick="go('cart')"` : "disabled"}>Ir para o carrinho</button>
+    </div>
+    ${back ? `<button class="btn btn-ghost sticky-back" onclick="go('${back}')">← Voltar</button>` : ""}
+  `;
+}
+
 function navButtons({ back, next, nextLabel }) {
   return `
     <div class="nav-row">
