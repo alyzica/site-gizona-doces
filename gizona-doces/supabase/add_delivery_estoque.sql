@@ -34,6 +34,18 @@ create table if not exists public.delivery_sales (
 create index if not exists idx_delivery_sales_product on public.delivery_sales(product_id);
 create index if not exists idx_delivery_sales_order on public.delivery_sales(order_id);
 
+
+-- 2b) Se as tabelas já existiam (versão antiga), garante todas as colunas
+alter table public.delivery_stock_batches add column if not exists unit_price numeric(10,2) not null default 0;
+alter table public.delivery_stock_batches add column if not exists note text;
+alter table public.delivery_stock_batches add column if not exists produced_at date not null default current_date;
+alter table public.delivery_sales add column if not exists unit_price numeric(10,2) not null default 0;
+alter table public.delivery_sales add column if not exists source text not null default 'manual';
+alter table public.delivery_sales add column if not exists order_id uuid references public.orders(id) on delete cascade;
+alter table public.delivery_sales add column if not exists revenue_entry_id uuid references public.revenue_entries(id) on delete set null;
+alter table public.delivery_sales add column if not exists sold_at date not null default current_date;
+notify pgrst, 'reload schema';
+
 alter table public.delivery_stock_batches enable row level security;
 alter table public.delivery_sales enable row level security;
 drop policy if exists "admin acesso total delivery_stock_batches" on public.delivery_stock_batches;

@@ -224,8 +224,12 @@ async function loadDashboard(main) {
 
 /* ---------------- PEDIDOS ---------------- */
 async function loadOrders(main) {
-  const { data: orders } = await sb.from("orders").select("*").order("created_at", { ascending: false });
+  const [{ data: orders }, { data: dprods }] = await Promise.all([
+    sb.from("orders").select("*").order("created_at", { ascending: false }),
+    sb.from("products").select("id,name,price").eq("category", "delivery").order("name"),
+  ]);
   admin.data.orders = orders || [];
+  admin.data.dProducts = dprods || [];
   admin.data.orderFilter = admin.data.orderFilter || "all";
   renderOrdersTable(main);
 }
@@ -250,7 +254,8 @@ function renderOrdersTable(main) {
   const typeFilter = admin.data.orderTypeFilter || "all";
   const orders = admin.data.orders
     .filter(o => filter === "all" ? true : (o.origin || "site") === filter)
-    .filter(o => typeFilter === "all" ? true : (o.order_type || "encomenda") === typeFilter);
+    .filter(o => typeFilter === "all" ? true : (o.order_type || "encomenda") === typeFilter)
+    .map(o => ({ ...o, order_date_key: o.order_date || (o.created_at ? o.created_at.slice(0, 10) : null) }));
   main.innerHTML = `
     <div class="admin-topbar"><h1>Pedidos</h1><button class="btn btn-pink" onclick="openManualOrderForm()">+ Lançar pedido manual</button></div>
     <p class="hint">Pedidos do site e pedidos lançados manualmente (WhatsApp, Instagram, presencial etc). Tudo editável.</p>
@@ -265,17 +270,26 @@ function renderOrdersTable(main) {
       <button class="btn ${filter === "manual" ? "btn-pink" : "btn-outline"} btn-sm" onclick="setOrderFilter('manual')">Manual</button>
     </div>
     <div id="orderFormArea"></div>
+    ${orders.length ? groupByMonth(orders, "order_date_key").map(([key, list]) => {
+      const valid = list.filter(o => o.status !== "cancelled");
+      const tot = valid.reduce((t, o) => t + Number(o.total || 0), 0);
+      return `
     <div class="admin-card">
-      ${orders.length ? `
+      <div class="admin-topbar" style="margin-bottom:8px">
+        <h2 style="margin:0">${key === "sem-data" ? "Sem data" : monthGroupLabel(key)}</h2>
+        <span class="hint" style="margin:0">${valid.length} pedido(s) · <strong style="color:#2E7D46">${fmt(tot)}</strong></span>
+      </div>
         <table>
-          <thead><tr><th>Nº</th><th>Cliente</th><th>Tipo</th><th>Origem</th><th>Total</th><th>Pagamento</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Data</th><th>Nº</th><th>Cliente</th><th>Tipo</th><th>Origem</th><th>Total</th><th>Pagamento</th><th>Status</th><th></th></tr></thead>
           <tbody>
-            ${orders.map(o => `
+            ${list.map(o => `
               <tr>
+                <td>${o.order_date_key ? new Date(o.order_date_key + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                 <td>${o.order_number}</td>
                 <td>
                   ${o.customer_name}<br><small style="color:var(--muted)">${o.customer_phone}</small>
                   ${(o.order_type || "encomenda") === "encomenda" && o.event_date ? `<br><small style="color:var(--pink)">Evento: ${new Date(o.event_date + "T00:00:00").toLocaleDateString("pt-BR")}</small>` : ""}
+                  ${(o.order_type === "delivery" && Array.isArray(o.items)) ? `<br><small style="color:var(--muted)">${o.items.map(i => `${i.quantity}x ${i.product_name}`).join(", ")}</small>` : ""}
                 </td>
                 <td><span class="badge-status ${(o.order_type || "encomenda") === "delivery" ? "production" : "confirmed"}">${(o.order_type || "encomenda") === "delivery" ? "Delivery" : "Encomenda"}</span></td>
                 <td><span class="badge-status ${o.origin === "manual" ? "pending" : "confirmed"}">${o.origin === "manual" ? "Manual" : "Site"}</span></td>
@@ -294,8 +308,8 @@ function renderOrdersTable(main) {
             `).join("")}
           </tbody>
         </table>
-      ` : `<p class="center-msg">Nenhum pedido encontrado com esse filtro.</p>`}
-    </div>
+    </div>`;
+    }).join("") : `<div class="admin-card"><p class="center-msg">Nenhum pedido encontrado com esse filtro.</p></div>`}
   `;
 }
 
@@ -358,13 +372,15 @@ function orderFormFields(o) {
       <label>Cliente<input type="text" id="ofName" value="${o.customer_name || ""}"></label>
       <label>Telefone/WhatsApp<input type="text" id="ofPhone" value="${o.customer_phone || ""}"></label>
       <label>Tipo do pedido
-        <select id="ofOrderType">
+        <select id="ofOrderType" onchange="onOrderTypeChange()">
           <option value="encomenda" ${(o.order_type || "encomenda") === "encomenda" ? "selected" : ""}>Encomenda</option>
           <option value="delivery" ${o.order_type === "delivery" ? "selected" : ""}>Delivery</option>
         </select>
       </label>
-      <label>Data do evento (encomenda)<input type="date" id="ofEventDate" value="${o.event_date || ""}"></label>
-      <label>Produto / descrição<input type="text" id="ofProduct" value="${o.product_desc || (o.items && o.items[0] ? o.items[0].product_name : "") || ""}" placeholder="Ex: 2 caixas de brigadeiro"></label>
+      <label>Data do pedido<input type="date" id="ofOrderDate" value="${o.order_date || (o.created_at ? o.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10))}"></label>
+      <label id="ofEventWrap">Data do evento (encomenda)<input type="date" id="ofEventDate" value="${o.event_date || ""}"></label>
+      <label id="ofProductWrap">Produto / descrição<input type="text" id="ofProduct" value="${o.product_desc || (o.items && o.items[0] ? o.items[0].product_name : "") || ""}" placeholder="Ex: 2 caixas de brigadeiro"></label>
+      <div id="ofDeliveryWrap" class="span-2" style="display:none"></div>
       <input type="hidden" id="ofBaseTotal" value="${o.total || 0}">
       <label>Valor total do pedido (R$)<input type="number" step="0.01" id="ofTotal" value="${o.total || ""}" oninput="document.getElementById('ofBaseTotal').value = (Number(this.value)||0) - (Number(document.getElementById('ofAdjustment').value)||0)"></label>
       <label>Ajuste (frete/desconto) R$ <small style="font-weight:400">— positivo soma, negativo desconta</small>
@@ -393,6 +409,70 @@ function orderFormFields(o) {
     </div>
     <p class="hint" id="ofPaySumHint" style="margin-top:8px"></p>
   `;
+}
+
+function deliveryStockMap() {
+  const m = {};
+  (admin.data.dProducts || []).forEach(p => { m[p.id] = 0; });
+  (admin.data.dStockLevels || []).forEach(r => { m[r.product_id] = Number(r.stock); });
+  return m;
+}
+
+function onOrderTypeChange(existing) {
+  const isDel = document.getElementById("ofOrderType").value === "delivery";
+  document.getElementById("ofEventWrap").style.display = isDel ? "none" : "";
+  document.getElementById("ofProductWrap").style.display = isDel ? "none" : "";
+  const box = document.getElementById("ofDeliveryWrap");
+  box.style.display = isDel ? "" : "none";
+  if (!isDel || box.dataset.ready) return;
+  box.dataset.ready = "1";
+  if (existing && Array.isArray(existing.items) && existing.items.length) {
+    box.innerHTML = `<p class="hint"><strong>Produtos do pedido</strong> (para alterar os itens, exclua e lance de novo — o estoque é controlado por eles):</p>` +
+      existing.items.map(i => `<div>${i.quantity}x ${i.product_name} — ${fmt(i.subtotal || i.quantity * i.unit_price)}</div>`).join("");
+    return;
+  }
+  if (!(admin.data.dProducts || []).length) { box.innerHTML = `<p class="hint">Cadastre antes os produtos em Produtos → Delivery.</p>`; return; }
+  box.innerHTML = `<p class="hint"><strong>Produtos do pedido</strong> (lista do Estoque de Produtos)</p><div id="ofLines"></div>
+    <button type="button" class="btn btn-outline btn-sm" onclick="addDeliveryLine()">+ Adicionar produto</button>`;
+  sb.from("delivery_stock_batches").select("product_id,quantity").then(async ({ data: b }) => {
+    const { data: sl } = await sb.from("delivery_sales").select("product_id,quantity");
+    const lv = {};
+    (b || []).forEach(x => { lv[x.product_id] = (lv[x.product_id] || 0) + Number(x.quantity); });
+    (sl || []).forEach(x => { lv[x.product_id] = (lv[x.product_id] || 0) - Number(x.quantity); });
+    admin.data.dStockLevels = Object.entries(lv).map(([product_id, stock]) => ({ product_id, stock }));
+    addDeliveryLine();
+  });
+}
+
+function addDeliveryLine() {
+  const stock = deliveryStockMap();
+  const div = document.createElement("div");
+  div.className = "of-line";
+  div.style.cssText = "display:flex;gap:8px;margin-bottom:6px";
+  div.innerHTML = `<select onchange="recalcDeliveryTotal()" style="flex:1">${admin.data.dProducts.map(p => `<option value="${p.id}" data-price="${p.price}">${p.name} — ${fmt(p.price)} (estoque: ${stock[p.id] || 0})</option>`).join("")}</select>
+    <input type="number" min="1" step="1" value="1" oninput="recalcDeliveryTotal()" style="width:80px">
+    <button type="button" class="btn btn-outline btn-sm" onclick="this.parentElement.remove();recalcDeliveryTotal()">✕</button>`;
+  document.getElementById("ofLines").appendChild(div);
+  recalcDeliveryTotal();
+}
+
+function collectDeliveryItems() {
+  return [...document.querySelectorAll("#ofLines .of-line")].map(l => {
+    const sel = l.querySelector("select");
+    const opt = sel.options[sel.selectedIndex];
+    const quantity = parseInt(l.querySelector("input").value) || 0;
+    const unit_price = Number(opt.dataset.price) || 0;
+    return { id: sel.value, product_name: opt.text.split(" — ")[0], category: "delivery", quantity, unit_price, subtotal: quantity * unit_price };
+  }).filter(i => i.quantity > 0);
+}
+
+function recalcDeliveryTotal() {
+  const sum = collectDeliveryItems().reduce((t, i) => t + i.subtotal, 0);
+  const base = document.getElementById("ofBaseTotal");
+  if (base) base.value = sum;
+  const adj = Number(document.getElementById("ofAdjustment").value) || 0;
+  document.getElementById("ofTotal").value = (sum + adj).toFixed(2);
+  checkPaymentSum();
 }
 
 function recalcOrderTotal() {
@@ -427,6 +507,7 @@ function openManualOrderForm() {
     </div>
   `;
   ["ofTotal", "ofPay1Amount", "ofPay2Amount"].forEach(id => document.getElementById(id).addEventListener("input", checkPaymentSum));
+  onOrderTypeChange();
 }
 
 async function saveManualOrder() {
@@ -435,14 +516,18 @@ async function saveManualOrder() {
   const product = document.getElementById("ofProduct").value.trim();
   const total = Number(document.getElementById("ofTotal").value);
   if (!name || !phone || !total) { alert("Preencha ao menos cliente, telefone e valor total."); return; }
+  const isDelivery = document.getElementById("ofOrderType").value === "delivery";
+  const dItems = isDelivery ? collectDeliveryItems() : [];
+  if (isDelivery && !dItems.length) { alert("Adicione ao menos um produto do delivery."); return; }
 
   const payload = {
+    order_date: document.getElementById("ofOrderDate").value || null,
     origin: "manual",
     customer_name: name,
     customer_phone: phone,
     order_type: document.getElementById("ofOrderType").value,
     event_date: document.getElementById("ofEventDate").value || null,
-    items: [{ product_name: product || "Pedido manual", category: "manual", quantity: 1, unit_price: total, subtotal: total }],
+    items: isDelivery ? dItems : [{ product_name: product || "Pedido manual", category: "manual", quantity: 1, unit_price: total, subtotal: total }],
     total,
     adjustment_amount: Number(document.getElementById("ofAdjustment").value) || 0,
     adjustment_note: document.getElementById("ofAdjustmentNote").value.trim() || null,
@@ -454,7 +539,11 @@ async function saveManualOrder() {
     observations: document.getElementById("ofObs").value.trim() || null,
   };
   const { error } = await sb.from("orders").insert(payload);
-  if (error) { console.error(error); alert("Não foi possível salvar o pedido."); return; }
+  if (error) {
+    console.error(error);
+    alert(/Estoque insuficiente/i.test(error.message || "") ? "Estoque insuficiente para um dos produtos. Registre uma nova leva no Estoque de Produtos." : "Não foi possível salvar o pedido: " + (error.message || ""));
+    return;
+  }
   document.getElementById("orderFormArea").innerHTML = "";
   await loadOrders(document.getElementById("adminMain"));
 }
@@ -473,6 +562,7 @@ function openOrderEditForm(id) {
     </div>
   `;
   ["ofTotal", "ofPay1Amount", "ofPay2Amount"].forEach(idAttr => document.getElementById(idAttr).addEventListener("input", checkPaymentSum));
+  onOrderTypeChange(o);
 }
 
 async function saveOrderEdit(id) {
@@ -480,6 +570,7 @@ async function saveOrderEdit(id) {
     customer_name: document.getElementById("ofName").value.trim(),
     customer_phone: document.getElementById("ofPhone").value.trim(),
     order_type: document.getElementById("ofOrderType").value,
+    order_date: document.getElementById("ofOrderDate").value || null,
     event_date: document.getElementById("ofEventDate").value || null,
     total: Number(document.getElementById("ofTotal").value),
     adjustment_amount: Number(document.getElementById("ofAdjustment").value) || 0,
@@ -1795,7 +1886,7 @@ async function loadEstoqueProdutos(main) {
   const [pr, ba, sa] = await Promise.all([
     sb.from("products").select("*").eq("category", "delivery").order("sort_order").order("name"),
     sb.from("delivery_stock_batches").select("*").order("produced_at", { ascending: false }),
-    sb.from("delivery_sales").select("*").order("sold_at", { ascending: false }),
+    sb.from("delivery_sales").select("*, orders(order_number, customer_name)").order("created_at", { ascending: false }),
   ]);
   if (pr.error) throw pr.error;
   if (ba.error) throw ba.error;
@@ -1827,11 +1918,11 @@ function renderEstoqueProdutos(main) {
   main.innerHTML = `
     <div class="admin-topbar"><h1>Estoque de Produtos</h1>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-outline" onclick="openStockSaleForm()">Registrar venda</button>
+        <button class="btn btn-outline" onclick="setTab('orders')">Lançar venda (Pedidos)</button>
         <button class="btn btn-pink" onclick="openStockBatchForm()">+ Nova leva</button>
       </div>
     </div>
-    <p class="hint">Produtos de delivery cadastrados na aba Produtos → Delivery. O estoque diminui sozinho com os pedidos do site e com as vendas que você registrar aqui.</p>
+    <p class="hint">Produtos de delivery cadastrados na aba Produtos → Delivery. O estoque é controlado pela aba <strong>Pedidos</strong>: cada pedido de delivery (do site ou lançado manualmente) dá baixa sozinho, e cancelar/excluir o pedido devolve o produto. Para uma venda fora do site, lance um pedido manual do tipo Delivery.</p>
     <div id="stockFormArea"></div>
     <div class="admin-card">
       <p class="hint" style="margin:0">Faturado: <strong style="color:#2E7D46">${fmt(totInv)}</strong> · Ainda a faturar (estoque × preço): <strong>${fmt(totPot)}</strong></p>
@@ -1850,8 +1941,8 @@ function renderEstoqueProdutos(main) {
       ${recent.length ? `<table><thead><tr><th>Data</th><th>Produto</th><th>Qtd</th><th>Valor</th><th>Origem</th><th></th></tr></thead><tbody>
         ${recent.map(x => `<tr><td>${new Date(x.sold_at + "T00:00:00").toLocaleDateString("pt-BR")}</td><td>${nameOf(x.product_id)}</td><td>${x.quantity}</td>
           <td>${fmt(Number(x.quantity) * Number(x.unit_price))}</td>
-          <td><span class="badge-status ${x.source === "site" ? "confirmed" : "pending"}">${x.source === "site" ? "Site" : "Manual"}</span></td>
-          <td>${x.source === "manual" ? `<button class="btn btn-outline btn-sm" onclick="deleteStockSale('${x.id}')">Excluir</button>` : ""}</td></tr>`).join("")}
+          <td>${x.orders ? `Pedido ${x.orders.order_number}` : "Venda avulsa (antiga)"}</td>
+          <td>${!x.order_id ? `<button class="btn btn-outline btn-sm" onclick="deleteStockSale('${x.id}')">Excluir</button>` : ""}</td></tr>`).join("")}
       </tbody></table>` : `<p class="center-msg">Nenhuma venda ainda.</p>`}
     </div>
     <div class="admin-card">
@@ -2474,7 +2565,7 @@ function renderCalendario(main) {
             <div class="cal-cell ${isToday ? "cal-cell-today" : ""}">
               <span class="cal-day-num">${d}</span>
               ${dayEvents.map(e => `
-                <div class="cal-event" style="background:${CAL_CATEGORY_COLOR[e.category] || CAL_CATEGORY_COLOR.outro}" onclick="openEventForm('${e.id}')" title="${e.title}">
+                <div class="cal-event" style="background:${CAL_CATEGORY_COLOR[e.category] || CAL_CATEGORY_COLOR.outro};${e.done ? "opacity:.45;text-decoration:line-through" : ""}" onclick="openEventForm('${e.id}')" title="${e.title}">
                   ${eventTimeLabel(e)}${e.title}
                 </div>
               `).join("")}
@@ -2488,12 +2579,17 @@ function renderCalendario(main) {
 
     <div class="admin-card">
       <h2>Eventos de ${MONTH_NAMES_CAL[month]}</h2>
-      ${events.length ? events.sort((a, b) => a.event_date.localeCompare(b.event_date)).map(e => `
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
+      ${events.length ? (() => {
+        const sorted = [...events].sort((a, b) => a.event_date.localeCompare(b.event_date) || String(a.event_time || "").localeCompare(String(b.event_time || "")));
+        const todo = sorted.filter(e => !e.done);
+        const done = sorted.filter(e => e.done);
+        const row = e => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);${e.done ? "opacity:.55" : ""}">
           <div style="display:flex;align-items:center;gap:10px">
+            <input type="checkbox" ${e.done ? "checked" : ""} onchange="toggleEventDone('${e.id}', this.checked)" title="Marcar como concluído" style="width:18px;height:18px;flex-shrink:0;cursor:pointer">
             <span style="width:10px;height:10px;border-radius:50%;background:${CAL_CATEGORY_COLOR[e.category] || CAL_CATEGORY_COLOR.outro};display:inline-block;flex-shrink:0"></span>
             <div>
-              <strong>${new Date(e.event_date + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })}${e.event_time ? " — " + eventTimeLabel(e).trim() : ""} · ${e.title}</strong>
+              <strong style="${e.done ? "text-decoration:line-through" : ""}">${new Date(e.event_date + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })}${e.event_time ? " — " + eventTimeLabel(e).trim() : ""} · ${e.title}</strong>
               ${e.description ? `<div class="hint" style="margin:2px 0 0;white-space:pre-line">${escapeHtml(e.description)}</div>` : ""}
             </div>
           </div>
@@ -2501,8 +2597,10 @@ function renderCalendario(main) {
             <button class="btn btn-outline btn-sm" onclick="openEventForm('${e.id}')">Editar</button>
             <button class="btn btn-danger btn-sm" onclick="deleteEvent('${e.id}')">Excluir</button>
           </div>
-        </div>
-      `).join("") : `<p class="center-msg">Nenhum evento cadastrado para ${MONTH_NAMES_CAL[month]}/${year}.</p>`}
+        </div>`;
+        return (todo.length ? todo.map(row).join("") : `<p class="center-msg">Nada pendente em ${MONTH_NAMES_CAL[month]} 🎉</p>`)
+          + (done.length ? `<p class="cart-section-title" style="margin:18px 0 4px">Concluídos (${done.length})</p>` + done.map(row).join("") : "");
+      })() : `<p class="center-msg">Nenhum evento cadastrado para ${MONTH_NAMES_CAL[month]}/${year}.</p>`}
     </div>
   `;
 }
@@ -2570,6 +2668,14 @@ async function saveEvent(eventId) {
   }
   document.getElementById("eventFormArea").innerHTML = "";
   await loadCalendario(document.getElementById("adminMain"));
+}
+
+async function toggleEventDone(eventId, done) {
+  const { error } = await sb.from("production_events").update({ done }).eq("id", eventId);
+  if (error) { console.error(error); alert("Não foi possível atualizar: " + (error.message || "") + "\n\nRode o script add_pedidos_mensal_delivery.sql no Supabase."); return; }
+  const ev = admin.data.productionEvents.find(e => e.id === eventId);
+  if (ev) ev.done = done;
+  renderCalendario(document.getElementById("adminMain"));
 }
 
 async function deleteEvent(eventId) {
