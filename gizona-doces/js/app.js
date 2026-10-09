@@ -3,6 +3,7 @@
    Pra trocar o WhatsApp, mexa só na linha abaixo.
 ============================================================ */
 const WHATSAPP_NUMBER = "5519997489773";
+const INSTAGRAM_URL = "https://www.instagram.com/gizonadoces/"; // confirme o @ do Instagram
 const ADDRESS = "Rua das Oliveiras, 74 – Vale das Nogueiras, Americana/SP";
 
 const state = {
@@ -29,7 +30,10 @@ const app = document.getElementById("app");
 function fmt(v) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
-async function go(step) {
+const NAV_STACK = [];
+async function go(step, opts) {
+  if (!(opts && opts.tab) && state.step && state.step !== step && state.step !== "loading") NAV_STACK.push(state.step);
+  if (opts && opts.tab) NAV_STACK.length = 0;
   state.step = step;
   if (["dashboard", "loyalty"].includes(step) && auth.customer) {
     await loadLoyaltyData();
@@ -62,6 +66,66 @@ function render() {
     cart: renderCart,
   }[state.step];
   view();
+  decorateScreen();
+}
+
+/* ---------------- Barra superior, rodapé e menu inferior ---------------- */
+const NAV_STEPS = ["dashboard", "profile", "orders", "loyalty", "category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "cart"];
+const STEP_TITLE = { dashboard: "Início", profile: "Perfil", orders: "Pedidos", loyalty: "Fidelidade", category: "Faça seu pedido", "brigadeiro-box": "Brigadeiro Gourmet", "brigadeiro-flavors": "Brigadeiro Gourmet", personalization: "Personalização", "geladinho-info": "Geladinho Gourmet", "geladinho-flavors": "Geladinho Gourmet", cart: "Carrinho" };
+
+function cartCount() {
+  const sum = o => Object.values(o || {}).reduce((t, q) => t + (Number(q) || 0), 0);
+  return sum(state.flavors) + sum(state.geladinho);
+}
+function goBack() {
+  const prev = NAV_STACK.pop();
+  state.step = prev || (auth.customer ? "dashboard" : "welcome");
+  render();
+  window.scrollTo({ top: 0 });
+}
+function goTab(tab) {
+  const loggedIn = !!auth.customer;
+  if (tab === "home") return go(loggedIn ? "dashboard" : "welcome", { tab: true });
+  if (!loggedIn) return go("login", { tab: true });
+  return go(tab, { tab: true });
+}
+function openCart() { go(cartCount() ? "cart" : "category"); }
+
+function decorateScreen() {
+  const step = state.step;
+  const footer = `
+    <footer class="site-footer">
+      <div class="footer-social">
+        <a class="footer-btn" href="https://wa.me/${WHATSAPP_NUMBER}" target="_blank" rel="noopener" aria-label="WhatsApp">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2a10 10 0 00-8.6 15.1L2 22l5-1.3A10 10 0 1012 2zm5.2 14.2c-.2.6-1.3 1.2-1.8 1.2-.5.1-1 .2-3.3-.7-2.8-1.2-4.6-4-4.7-4.2-.1-.2-1.1-1.5-1.1-2.8s.7-2 1-2.3c.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.8 2c.1.2.1.4 0 .5l-.4.6c-.1.2-.3.3-.1.6.2.3.8 1.3 1.7 2.1 1.1 1 2 1.3 2.3 1.4.3.1.4.1.6-.1l.8-1c.2-.3.4-.2.6-.1l1.9.9c.3.1.5.2.5.3.1.2.1.8-.1 1.4z"/></svg>WhatsApp</a>
+        <a class="footer-btn" href="${INSTAGRAM_URL}" target="_blank" rel="noopener" aria-label="Instagram">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.3" cy="6.7" r="1" fill="currentColor" stroke="none"/></svg>Instagram</a>
+      </div>
+      <p class="footer-copy">© ${new Date().getFullYear()} Gizona Doces · Todos os direitos reservados</p>
+    </footer>`;
+  if (!NAV_STEPS.includes(step)) { app.insertAdjacentHTML("beforeend", footer); return; }
+  const n = cartCount();
+  const top = `
+    <header class="app-topbar">
+      <button onclick="goBack()" aria-label="Voltar"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M11 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <strong>${STEP_TITLE[step] || ""}</strong>
+      <button class="cart-btn" onclick="openCart()" aria-label="Carrinho">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 8h12l-1 12H7L6 8z" stroke-linejoin="round"/><path d="M9 8V6a3 3 0 016 0v2"/></svg>
+        ${n ? `<span class="cart-badge">${n}</span>` : ""}
+      </button>
+    </header>`;
+  const active = { dashboard: "home", orders: "orders", loyalty: "loyalty", profile: "profile" }[step] || (["category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "cart"].includes(step) ? "home" : "");
+  const tab = (id, label, icon) => `<button class="${active === id ? "active" : ""}" onclick="goTab('${id}')">${icon}<span>${label}</span></button>`;
+  const ic = p => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+  const nav = `
+    <nav class="bottom-nav">
+      ${tab("home", "Início", ic('<path d="M12 20s-7-4.4-7-10a4 4 0 017-2.6A4 4 0 0119 10c0 5.6-7 10-7 10z"/>'))}
+      ${tab("orders", "Pedidos", ic('<path d="M3 12a9 9 0 109-9 9.7 9.7 0 00-6.7 2.7L3 8"/><path d="M3 3v5h5M12 8v4l3 2"/>'))}
+      ${tab("loyalty", "Fidelidade", ic('<rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13M5 12v8a1 1 0 001 1h12a1 1 0 001-1v-8M7.5 8a2.5 2.5 0 010-5C11 3 12 8 12 8s1-5 4.5-5a2.5 2.5 0 010 5"/>'))}
+      ${tab("profile", "Perfil", ic('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/>'))}
+    </nav>`;
+  app.insertAdjacentHTML("afterbegin", top);
+  app.insertAdjacentHTML("beforeend", footer + nav);
 }
 
 /* ---------------- LOADING ---------------- */
