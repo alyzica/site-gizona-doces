@@ -263,11 +263,17 @@ function renderRegister() {
         <label>E-mail *<input type="email" id="regEmail"></label>
         <label>Senha *<input type="password" id="regPassword" placeholder="Mínimo 6 caracteres"></label>
         <div class="two-col">
-          <label>CEP *<input type="text" id="regCep" placeholder="00000-000" maxlength="9" oninput="handleCepInput(this)"></label>
+          <label>CEP (opcional)<input type="text" id="regCep" placeholder="00000-000" maxlength="9" oninput="handleCepInput(this)"></label>
           <label>Número *<input type="text" id="regNumber"></label>
         </div>
+        <p class="hint" style="margin:-4px 0 0">Não lembra o CEP? Sem problema, é só escrever o endereço abaixo.</p>
+        <label>Rua / Avenida *<input type="text" id="regStreet"></label>
+        <label>Bairro<input type="text" id="regNeighborhood"></label>
+        <div class="two-col">
+          <label>Cidade<input type="text" id="regCity"></label>
+          <label>UF<input type="text" id="regState" maxlength="2" style="text-transform:uppercase"></label>
+        </div>
         <label>Complemento (opcional)<input type="text" id="regComplement"></label>
-        <div id="regAddressPreview" class="hint"></div>
       </div>
       <button class="btn btn-primary btn-block btn-lg" id="registerBtn" onclick="handleRegister()">Criar Cadastro</button>
       ${navButtons({ back: "welcome" })}
@@ -275,7 +281,14 @@ function renderRegister() {
   `;
 }
 
-let regAddress = { street: "", neighborhood: "", city: "", state: "" };
+function readAddressFields(prefix) {
+  const g = id => (document.getElementById(prefix + id)?.value || "").trim();
+  return { street: g("Street"), neighborhood: g("Neighborhood"), city: g("City"), state: g("State").toUpperCase() };
+}
+function formatAddress(c) {
+  if (!c || !c.street) return "";
+  return `${c.street}${c.number ? ", " + c.number : ""}${c.complement ? " (" + c.complement + ")" : ""}${c.neighborhood ? " – " + c.neighborhood : ""}${c.city ? ", " + c.city : ""}${c.state ? "/" + c.state : ""}`;
+}
 
 function maskCpf(el) {
   let v = el.value.replace(/\D/g, "").slice(0, 11);
@@ -296,8 +309,9 @@ async function handleCepInput(el) {
   if (v.length === 8) {
     const addr = await auth_fetchCep(v);
     if (addr) {
-      regAddress = addr;
-      document.getElementById("regAddressPreview").textContent = `${addr.street}, ${addr.neighborhood} — ${addr.city}/${addr.state}`;
+      const prefix = el.id === "prCep" ? "pr" : "reg";
+      const set = (id, val) => { const f = document.getElementById(prefix + id); if (f && val) f.value = val; };
+      set("Street", addr.street); set("Neighborhood", addr.neighborhood); set("City", addr.city); set("State", addr.state);
     }
   }
 }
@@ -313,7 +327,8 @@ async function handleRegister() {
   const number = document.getElementById("regNumber").value.trim();
   const complement = document.getElementById("regComplement").value.trim();
 
-  if (!name || !cpf || !phone || !email || !password || !cep || !number) {
+  const addrFields = readAddressFields("reg");
+  if (!name || !cpf || !phone || !email || !password || !addrFields.street || !number) {
     state.formError = "Preencha todos os campos obrigatórios.";
     render();
     return;
@@ -325,8 +340,7 @@ async function handleRegister() {
     await auth_register({
       name, gender, cpf, phone, email, password, number, complement,
       cep: cep.replace(/\D/g, ""),
-      street: regAddress.street, neighborhood: regAddress.neighborhood,
-      city: regAddress.city, state: regAddress.state,
+      ...addrFields,
     });
     syncOrderCustomerFromProfile();
     state.formError = "";
@@ -465,18 +479,22 @@ function renderProfile() {
         <label>Telefone / WhatsApp<input type="text" id="prPhone" value="${c.phone || ""}" oninput="maskPhone(this)"></label>
         <label>E-mail (não editável)<input type="email" value="${c.email || ""}" disabled></label>
         <div class="two-col">
-          <label>CEP<input type="text" id="prCep" value="${c.cep || ""}" oninput="handleCepInput(this)"></label>
+          <label>CEP (opcional)<input type="text" id="prCep" value="${c.cep || ""}" oninput="handleCepInput(this)"></label>
           <label>Número<input type="text" id="prNumber" value="${c.number || ""}"></label>
         </div>
+        <label>Rua / Avenida<input type="text" id="prStreet" value="${c.street || ""}"></label>
+        <label>Bairro<input type="text" id="prNeighborhood" value="${c.neighborhood || ""}"></label>
+        <div class="two-col">
+          <label>Cidade<input type="text" id="prCity" value="${c.city || ""}"></label>
+          <label>UF<input type="text" id="prState" maxlength="2" value="${c.state || ""}" style="text-transform:uppercase"></label>
+        </div>
         <label>Complemento<input type="text" id="prComplement" value="${c.complement || ""}"></label>
-        <div id="regAddressPreview" class="hint">${c.street ? `${c.street}, ${c.neighborhood} — ${c.city}/${c.state}` : ""}</div>
       </div>
       <button class="btn btn-primary btn-block btn-lg" id="profileSaveBtn" onclick="handleProfileSave()">Salvar alterações</button>
       <button class="btn btn-link-pink" onclick="go('forgot-password')">Alterar senha</button>
       ${navButtons({ back: "dashboard" })}
     </section>
   `;
-  regAddress = { street: c.street || "", neighborhood: c.neighborhood || "", city: c.city || "", state: c.state || "" };
 }
 async function handleProfileSave() {
   const btn = document.getElementById("profileSaveBtn");
@@ -488,8 +506,7 @@ async function handleProfileSave() {
     cep: document.getElementById("prCep").value.replace(/\D/g, ""),
     number: document.getElementById("prNumber").value.trim(),
     complement: document.getElementById("prComplement").value.trim(),
-    street: regAddress.street, neighborhood: regAddress.neighborhood,
-    city: regAddress.city, state: regAddress.state,
+    ...readAddressFields("pr"),
   };
   try {
     await sb.from("customers").update(payload).eq("id", auth.customer.id);
@@ -924,7 +941,10 @@ function renderCart() {
         ${isGuestOrder ? `
           <label>Nome completo<input type="text" value="${c.name}" oninput="c_update('name', this.value)"></label>
           <label>Telefone / WhatsApp<input type="text" placeholder="(19) 99999-9999" value="${c.phone}" oninput="c_update('phone', this.value)"></label>
-        ` : `<p class="hint">Usaremos automaticamente os dados do seu perfil: <strong>${auth.customer.full_name}</strong>.</p>`}
+        ` : `<p class="hint">Usaremos os dados do seu perfil (nome e telefone): <strong>${auth.customer.full_name}</strong>.</p>`}
+        <label>Endereço <small style="font-weight:400">(pode editar se for diferente do cadastro)</small>
+          <textarea rows="2" placeholder="Rua, número, bairro, cidade" oninput="c_update('address', this.value)">${state.customer.address !== undefined ? state.customer.address : formatAddress(auth.customer)}</textarea>
+        </label>
         <label>Data do evento<input type="date" id="eventDateInput" min="${minEventDate()}" value="${c.eventDate}" onchange="handleEventDateInput(this)"></label>
         <p class="hint" style="margin-top:-6px">Trabalhamos com antecedência mínima de 5 dias.</p>
         <label>Forma de pagamento
@@ -1067,6 +1087,8 @@ async function submitOrder(total) {
     : state.customer;
   let msg = `Olá! Gostaria de fazer uma encomenda na Gizona Doces.\n\n`;
   msg += `Nome: ${c.name}\nTelefone: ${c.phone}\n`;
+  const addressText = (state.customer.address !== undefined ? state.customer.address : formatAddress(auth.customer)).trim();
+  if (addressText) msg += `Endereço: ${addressText}\n`;
   if (c.eventDate) msg += `Data do evento: ${new Date(c.eventDate + "T00:00:00").toLocaleDateString("pt-BR")}\n`;
   if (c.payment) msg += `Forma de pagamento: ${c.payment}\n`;
   msg += `\n`;
@@ -1128,7 +1150,7 @@ async function submitOrder(total) {
       personalization: state.wantsArt ? state.personalization : {},
       payment_method: paymentMap[c.payment] || null,
       total,
-      observations: "",
+      observations: addressText ? `Endereço: ${addressText}` : "",
     });
   } catch (e) {
     console.error("Erro ao salvar pedido:", e);
