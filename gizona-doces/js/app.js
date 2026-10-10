@@ -23,6 +23,8 @@ const state = {
   isoporBox: false,
   suggestQty: {},
   orderTab: "encomendas", // "encomendas" | "delivery"
+  delivery: {},            // delivery: { productId: qty }
+  deliveryCatalog: null,   // produtos de delivery com estoque (RPC delivery_catalog)
 };
 
 const app = document.getElementById("app");
@@ -64,18 +66,19 @@ function render() {
     "geladinho-info": renderGeladinhoInfo,
     "geladinho-flavors": renderGeladinhoFlavors,
     cart: renderCart,
+    "delivery-cart": renderDeliveryCart,
   }[state.step];
   const stepAtRender = state.step;
   Promise.resolve(view()).then(() => { if (state.step === stepAtRender) decorateScreen(); });
 }
 
 /* ---------------- Barra superior, rodapé e menu inferior ---------------- */
-const NAV_STEPS = ["dashboard", "profile", "orders", "loyalty", "category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "cart"];
-const STEP_TITLE = { dashboard: "Início", profile: "Perfil", orders: "Pedidos", loyalty: "Fidelidade", category: "Faça seu pedido", "brigadeiro-box": "Brigadeiro Gourmet", "brigadeiro-flavors": "Brigadeiro Gourmet", personalization: "Personalização", "geladinho-info": "Geladinho Gourmet", "geladinho-flavors": "Geladinho Gourmet", cart: "Carrinho" };
+const NAV_STEPS = ["dashboard", "profile", "orders", "loyalty", "category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "cart", "delivery-cart"];
+const STEP_TITLE = { dashboard: "Início", profile: "Perfil", orders: "Pedidos", loyalty: "Fidelidade", category: "Faça seu pedido", "brigadeiro-box": "Brigadeiro Gourmet", "brigadeiro-flavors": "Brigadeiro Gourmet", personalization: "Personalização", "geladinho-info": "Geladinho Gourmet", "geladinho-flavors": "Geladinho Gourmet", cart: "Carrinho", "delivery-cart": "Carrinho delivery" };
 
 function cartCount() {
   const sum = o => Object.values(o || {}).reduce((t, q) => t + (Number(q) || 0), 0);
-  return sum(state.flavors) + sum(state.geladinho);
+  return sum(state.flavors) + sum(state.geladinho) + sum(state.delivery);
 }
 function goBack() {
   const prev = NAV_STACK.pop();
@@ -89,7 +92,11 @@ function goTab(tab) {
   if (!loggedIn) return go("login", { tab: true });
   return go(tab, { tab: true });
 }
-function openCart() { go(cartCount() ? "cart" : "category"); }
+function openCart() {
+  const sum = o => Object.values(o || {}).reduce((t, q) => t + (Number(q) || 0), 0);
+  if (!cartCount()) return go("category");
+  go(sum(state.delivery) && !sum(state.flavors) && !sum(state.geladinho) ? "delivery-cart" : "cart");
+}
 
 function decorateScreen() {
   const step = state.step;
@@ -119,7 +126,7 @@ function decorateScreen() {
       </button>
       </div>
     </header>`;
-  const active = { dashboard: "home", orders: "orders", loyalty: "loyalty", profile: "profile" }[step] || (["category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "cart"].includes(step) ? "home" : "");
+  const active = { dashboard: "home", orders: "orders", loyalty: "loyalty", profile: "profile" }[step] || (["category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "cart", "delivery-cart"].includes(step) ? "home" : "");
   const tab = (id, label, icon) => `<button class="${active === id ? "active" : ""}" onclick="goTab('${id}')">${icon}<span>${label}</span></button>`;
   const ic = p => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
   const nav = `
@@ -576,13 +583,7 @@ function renderCategory() {
         </button>
       </div>
 
-      ${state.orderTab === "delivery" ? `
-        <div class="delivery-soon">
-          <svg viewBox="0 0 24 24" width="34" height="34" fill="none"><path d="M3 7h11v9H3V7z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 10h4l3 3v3h-7v-6z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/><circle cx="7" cy="18" r="1.6" stroke="var(--pink)" stroke-width="1.4"/><circle cx="17" cy="18" r="1.6" stroke="var(--pink)" stroke-width="1.4"/></svg>
-          <p class="delivery-soon-title">Delivery em breve</p>
-          <p class="delivery-soon-text">Estamos preparando essa novidade. Por enquanto, siga com as encomendas — combinamos tudo pelo WhatsApp.</p>
-        </div>
-      ` : `
+      ${state.orderTab === "delivery" ? renderDeliveryList() : `
       <div class="cat-choices">
         <button class="cat-card" onclick="selectCategory('brigadeiro')">
           <span class="cat-emoji">
@@ -620,9 +621,163 @@ function renderCategory() {
     </section>
   `;
 }
-function setOrderTab(tab) {
+async function setOrderTab(tab) {
   state.orderTab = tab;
   renderCategory();
+  decorateScreen();
+  if (tab === "delivery") {
+    await loadDeliveryCatalog();
+    if (state.step === "category" && state.orderTab === "delivery") { renderCategory(); decorateScreen(); }
+  }
+}
+
+/* ---------------- DELIVERY ---------------- */
+async function loadDeliveryCatalog() {
+  if (!sb) { state.deliveryCatalog = []; return; }
+  try {
+    const { data, error } = await sb.rpc("delivery_catalog");
+    state.deliveryCatalog = error ? [] : (data || []);
+    // remove do carrinho o que acabou ou passou do estoque
+    Object.keys(state.delivery).forEach(id => {
+      const p = state.deliveryCatalog.find(x => x.id === id);
+      if (!p || p.stock <= 0) delete state.delivery[id];
+      else if (state.delivery[id] > p.stock) state.delivery[id] = p.stock;
+    });
+  } catch (e) { console.error(e); state.deliveryCatalog = []; }
+}
+function deliveryTotal() {
+  return Object.entries(state.delivery).reduce((t, [id, q]) => {
+    const p = (state.deliveryCatalog || []).find(x => x.id === id);
+    return t + (p ? Number(p.price) * q : 0);
+  }, 0);
+}
+function renderDeliveryList() {
+  const cat = state.deliveryCatalog;
+  if (cat === null) return `<p class="hint center">Carregando...</p>`;
+  if (!cat.length) return `
+    <div class="delivery-soon">
+      <svg viewBox="0 0 24 24" width="34" height="34" fill="none"><path d="M3 7h11v9H3V7z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 10h4l3 3v3h-7v-6z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/><circle cx="7" cy="18" r="1.6" stroke="var(--pink)" stroke-width="1.4"/><circle cx="17" cy="18" r="1.6" stroke="var(--pink)" stroke-width="1.4"/></svg>
+      <p class="delivery-soon-title">Delivery em breve</p>
+      <p class="delivery-soon-text">Estamos preparando essa novidade. Por enquanto, siga com as encomendas — combinamos tudo pelo WhatsApp.</p>
+    </div>`;
+  const total = deliveryTotal();
+  const has = Object.keys(state.delivery).length > 0;
+  return `
+    <div class="flavor-list">
+      ${cat.map(p => {
+        const qty = state.delivery[p.id] || 0;
+        const out = p.stock <= 0;
+        return `
+        <div class="flavor-row wide ${out ? "disabled" : ""}">
+          <span class="flavor-thumb"><img src="${p.image_url || ""}" alt="${p.name}" style="--img-scale:${Number(p.image_scale) || 1};--img-x:${Number(p.image_position_x) || 50}%;--img-y:${Number(p.image_position_y) || 50}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
+          <span class="flavor-info">
+            <strong>${p.name}</strong>
+            ${p.description ? `<small>${p.description}</small>` : ""}
+            <span class="badge small">${fmt(Number(p.price))}</span>
+            <small class="${out ? "error" : ""}">${out ? "Esgotado" : `Restam ${p.stock}`}</small>
+          </span>
+          <span class="stepper">
+            <button onclick="changeDelivery('${p.id}', -1)" ${qty ? "" : "disabled"}>–</button>
+            <span>${qty}</span>
+            <button onclick="changeDelivery('${p.id}', 1)" ${out || qty >= p.stock ? "disabled" : ""}>+</button>
+          </span>
+        </div>`;
+      }).join("")}
+    </div>
+    <div class="sticky-subtotal">
+      <strong>Subtotal: ${fmt(total)}</strong>
+      <button ${has ? `onclick="go('delivery-cart')"` : "disabled"}>Ir para o carrinho</button>
+    </div>`;
+}
+function changeDelivery(id, dir) {
+  const p = (state.deliveryCatalog || []).find(x => x.id === id);
+  if (!p) return;
+  const next = Math.max(0, Math.min(p.stock, (state.delivery[id] || 0) + dir));
+  if (next) state.delivery[id] = next; else delete state.delivery[id];
+  renderCategory();
+  decorateScreen();
+}
+
+function renderDeliveryCart() {
+  const items = Object.entries(state.delivery).map(([id, qty]) => ({ ...(state.deliveryCatalog || []).find(p => p.id === id), qty })).filter(i => i.id);
+  const total = deliveryTotal();
+  const isGuestOrder = state.guest || !auth.customer;
+  const c = auth.customer ? { name: auth.customer.full_name || "", phone: auth.customer.phone || "" } : state.customer;
+  const addr = state.customer.address !== undefined ? state.customer.address : formatAddress(auth.customer);
+  app.innerHTML = `
+    <section class="screen">
+      <div class="screen-head pink"><h2>Seu pedido delivery</h2></div>
+      ${items.length ? `
+      <div class="cart-summary">
+        ${items.map(i => `<div class="order-row-head"><span>${i.qty}x ${i.name}</span><strong>${fmt(Number(i.price) * i.qty)}</strong></div>`).join("")}
+        <div class="order-row-head" style="margin-top:8px"><strong>Total</strong><strong>${fmt(total)}</strong></div>
+      </div>
+      <div class="cart-form-block">
+        <p class="cart-section-title">${isGuestOrder ? "Seus dados" : "Dados do pedido"}</p>
+        ${isGuestOrder ? `
+          <label>Nome completo<input type="text" value="${state.customer.name}" oninput="c_update('name', this.value)"></label>
+          <label>Telefone / WhatsApp<input type="text" placeholder="(19) 99999-9999" value="${state.customer.phone}" oninput="maskPhone(this); c_update('phone', this.value)"></label>
+        ` : `<p class="hint">Usaremos seu nome e telefone do perfil: <strong>${c.name}</strong>.</p>`}
+        <label>Endereço de entrega *
+          <textarea rows="2" placeholder="Rua, número, bairro, cidade" oninput="c_update('address', this.value)">${addr}</textarea>
+        </label>
+        <label>Forma de pagamento
+          <select onchange="c_update('payment', this.value)">
+            <option value="">Selecione (opcional)</option>
+            <option value="Pix" ${state.customer.payment === "Pix" ? "selected" : ""}>PIX</option>
+            <option value="Crédito" ${state.customer.payment === "Crédito" ? "selected" : ""}>Crédito</option>
+          </select>
+        </label>
+      </div>
+      <button class="btn btn-primary btn-block btn-lg" id="deliverySendBtn" onclick="submitDeliveryOrder()">Enviar pelo WhatsApp</button>
+      ` : `<p class="hint center">Seu carrinho de delivery está vazio.</p>`}
+      <button class="btn btn-ghost sticky-back" onclick="goBack()">← Voltar</button>
+    </section>`;
+}
+
+async function submitDeliveryOrder() {
+  const items = Object.entries(state.delivery).map(([id, qty]) => ({ ...(state.deliveryCatalog || []).find(p => p.id === id), qty })).filter(i => i.id);
+  const total = deliveryTotal();
+  const c = auth.customer ? { name: auth.customer.full_name || "", phone: auth.customer.phone || "" } : state.customer;
+  const address = (state.customer.address !== undefined ? state.customer.address : formatAddress(auth.customer)).trim();
+  if (!items.length) return;
+  if (!c.name.trim() || !c.phone.trim()) { alert("Preencha nome e telefone."); return; }
+  if (!address) { alert("Informe o endereço de entrega."); return; }
+  const btn = document.getElementById("deliverySendBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Enviando..."; }
+  const whatsappWindow = window.open("about:blank", "_blank");
+  const paymentMap = { "Pix": "pix", "Crédito": "credito" };
+  const { error } = await sb.from("orders").insert({
+    customer_id: auth.customer ? auth.customer.id : null,
+    customer_name: c.name, customer_phone: c.phone,
+    customer_email: auth.customer ? auth.customer.email : null,
+    order_type: "delivery", origin: "site",
+    items: items.map(i => ({ id: i.id, product_name: i.name, category: "delivery", quantity: i.qty, unit_price: Number(i.price), subtotal: Number(i.price) * i.qty })),
+    payment_method: paymentMap[state.customer.payment] || null,
+    total, observations: `Endereço: ${address}`,
+  });
+  if (error) {
+    if (whatsappWindow) whatsappWindow.close();
+    console.error(error);
+    if (/Estoque insuficiente/i.test(error.message || "")) {
+      alert("Ops! Alguém acabou de levar um dos produtos. Atualizamos o estoque, confira o carrinho.");
+      await loadDeliveryCatalog();
+      state.orderTab = "delivery";
+      go("category");
+    } else {
+      alert("Não foi possível enviar o pedido. Tente novamente.");
+      if (btn) { btn.disabled = false; btn.textContent = "Enviar pelo WhatsApp"; }
+    }
+    return;
+  }
+  let msg = `Olá! Gostaria de fazer um pedido de delivery na Gizona Doces.\n\nNome: ${c.name}\nTelefone: ${c.phone}\nEndereço: ${address}\n`;
+  if (state.customer.payment) msg += `Forma de pagamento: ${state.customer.payment}\n`;
+  msg += `\n` + items.map(i => `  - ${i.qty}x ${i.name} = ${fmt(Number(i.price) * i.qty)}`).join("\n") + `\n\nTotal: ${fmt(total)}\n\nAguardo confirmação.`;
+  const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
+  if (whatsappWindow) whatsappWindow.location.href = url; else window.location.href = url;
+  state.delivery = {};
+  await loadDeliveryCatalog();
+  renderConfirmation();
 }
 function selectCategory(cat) {
   state.category = cat;
@@ -1174,6 +1329,7 @@ function resetOrder() {
   state.box = null;
   state.flavors = {};
   state.geladinho = {};
+  state.delivery = {};
   state.wantsArt = null;
   state.isoporBox = false;
   state.suggestQty = {};

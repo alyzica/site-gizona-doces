@@ -85,7 +85,7 @@ async function handleAdminLogout() {
 /* ---------------- SHELL ---------------- */
 function navIcon(name) {
   const paths = {
-    home: `<path d="M4 11l8-7 8 7v9a1 1 0 01-1 1h-4v-6H9v6H5a1 1 0 01-1-1v-9z"/>`,
+    home: `<path d="M4 11l8-7 8 7v9a1 1 0 01-1 1h-4v-6H9v6H5a1 1 0 01-1-1v-9z" fill="none"/>`,
     bag: `<path d="M6 8h12l1 13H5L6 8z" fill="none"/><path d="M8 8V6a4 4 0 018 0v2" fill="none"/>`,
     cube: `<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" fill="none"/><path d="M4 7.5L12 12l8-4.5M12 12v9" fill="none"/>`,
     users: `<circle cx="9" cy="8" r="3" fill="none"/><path d="M3 20a6 6 0 0112 0" fill="none"/><path d="M15 8a3 3 0 110-6M21 20a6 6 0 00-6-6" fill="none"/>`,
@@ -155,69 +155,92 @@ async function loadTab() {
 
 /* ---------------- DASHBOARD ---------------- */
 async function loadDashboard(main) {
-  const { data: orders } = await sb.from("orders").select("*");
-  const { data: customers } = await sb.from("customers").select("id");
-  const { data: loyalty } = await sb.from("loyalty_cards").select("customer_id");
-  const { data: ingredients } = await sb.from("ingredients").select("name, unit, current_stock, min_stock");
+  const [{ data: orders }, { data: customers }, { data: loyalty }, { data: ingredients }, { data: products }] = await Promise.all([
+    sb.from("orders").select("*").order("created_at", { ascending: false }),
+    sb.from("customers").select("id"),
+    sb.from("loyalty_cards").select("customer_id"),
+    sb.from("ingredients").select("name, unit, current_stock, min_stock"),
+    sb.from("products").select("id, active"),
+  ]);
 
-  const active = (orders || []).filter(o => o.status !== "cancelled");
+  const all = orders || [];
+  const active = all.filter(o => o.status !== "cancelled");
   const now = new Date();
-  const monthOrders = active.filter(o => {
+  const monthRevenue = active.filter(o => {
     const d = new Date(o.created_at);
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-  });
+  }).reduce((s, o) => s + Number(o.total || 0), 0);
   const totalRevenue = active.reduce((s, o) => s + Number(o.total || 0), 0);
-  const monthRevenue = monthOrders.reduce((s, o) => s + Number(o.total || 0), 0);
   const avgTicket = active.length ? totalRevenue / active.length : 0;
-  const countByStatus = (s) => (orders || []).filter(o => o.status === s).length;
+  const countByStatus = s => all.filter(o => o.status === s).length;
   const lowStock = (ingredients || []).filter(i => Number(i.current_stock) <= Number(i.min_stock));
+
+  const sold = {};
+  active.forEach(o => (Array.isArray(o.items) ? o.items : []).forEach(i => {
+    if (i.product_name) sold[i.product_name] = (sold[i.product_name] || 0) + (Number(i.quantity) || 0);
+  }));
+  const top = Object.entries(sold).sort((a, b) => b[1] - a[1])[0];
 
   const stats = [
     ["Receita do mês", fmt(monthRevenue)],
     ["Receita total", fmt(totalRevenue)],
-    ["Total de pedidos", (orders || []).length],
+    ["Total de pedidos", all.length],
     ["Ticket médio", fmt(avgTicket)],
     ["Clientes cadastrados", (customers || []).length],
-    ["Clientes fidelidade", (loyalty || []).length],
+    ["Produtos ativos", (products || []).filter(p => p.active).length],
     ["Pendentes", countByStatus("pending")],
     ["Confirmados", countByStatus("confirmed")],
     ["Em produção", countByStatus("production")],
-    ["Entregues", countByStatus("delivered")],
+    ["Concluídos", countByStatus("delivered")],
     ["Cancelados", countByStatus("cancelled")],
+    ["Clientes fidelidade", (loyalty || []).length],
+    ["Produto mais vendido", top ? top[0] : "—"],
   ];
 
   const byDate = {};
   active.forEach(o => { if (o.event_date) byDate[o.event_date] = (byDate[o.event_date] || 0) + 1; });
-  const dates = Object.entries(byDate).sort(([a], [b]) => a.localeCompare(b)).slice(0, 10);
+  const dates = Object.entries(byDate).sort(([a], [b]) => a.localeCompare(b)).slice(0, 8);
+  const weekday = d => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "long" }).replace(/^./, c => c.toUpperCase());
+  const recent = all.slice(0, 5);
 
   main.innerHTML = `
     <div class="admin-topbar"><h1>Dashboard</h1></div>
 
-    ${lowStock.length ? `
-      <div class="admin-card" style="border:1.5px solid #F3C0C0;background:#FDEDED">
-        <h2 style="color:#B23434;display:flex;align-items:center;gap:8px">⚠️ Estoque baixo</h2>
-        <p class="hint" style="margin-bottom:12px">${lowStock.length} item${lowStock.length > 1 ? "ns" : ""} precisa${lowStock.length > 1 ? "m" : ""} de reposição:</p>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          ${lowStock.map(i => `
-            <div style="background:#fff;border:1px solid #F3C0C0;border-radius:10px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
-              <strong>${i.name}</strong>
-              <span style="color:#B23434">${i.current_stock} ${i.unit} restantes <span style="color:var(--muted)">(mín. ${i.min_stock} ${i.unit})</span></span>
-            </div>
-          `).join("")}
-        </div>
-      </div>
-    ` : ""}
-
     <div class="stat-grid">
       ${stats.map(([label, value]) => `<div class="stat-card"><div class="label">${label}</div><div class="value">${value}</div></div>`).join("")}
     </div>
-    <div class="admin-card">
-      <h2>Pedidos por data de entrega</h2>
-      ${dates.length ? `
-        <table><thead><tr><th>Data do evento</th><th>Pedidos</th></tr></thead><tbody>
-          ${dates.map(([d, c]) => `<tr><td>${new Date(d + "T00:00:00").toLocaleDateString("pt-BR")}</td><td>${c} pedido${c > 1 ? "s" : ""}</td></tr>`).join("")}
-        </tbody></table>
-      ` : `<p class="center-msg">Nenhum evento com data agendada ainda.</p>`}
+
+    ${lowStock.length ? `
+      <div class="attention-box">
+        <h2><svg ${SVG_ATTR} width="18" height="18"><path d="M12 3.5L2 20h20L12 3.5z"/><path d="M12 10v4M12 17.5v.01"/></svg> Itens de Estoque em Atenção</h2>
+        ${lowStock.map(i => `<p>- ${i.name}: ${i.current_stock} ${i.unit} (mínimo: ${i.min_stock} ${i.unit})</p>`).join("")}
+      </div>` : ""}
+
+    <div class="dash-cols">
+      <div>
+        <h2 class="dash-title"><svg ${SVG_ATTR} width="18" height="18"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 9h16M8 3v4M16 3v4"/></svg> Calendário de Produção</h2>
+        ${dates.length ? dates.map(([d, c]) => `
+          <div class="dash-row">
+            <span class="dash-ic"><svg ${SVG_ATTR} width="16" height="16"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 9h16M8 3v4M16 3v4"/></svg></span>
+            <span style="flex:1">${new Date(d + "T00:00:00").toLocaleDateString("pt-BR")} (${weekday(d)})</span>
+            <span class="pill-count">${c} pedido${c > 1 ? "s" : ""}</span>
+          </div>`).join("") : `<div class="dash-row" style="color:var(--muted)">Nenhum evento com data agendada ainda.</div>`}
+      </div>
+      <div>
+        <h2 class="dash-title">Últimos Pedidos</h2>
+        ${recent.length ? recent.map(o => `
+          <div class="dash-row" style="align-items:flex-start">
+            <div style="flex:1">
+              <div style="color:var(--pink);font-size:11px;font-weight:700">${o.order_number}</div>
+              <div style="font-size:13px">${o.customer_name}</div>
+              <div style="color:var(--muted);font-size:11.5px">${o.customer_email || o.customer_phone || ""}</div>
+            </div>
+            <div style="text-align:right">
+              <div style="color:var(--pink);font-weight:700;font-size:13px">${fmt(Number(o.total))}</div>
+              <span class="badge ${o.status}">${STATUS_LABEL[o.status] || o.status}</span>
+            </div>
+          </div>`).join("") : `<div class="dash-row" style="color:var(--muted)">Nenhum pedido ainda.</div>`}
+      </div>
     </div>
   `;
 }
