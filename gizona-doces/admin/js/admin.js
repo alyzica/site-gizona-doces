@@ -3147,3 +3147,39 @@ async function deleteReward(id) {
     document.getElementById("adminMain")
   );
 }
+
+
+/* ---------------- Acabamento visual: ícones nas ações e nos indicadores ---------------- */
+const SVG_ATTR = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
+const ICON_PENCIL = `<svg ${SVG_ATTR}><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>`;
+const ICON_TRASH = `<svg ${SVG_ATTR}><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>`;
+const STAT_ICONS = [
+  [/pendente/i, "#B77B00", "#FFF1CF", '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'],
+  [/confirmad/i, "#2F6FD6", "#E1ECFF", '<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>'],
+  [/produ[cç][aã]o/i, "#7B3FD1", "#EEE3FF", '<path d="M6 8h12l1 13H5L6 8z"/><path d="M9 8V6a3 3 0 016 0v2"/>'],
+  [/conclu|entregue/i, "#1F8A4C", "#DDF5E7", '<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>'],
+  [/cancelad/i, "#D0405A", "#FFE3E8", '<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>'],
+  [/fidelidade/i, "#D58A12", "#FFF0D2", '<path d="M5 16L3 7l5.5 4L12 5l3.5 6L21 7l-2 9H5zM5 19h14"/>'],
+  [/cliente/i, "#16917F", "#D9F5F0", '<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0112 0M16 4a3 3 0 010 6M21 20a6 6 0 00-4-5.6"/>'],
+  [/produto|estoque|itens/i, "#E0762B", "#FFE9D8", '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M4 7.5L12 12l8-4.5M12 12v9"/>'],
+  [/pedidos/i, "#2F6FD6", "#E1ECFF", '<path d="M6 8h12l1 13H5L6 8z"/><path d="M9 8V6a3 3 0 016 0v2"/>'],
+  [/despesa|gasto|sa[ií]da|retirada|fatura/i, "#C0394F", "#FFE6EA", '<path d="M3 17l6-6 4 4 8-8M21 7v6h-6"/>'],
+  [/receita|faturamento|lucro|resultado|entrada|ticket|valor|saldo/i, "#1F8A4C", "#DDF5E7", '<path d="M12 3v18M16 7.5c0-1.7-1.8-3-4-3s-4 1.3-4 3 1.8 2.8 4 3 4 1.3 4 3-1.8 3-4 3-4-1.3-4-3"/>'],
+];
+function decorateAdminUI() {
+  const main = document.getElementById("adminMain");
+  if (!main) return;
+  main.querySelectorAll("button:not(.icon-btn)").forEach(b => {
+    const t = b.textContent.trim();
+    if (t === "Editar") { b.innerHTML = ICON_PENCIL; b.title = "Editar"; b.className = (b.className + " icon-btn").trim(); }
+    else if (t === "Excluir") { b.innerHTML = ICON_TRASH; b.title = "Excluir"; b.className = (b.className + " icon-btn danger").trim(); }
+  });
+  main.querySelectorAll(".stat-card .label:not([data-ic])").forEach(l => {
+    l.dataset.ic = "1";
+    const name = l.textContent;
+    const hit = STAT_ICONS.find(([re]) => re.test(name)) || [null, "#EC5A8A", "#FCE4EC", '<circle cx="12" cy="12" r="4"/>'];
+    l.insertAdjacentHTML("afterbegin", `<span class="stat-ic" style="color:${hit[1]};background:${hit[2]}"><svg ${SVG_ATTR}>${hit[3]}</svg></span>`);
+  });
+}
+new MutationObserver(() => { clearTimeout(window.__decT); window.__decT = setTimeout(decorateAdminUI, 30); })
+  .observe(document.body, { childList: true, subtree: true });
