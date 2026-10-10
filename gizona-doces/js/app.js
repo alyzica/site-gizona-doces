@@ -65,8 +65,8 @@ function render() {
     "geladinho-flavors": renderGeladinhoFlavors,
     cart: renderCart,
   }[state.step];
-  view();
-  decorateScreen();
+  const stepAtRender = state.step;
+  Promise.resolve(view()).then(() => { if (state.step === stepAtRender) decorateScreen(); });
 }
 
 /* ---------------- Barra superior, rodapé e menu inferior ---------------- */
@@ -93,6 +93,8 @@ function openCart() { go(cartCount() ? "cart" : "category"); }
 
 function decorateScreen() {
   const step = state.step;
+  app.querySelectorAll(".app-topbar,.site-footer,.bottom-nav").forEach(el => el.remove());
+  app.classList.toggle("has-nav", NAV_STEPS.includes(step));
   const footer = `
     <footer class="site-footer">
       <div class="footer-social">
@@ -109,10 +111,13 @@ function decorateScreen() {
     <header class="app-topbar">
       <button onclick="goBack()" aria-label="Voltar"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M11 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       <strong>${STEP_TITLE[step] || ""}</strong>
+      <div class="topbar-right">
+      ${auth.customer ? `<button onclick="handleLogout()" aria-label="Sair da conta" title="Sair da conta"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg></button>` : ""}
       <button class="cart-btn" onclick="openCart()" aria-label="Carrinho">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 8h12l-1 12H7L6 8z" stroke-linejoin="round"/><path d="M9 8V6a3 3 0 016 0v2"/></svg>
         ${n ? `<span class="cart-badge">${n}</span>` : ""}
       </button>
+      </div>
     </header>`;
   const active = { dashboard: "home", orders: "orders", loyalty: "loyalty", profile: "profile" }[step] || (["category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "cart"].includes(step) ? "home" : "");
   const tab = (id, label, icon) => `<button class="${active === id ? "active" : ""}" onclick="goTab('${id}')">${icon}<span>${label}</span></button>`;
@@ -397,18 +402,6 @@ function renderDashboard() {
         <svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M6 8h12l-1 12H7L6 8z" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 8V6a3 3 0 016 0v2" stroke="#fff" stroke-width="1.8"/></svg>Faça seu pedido
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <div class="dash-links">
-        <button class="btn btn-outline-pill" onclick="go('profile')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
-          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="#F06292" fill-rule="evenodd" clip-rule="evenodd" d="M11.078 2.25c-.917 0-1.699.663-1.85 1.567l-.178 1.072c-.02.12-.115.26-.297.348a7.49 7.49 0 00-.985.57c-.167.114-.335.125-.45.082l-1.02-.382a1.875 1.875 0 00-2.282.819l-.922 1.597a1.875 1.875 0 00.432 2.385l.84.692c.095.078.17.23.154.43a7.6 7.6 0 000 1.139c.015.2-.059.352-.153.43l-.841.692a1.875 1.875 0 00-.432 2.385l.922 1.597c.5.868 1.573 1.225 2.282.818l1.019-.382c.115-.043.283-.031.45.082.312.214.641.405.985.57.182.088.277.228.297.35l.178 1.071c.151.904.933 1.567 1.85 1.567h1.844c.916 0 1.699-.663 1.85-1.567l.178-1.072c.02-.12.114-.26.297-.349.344-.165.673-.356.985-.57.167-.114.335-.125.45-.082l1.02.382c.709.407 1.781.05 2.28-.819l.923-1.597a1.875 1.875 0 00-.432-2.385l-.84-.692c-.095-.078-.17-.229-.154-.43a7.6 7.6 0 000-1.139c-.016-.2.059-.352.153-.43l.84-.692c.708-.582.891-1.59.433-2.385l-.922-1.597a1.875 1.875 0 00-2.282-.818l-1.02.382c-.114.043-.282.031-.449-.083a7.49 7.49 0 00-.985-.57c-.183-.087-.277-.227-.297-.348l-.179-1.072a1.875 1.875 0 00-1.85-1.567h-1.843zM12 15.75a3.75 3.75 0 100-7.5 3.75 3.75 0 000 7.5z"/></svg>Meu Perfil
-        </button>
-        <button class="btn btn-outline-pill" onclick="go('loyalty')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
-          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="#E8A33D" d="M5 16L3 7l5.5 4L12 5l3.5 6L21 7l-2 9H5zm0 2h14v2H5v-2z"/></svg>Fidelidade
-        </button>
-        <button class="btn btn-outline-pill" onclick="go('orders')" style="display:inline-flex;align-items:center;justify-content:center;gap:5px">
-          <svg viewBox="0 0 24 24" width="15" height="15"><path fill="#F06292" fill-rule="evenodd" clip-rule="evenodd" d="M7.5 6v.75H5.513c-.96 0-1.764.724-1.865 1.679l-1.263 12A1.875 1.875 0 004.25 22.5h15.5a1.875 1.875 0 001.865-2.071l-1.263-12a1.875 1.875 0 00-1.865-1.679H16.5V6a4.5 4.5 0 10-9 0zM12 3a3 3 0 00-3 3v.75h6V6a3 3 0 00-3-3zm-3 8.25a3 3 0 106 0v-.75a.75.75 0 011.5 0v.75a4.5 4.5 0 11-9 0v-.75a.75.75 0 011.5 0v.75z"/></svg>Pedidos
-        </button>
-      </div>
-      <button class="btn btn-ghost btn-block" onclick="handleLogout()">Sair da conta</button>
     </section>
   `;
 }
