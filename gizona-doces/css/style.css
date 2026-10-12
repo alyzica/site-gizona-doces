@@ -285,3 +285,37 @@ input,select,textarea{font-family:var(--font-body);}
 
 #app.has-nav{padding-bottom:74px;}
 .topbar-right{display:flex;align-items:center;gap:16px;}
+
+/* Sacola: resumo, cupom, sugestões */
+.muted{color:var(--muted);}
+.free{color:#1F8A4C;font-weight:700;}
+.sum-box{padding:18px;}
+.sum-row{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13.5px;padding:7px 0;color:var(--ink);}
+.sum-row small{color:var(--muted);font-weight:500;}
+.sum-row.total{border-top:1.5px solid var(--border);margin-top:6px;padding-top:12px;font-size:16px;font-weight:800;}
+.sum-note{font-size:11.5px;color:var(--muted);margin:2px 0 6px;line-height:1.5;}
+.bag-bar{justify-content:space-between;}
+.bag-bar small{display:block;color:#E9C9D2;font-size:11.5px;font-weight:500;}
+.bag-bar div strong{font-size:19px;}
+.bag-bar div small{display:inline;}
+.bag-bar div > small:first-child{display:block;}
+.coupon-box{padding:16px 18px;}
+.coupon-head{display:flex;align-items:center;gap:12px;}
+.coupon-head strong{display:block;font-size:14px;}
+.coupon-head small{color:var(--muted);font-size:12px;}
+.coupon-ic{width:38px;height:38px;border-radius:12px;background:var(--pink-soft);color:var(--pink);display:flex;align-items:center;justify-content:center;}
+.coupon-form{display:flex;gap:8px;margin-top:12px;}
+.coupon-form input{flex:1;border:1.5px solid var(--border);border-radius:999px;padding:11px 16px;font-size:14px;font-weight:700;letter-spacing:1px;}
+.coupon-form button,.coupon-applied button{background:none;border:0;color:var(--pink);font-weight:700;font-size:13.5px;padding:0 10px;}
+.coupon-applied{display:flex;justify-content:space-between;align-items:center;margin-top:12px;background:#E7F7EE;color:#1F8A4C;border-radius:14px;padding:10px 14px;font-size:13px;font-weight:700;}
+.coupon-applied button{color:#C0293A;}
+.coupon-msg{font-size:12px;margin:8px 0 0;font-weight:600;}
+.coupon-msg.bad{color:#C0293A;}
+.coupon-msg.ok{color:#1F8A4C;}
+.sug-scroll{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px;margin:0 -4px;scrollbar-width:none;}
+.sug-scroll::-webkit-scrollbar{display:none;}
+.sug-item{flex:0 0 132px;display:flex;flex-direction:column;gap:3px;font-size:12.5px;}
+.sug-img{position:relative;width:132px;height:112px;border-radius:16px;background:var(--pink-soft);overflow:hidden;}
+.sug-img img{width:100%;height:100%;object-fit:cover;}
+.sug-img button{position:absolute;right:8px;bottom:8px;width:34px;height:34px;border-radius:50%;border:0;background:#fff;color:var(--ink);font-size:20px;box-shadow:0 2px 8px rgba(0,0,0,.18);}
+.sug-item strong{font-size:13.5px;margin-top:4px;}

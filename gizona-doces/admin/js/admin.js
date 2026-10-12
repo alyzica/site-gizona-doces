@@ -95,6 +95,8 @@ function navIcon(name) {
     book: `<path d="M5 4h9a3 3 0 013 3v13H8a3 3 0 00-3 3V4z" fill="none"/><path d="M17 4v16" fill="none"/>`,
     calc: `<rect x="5" y="3" width="14" height="18" rx="2" fill="none"/><path d="M8 7h8M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01" fill="none"/>`,
     calendar: `<rect x="3" y="5" width="18" height="16" rx="2" fill="none"/><path d="M3 10h18M8 3v4M16 3v4" fill="none"/>`,
+    ticket: `<path d="M3 8a2 2 0 012-2h14a2 2 0 012 2v2a2 2 0 100 4v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 100-4V8z" fill="none"/><path d="M13 6v12" fill="none" stroke-dasharray="2 2"/>`,
+    truck: `<path d="M3 7h11v9H3V7z" fill="none"/><path d="M14 10h4l3 3v3h-7v-6z" fill="none"/><circle cx="7" cy="18" r="1.6" fill="none"/><circle cx="17" cy="18" r="1.6" fill="none"/>`,
     crown: `<path d="M3 8l4 3 5-6 5 6 4-3-2 10H5L3 8z" fill="currentColor" stroke="none"/>`,
     gift: `<rect x="4" y="9" width="16" height="11" rx="1" fill="none"/><path d="M4 13h16M12 9v11M12 9c-1.5-4-6-4-6-1.5S9 9 12 9zm0 0c1.5-4 6-4 6-1.5S15 9 12 9z" fill="none"/>`,
   };
@@ -118,6 +120,8 @@ function renderShell() {
           <button class="${admin.tab === 'receitas' ? 'active' : ''}" onclick="setTab('receitas')">${navIcon("book")}Receitas</button>
           <button class="${admin.tab === 'precificacao' ? 'active' : ''}" onclick="setTab('precificacao')">${navIcon("calc")}Precificação</button>
           <button class="${admin.tab === 'calendario' ? 'active' : ''}" onclick="setTab('calendario')">${navIcon("calendar")}Calendário</button>
+          <button class="${admin.tab === 'cupons' ? 'active' : ''}" onclick="setTab('cupons')">${navIcon("ticket")}Cupons</button>
+          <button class="${admin.tab === 'entrega' ? 'active' : ''}" onclick="setTab('entrega')">${navIcon("truck")}Entrega</button>
           <button class="${admin.tab === 'loyalty' ? 'active' : ''}" onclick="setTab('loyalty')">${navIcon("crown")}Fidelidade</button>
           <button class="${admin.tab === 'rewards' ? 'active' : ''}" onclick="setTab('rewards')">${navIcon("gift")}Mimos</button>
         </nav>
@@ -145,6 +149,8 @@ async function loadTab() {
     else if (admin.tab === "receitas") await loadReceitas(main);
     else if (admin.tab === "precificacao") await loadPrecificacao(main);
     else if (admin.tab === "calendario") await loadCalendario(main);
+    else if (admin.tab === "cupons") await loadCupons(main);
+    else if (admin.tab === "entrega") await loadEntrega(main);
     else if (admin.tab === "loyalty") await loadLoyalty(main);
     else if (admin.tab === "rewards") await loadRewards(main);
   } catch (e) {
@@ -318,6 +324,8 @@ function renderOrdersTable(main) {
                 <td>
                   ${o.customer_name}<br><small style="color:var(--muted)">${o.customer_phone}</small>
                   ${(o.order_type || "encomenda") === "encomenda" && o.event_date ? `<br><small style="color:var(--pink)">Evento: ${new Date(o.event_date + "T00:00:00").toLocaleDateString("pt-BR")}</small>` : ""}
+                  ${o.coupon_code ? `<br><small style="color:#1F8A4C">Cupom ${o.coupon_code}: -${fmt(Number(o.discount_amount || 0))}</small>` : ""}
+                  ${Number(o.delivery_fee) > 0 ? `<br><small style="color:var(--muted)">Entrega (estimada): ${fmt(Number(o.delivery_fee))}</small>` : ""}
                   ${(o.order_type === "delivery" && Array.isArray(o.items)) ? `<br><small style="color:var(--muted)">${o.items.map(i => `${i.quantity}x ${i.product_name}`).join(", ")}</small>` : ""}
                 </td>
                 <td><span class="badge-status ${(o.order_type || "encomenda") === "delivery" ? "production" : "confirmed"}">${(o.order_type || "encomenda") === "delivery" ? "Delivery" : "Encomenda"}</span></td>
@@ -3206,3 +3214,274 @@ function decorateAdminUI() {
 }
 new MutationObserver(() => { clearTimeout(window.__decT); window.__decT = setTimeout(decorateAdminUI, 30); })
   .observe(document.body, { childList: true, subtree: true });
+
+
+/* ---------------- CUPONS ---------------- */
+const COUPON_TYPE_LABEL = { percent: "Percentual", fixed: "Valor fixo", free_shipping: "Entrega grátis" };
+const COUPON_SCOPE_LABEL = { all: "Todos os pedidos", encomenda: "Só encomendas", delivery: "Só delivery" };
+
+async function loadCupons(main) {
+  const [c, r] = await Promise.all([
+    sb.from("coupons").select("*").order("created_at", { ascending: false }),
+    sb.from("coupon_redemptions").select("*, coupons(code), orders(order_number, customer_name)").order("created_at", { ascending: false }).limit(30),
+  ]);
+  if (c.error) throw c.error;
+  if (r.error) throw r.error;
+  admin.data.coupons = c.data || [];
+  admin.data.redemptions = r.data || [];
+  renderCupons(main);
+}
+
+function couponStatus(c) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (!c.active) return ["Pausado", "pending"];
+  if (c.expires_at && today > c.expires_at) return ["Expirado", "cancelled"];
+  if (c.starts_at && today < c.starts_at) return ["Agendado", "confirmed"];
+  if (c.max_uses != null && c.uses_count >= c.max_uses) return ["Esgotado", "cancelled"];
+  return ["Ativo", "delivered"];
+}
+function couponRule(c) {
+  const v = c.type === "percent" ? `${Number(c.value)}% OFF` : c.type === "fixed" ? `${fmt(Number(c.value))} OFF` : "Entrega grátis";
+  const parts = [v];
+  if (c.type === "percent" && c.max_discount != null) parts.push(`até ${fmt(Number(c.max_discount))}`);
+  if (Number(c.min_order) > 0) parts.push(`pedido mín. ${fmt(Number(c.min_order))}`);
+  parts.push(COUPON_SCOPE_LABEL[c.applies_to]);
+  if (c.first_order_only) parts.push("1º pedido");
+  return parts.join(" · ");
+}
+
+function renderCupons(main) {
+  const coupons = admin.data.coupons;
+  const activeCount = coupons.filter(c => couponStatus(c)[0] === "Ativo").length;
+  const uses = coupons.reduce((t, c) => t + Number(c.uses_count || 0), 0);
+  const granted = admin.data.redemptions.reduce((t, r) => t + Number(r.discount || 0), 0);
+  main.innerHTML = `
+    <div class="admin-topbar"><h1>Cupons</h1><button class="btn btn-pink" onclick="openCouponForm()">+ Novo cupom</button></div>
+    <p class="hint">Crie cupons de desconto, defina limites de uso e validade. O cliente digita o código na sacola; o sistema confere tudo automaticamente.</p>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">Cupons ativos</div><div class="value">${activeCount}</div></div>
+      <div class="stat-card"><div class="label">Usos totais</div><div class="value">${uses}</div></div>
+      <div class="stat-card"><div class="label">Desconto concedido (últimos usos)</div><div class="value">${fmt(granted)}</div></div>
+    </div>
+    <div id="couponFormArea"></div>
+    ${coupons.length ? coupons.map(c => {
+      const [st, cls] = couponStatus(c);
+      const pct = c.max_uses ? Math.min(100, Math.round(c.uses_count / c.max_uses * 100)) : null;
+      const validity = c.starts_at || c.expires_at
+        ? `${c.starts_at ? new Date(c.starts_at + "T00:00:00").toLocaleDateString("pt-BR") : "—"} até ${c.expires_at ? new Date(c.expires_at + "T00:00:00").toLocaleDateString("pt-BR") : "sem fim"}` : "Sem prazo";
+      return `
+      <div class="admin-card coupon-card">
+        <div class="coupon-main">
+          <span class="coupon-code">${escapeHtml(c.code)}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:13.5px">${escapeHtml(c.description || COUPON_TYPE_LABEL[c.type])}</div>
+            <div class="hint" style="margin:2px 0 0">${couponRule(c)}</div>
+            <div class="hint" style="margin:2px 0 0">Validade: ${validity} · ${c.max_uses_per_customer ? `${c.max_uses_per_customer} uso(s) por cliente` : "sem limite por cliente"}</div>
+          </div>
+          <div class="coupon-usage">
+            <strong>${c.uses_count}${c.max_uses ? ` / ${c.max_uses}` : ""}</strong><small>usos</small>
+            ${pct != null ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}
+          </div>
+          <span class="badge ${cls}">${st}</span>
+          <div class="lp-actions">
+            <button class="icon-btn" title="${c.active ? "Pausar" : "Ativar"}" onclick="toggleCoupon('${c.id}', ${!c.active})">${c.active
+              ? `<svg ${SVG_ATTR}><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>`
+              : `<svg ${SVG_ATTR}><path d="M7 4l13 8-13 8V4z"/></svg>`}</button>
+            <button class="icon-btn" title="Duplicar" onclick="openCouponForm('${c.id}', true)"><svg ${SVG_ATTR}><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></svg></button>
+            <button class="icon-btn" title="Editar" onclick="openCouponForm('${c.id}')">${ICON_PENCIL}</button>
+            <button class="icon-btn danger" title="Excluir" onclick="deleteCoupon('${c.id}')">${ICON_TRASH}</button>
+          </div>
+        </div>
+      </div>`;
+    }).join("") : `<div class="admin-card"><p class="center-msg">Nenhum cupom criado ainda. Clique em "+ Novo cupom".</p></div>`}
+
+    <div class="admin-card">
+      <h2>Últimos usos</h2>
+      ${admin.data.redemptions.length ? `<table><thead><tr><th>Data</th><th>Cupom</th><th>Pedido</th><th>Cliente</th><th>Desconto</th></tr></thead><tbody>
+        ${admin.data.redemptions.map(r => `<tr><td>${new Date(r.created_at).toLocaleString("pt-BR")}</td><td><strong>${r.coupons ? r.coupons.code : "—"}</strong></td><td>${r.orders ? r.orders.order_number : "—"}</td><td>${r.orders ? r.orders.customer_name : (r.phone || "—")}</td><td>${fmt(Number(r.discount))}</td></tr>`).join("")}
+      </tbody></table>` : `<p class="center-msg">Nenhum cupom foi usado ainda.</p>`}
+    </div>`;
+}
+
+function randomCouponCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+}
+
+function openCouponForm(id, duplicate) {
+  const c = id ? admin.data.coupons.find(x => x.id === id) : null;
+  const editing = c && !duplicate;
+  const v = k => (c && c[k] != null ? c[k] : "");
+  document.getElementById("couponFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>${editing ? "Editar cupom" : duplicate ? "Duplicar cupom" : "Novo cupom"}</h2>
+      <div class="form-grid">
+        <label>Código
+          <div style="display:flex;gap:6px"><input id="cfCode" style="flex:1;text-transform:uppercase" value="${editing ? escapeHtml(c.code) : ""}" placeholder="Ex: BEMVINDO10">
+          <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('cfCode').value = randomCouponCode()">Gerar</button></div>
+        </label>
+        <label>Descrição (aparece para o cliente)<input id="cfDesc" value="${escapeHtml(v("description"))}" placeholder="Ex: 10% na primeira compra"></label>
+        <label>Tipo
+          <select id="cfType" onchange="toggleCouponType()">
+            ${Object.entries(COUPON_TYPE_LABEL).map(([k, l]) => `<option value="${k}" ${c && c.type === k ? "selected" : ""}>${l}</option>`).join("")}
+          </select>
+        </label>
+        <label id="cfValueWrap"><span id="cfValueLabel">Valor</span><input id="cfValue" type="number" min="0" step="0.01" value="${v("value")}"></label>
+        <label id="cfMaxWrap">Desconto máximo (R$, opcional)<input id="cfMax" type="number" min="0" step="0.01" value="${v("max_discount")}"></label>
+        <label>Pedido mínimo (R$)<input id="cfMin" type="number" min="0" step="0.01" value="${v("min_order") === "" ? 0 : v("min_order")}"></label>
+        <label>Vale para
+          <select id="cfScope">${Object.entries(COUPON_SCOPE_LABEL).map(([k, l]) => `<option value="${k}" ${c && c.applies_to === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+        </label>
+        <label>Limite total de usos (vazio = ilimitado)<input id="cfMaxUses" type="number" min="1" step="1" value="${v("max_uses")}"></label>
+        <label>Usos por cliente<input id="cfPerCustomer" type="number" min="1" step="1" value="${c ? (c.max_uses_per_customer ?? 1) : 1}"></label>
+        <label>Começa em<input id="cfStart" type="date" value="${v("starts_at")}"></label>
+        <label>Termina em<input id="cfEnd" type="date" value="${v("expires_at")}"></label>
+      </div>
+      <label style="display:flex;flex-direction:row;align-items:center;gap:8px;margin-top:12px"><input type="checkbox" id="cfFirst" ${c && c.first_order_only ? "checked" : ""} style="width:auto"> Válido só para o primeiro pedido do cliente</label>
+      <label style="display:flex;flex-direction:row;align-items:center;gap:8px;margin-top:8px"><input type="checkbox" id="cfActive" ${!c || c.active ? "checked" : ""} style="width:auto"> Cupom ativo</label>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn btn-pink" onclick="saveCoupon('${editing ? c.id : ""}')">Salvar cupom</button>
+        <button class="btn btn-outline" onclick="document.getElementById('couponFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>`;
+  toggleCouponType();
+  window.scrollTo(0, 0);
+}
+function toggleCouponType() {
+  const t = document.getElementById("cfType").value;
+  document.getElementById("cfValueWrap").style.display = t === "free_shipping" ? "none" : "";
+  document.getElementById("cfMaxWrap").style.display = t === "percent" ? "" : "none";
+  document.getElementById("cfValueLabel").textContent = t === "percent" ? "Percentual (%)" : "Valor do desconto (R$)";
+}
+
+async function saveCoupon(id) {
+  const g = x => document.getElementById(x).value.trim();
+  const type = g("cfType");
+  const code = g("cfCode").toUpperCase().replace(/\s+/g, "");
+  const value = Number(g("cfValue")) || 0;
+  if (!code) { alert("Informe o código do cupom."); return; }
+  if (type !== "free_shipping" && value <= 0) { alert("Informe o valor do desconto."); return; }
+  if (type === "percent" && value > 100) { alert("O percentual não pode passar de 100%."); return; }
+  const payload = {
+    code, description: g("cfDesc") || null, type,
+    value: type === "free_shipping" ? 0 : value,
+    max_discount: type === "percent" && g("cfMax") ? Number(g("cfMax")) : null,
+    min_order: Number(g("cfMin")) || 0,
+    applies_to: g("cfScope"),
+    max_uses: g("cfMaxUses") ? parseInt(g("cfMaxUses"), 10) : null,
+    max_uses_per_customer: g("cfPerCustomer") ? parseInt(g("cfPerCustomer"), 10) : null,
+    starts_at: g("cfStart") || null, expires_at: g("cfEnd") || null,
+    first_order_only: document.getElementById("cfFirst").checked,
+    active: document.getElementById("cfActive").checked,
+  };
+  if (payload.starts_at && payload.expires_at && payload.expires_at < payload.starts_at) { alert("A data final é anterior à inicial."); return; }
+  const { error } = id ? await sb.from("coupons").update(payload).eq("id", id) : await sb.from("coupons").insert(payload);
+  if (error) {
+    console.error(error);
+    alert(/duplicate|unique/i.test(error.message || "") ? "Já existe um cupom com esse código." : "Não foi possível salvar: " + (error.message || "") + "\n\nRode o script add_cupons_entrega.sql no Supabase.");
+    return;
+  }
+  await loadCupons(document.getElementById("adminMain"));
+}
+async function toggleCoupon(id, active) {
+  const { error } = await sb.from("coupons").update({ active }).eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível atualizar."); return; }
+  await loadCupons(document.getElementById("adminMain"));
+}
+async function deleteCoupon(id) {
+  if (!confirm("Excluir este cupom? O histórico de usos dele também será apagado.")) return;
+  const { error } = await sb.from("coupons").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível excluir."); return; }
+  await loadCupons(document.getElementById("adminMain"));
+}
+
+/* ---------------- ENTREGA (taxa estimada) ---------------- */
+async function loadEntrega(main) {
+  const { data, error } = await sb.from("delivery_settings").select("*").eq("id", 1).maybeSingle();
+  if (error) throw error;
+  admin.data.shipCfg = data;
+  if (!data) { main.innerHTML = `<div class="error-box">Rode o script add_cupons_entrega.sql no Supabase para ativar a entrega.</div>`; return; }
+  renderEntrega(main);
+}
+
+function shipFeeFor(km, cfg) {
+  if (km > Number(cfg.max_km)) return null;
+  return Math.ceil(Math.max(Number(cfg.min_fee), Number(cfg.base_fee) + Number(cfg.per_km) * km) * 2) / 2;
+}
+
+function renderEntrega(main) {
+  const c = admin.data.shipCfg;
+  main.innerHTML = `
+    <div class="admin-topbar"><h1>Entrega</h1><button class="btn btn-pink" onclick="saveEntrega()">Salvar</button></div>
+    <p class="hint">Como as entregas são feitas pelo 99, o site mostra ao cliente uma <strong>estimativa</strong> calculada pela distância até o endereço. Ajuste os valores abaixo para ficarem próximos do que o 99 costuma cobrar. Se precisar corrigir um pedido, use o campo "Ajuste (frete/desconto)" ao editá-lo.</p>
+    <div class="admin-card">
+      <h2>Ponto de saída</h2>
+      <label style="display:flex;flex-direction:row;align-items:center;gap:8px;margin-bottom:12px"><input type="checkbox" id="seEnabled" ${c.enabled ? "checked" : ""} style="width:auto"> Calcular entrega no site</label>
+      <div class="form-grid">
+        <label class="span-2">Endereço de onde saem os pedidos
+          <div style="display:flex;gap:6px"><input id="seAddress" style="flex:1" value="${escapeHtml(c.origin_address)}">
+          <button type="button" class="btn btn-outline btn-sm" onclick="geocodeOrigin()">Buscar coordenadas</button></div>
+        </label>
+        <label>Latitude<input id="seLat" type="number" step="any" value="${c.origin_lat ?? ""}"></label>
+        <label>Longitude<input id="seLng" type="number" step="any" value="${c.origin_lng ?? ""}"></label>
+      </div>
+      <p class="hint" id="seGeoStatus">${c.origin_lat == null ? "⚠️ Clique em “Buscar coordenadas” para o site conseguir calcular a distância." : "✓ Coordenadas salvas."}</p>
+    </div>
+    <div class="admin-card">
+      <h2>Tabela de valores</h2>
+      <div class="form-grid">
+        <label>Taxa base (R$)<input id="seBase" type="number" min="0" step="0.01" value="${c.base_fee}"></label>
+        <label>Valor por km (R$)<input id="sePerKm" type="number" min="0" step="0.01" value="${c.per_km}"></label>
+        <label>Taxa mínima (R$)<input id="seMin" type="number" min="0" step="0.01" value="${c.min_fee}"></label>
+        <label>Distância máxima (km)<input id="seMax" type="number" min="1" step="0.5" value="${c.max_km}"></label>
+        <label>Fator de rota (distância real ≈ linha reta × fator)<input id="seCirc" type="number" min="1" max="2" step="0.05" value="${c.circuity}"></label>
+        <label>Entrega grátis acima de (R$, opcional)<input id="seFree" type="number" min="0" step="0.01" value="${c.free_above ?? ""}"></label>
+        <label class="span-2">Aviso mostrado ao cliente<input id="seNote" value="${escapeHtml(c.note)}"></label>
+      </div>
+    </div>
+    <div class="admin-card">
+      <h2>Simulador</h2>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input id="seSimKm" type="number" min="0" step="0.5" value="5" style="width:110px" oninput="simulateShipping()"> km
+        <strong id="seSimOut"></strong>
+      </div>
+    </div>`;
+  simulateShipping();
+}
+function currentShipForm() {
+  const n = id => Number(document.getElementById(id).value);
+  return { base_fee: n("seBase"), per_km: n("sePerKm"), min_fee: n("seMin"), max_km: n("seMax") };
+}
+function simulateShipping() {
+  const km = Number(document.getElementById("seSimKm").value) || 0;
+  const fee = shipFeeFor(km, currentShipForm());
+  document.getElementById("seSimOut").textContent = fee == null ? "Fora da área" : `≈ ${fmt(fee)}`;
+}
+async function geocodeOrigin() {
+  const st = document.getElementById("seGeoStatus");
+  st.textContent = "Buscando...";
+  try {
+    const q = encodeURIComponent(document.getElementById("seAddress").value + ", Brasil");
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${q}`);
+    const d = await r.json();
+    if (!d[0]) { st.textContent = "Endereço não encontrado. Tente incluir cidade e estado, ou digite latitude/longitude à mão."; return; }
+    document.getElementById("seLat").value = d[0].lat;
+    document.getElementById("seLng").value = d[0].lon;
+    st.textContent = `✓ Encontrado: ${d[0].display_name}`;
+  } catch (e) { console.error(e); st.textContent = "Não foi possível buscar agora. Digite latitude/longitude à mão."; }
+}
+async function saveEntrega() {
+  const n = id => document.getElementById(id).value === "" ? null : Number(document.getElementById(id).value);
+  const payload = {
+    enabled: document.getElementById("seEnabled").checked,
+    origin_address: document.getElementById("seAddress").value.trim(),
+    origin_lat: n("seLat"), origin_lng: n("seLng"),
+    base_fee: n("seBase") ?? 0, per_km: n("sePerKm") ?? 0, min_fee: n("seMin") ?? 0, max_km: n("seMax") ?? 25,
+    circuity: n("seCirc") ?? 1.3, free_above: n("seFree"),
+    note: document.getElementById("seNote").value.trim(), updated_at: new Date().toISOString(),
+  };
+  const { error } = await sb.from("delivery_settings").update(payload).eq("id", 1);
+  if (error) { console.error(error); alert("Não foi possível salvar: " + (error.message || "")); return; }
+  await loadEntrega(document.getElementById("adminMain"));
+  alert("Configurações de entrega salvas.");
+}

@@ -186,3 +186,11 @@ input[type="checkbox"]{accent-color:var(--pink);}
 .lp-stepper button.plus{background:var(--pink);border-color:var(--pink);color:#fff;}
 .lp-stepper strong{min-width:22px;text-align:center;font-size:14px;}
 .lp-stepper.big strong{font-size:20px;color:var(--pink);}
+.coupon-card{padding:16px 20px;}
+.coupon-main{display:flex;align-items:center;gap:16px;flex-wrap:wrap;}
+.coupon-code{font-weight:800;letter-spacing:1.2px;font-size:13px;color:var(--pink-dark);background:var(--pink-soft);border:1.5px dashed var(--pink);border-radius:12px;padding:8px 14px;}
+.coupon-usage{text-align:center;min-width:70px;}
+.coupon-usage strong{display:block;font-size:15px;}
+.coupon-usage small{color:var(--muted);font-size:11px;}
+.coupon-usage .bar{height:5px;background:#F5E3EA;border-radius:99px;margin-top:5px;overflow:hidden;}
+.coupon-usage .bar i{display:block;height:100%;background:var(--pink);}

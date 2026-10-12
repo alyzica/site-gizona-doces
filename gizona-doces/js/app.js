@@ -24,6 +24,8 @@ const state = {
   suggestQty: {},
   orderTab: "encomendas", // "encomendas" | "delivery"
   delivery: {},            // delivery: { productId: qty }
+  coupon: null, couponInput: "", couponMsg: "", couponSig: "",
+  shipping: { status: "idle" }, shipCfg: null,
   deliveryCatalog: null,   // produtos de delivery com estoque (RPC delivery_catalog)
 };
 
@@ -57,7 +59,7 @@ function render() {
     dashboard: renderDashboard,
     profile: renderProfile,
     orders: renderOrdersHistory,
-    loyalty: renderLoyaltyClub,
+    loyalty: () => renderLoyaltyClub(),
     cover: renderCover,
     category: renderCategory,
     "brigadeiro-box": renderBrigadeiroBox,
@@ -66,15 +68,14 @@ function render() {
     "geladinho-info": renderGeladinhoInfo,
     "geladinho-flavors": renderGeladinhoFlavors,
     cart: renderCart,
-    "delivery-cart": renderDeliveryCart,
   }[state.step];
   const stepAtRender = state.step;
   Promise.resolve(view()).then(() => { if (state.step === stepAtRender) decorateScreen(); });
 }
 
 /* ---------------- Barra superior, rodapé e menu inferior ---------------- */
-const NAV_STEPS = ["dashboard", "profile", "orders", "loyalty", "category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "cart", "delivery-cart"];
-const STEP_TITLE = { dashboard: "Início", profile: "Perfil", orders: "Pedidos", loyalty: "Fidelidade", category: "Faça seu pedido", "brigadeiro-box": "Brigadeiro Gourmet", "brigadeiro-flavors": "Brigadeiro Gourmet", personalization: "Personalização", "geladinho-info": "Geladinho Gourmet", "geladinho-flavors": "Geladinho Gourmet", cart: "Carrinho", "delivery-cart": "Carrinho delivery" };
+const NAV_STEPS = ["dashboard", "profile", "orders", "loyalty", "category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "cart"];
+const STEP_TITLE = { dashboard: "Início", profile: "Perfil", orders: "Pedidos", loyalty: "Fidelidade", category: "Faça seu pedido", "brigadeiro-box": "Brigadeiro Gourmet", "brigadeiro-flavors": "Brigadeiro Gourmet", personalization: "Personalização", "geladinho-info": "Geladinho Gourmet", "geladinho-flavors": "Geladinho Gourmet", cart: "Sacola" };
 
 function cartCount() {
   const sum = o => Object.values(o || {}).reduce((t, q) => t + (Number(q) || 0), 0);
@@ -92,11 +93,7 @@ function goTab(tab) {
   if (!loggedIn) return go("login", { tab: true });
   return go(tab, { tab: true });
 }
-function openCart() {
-  const sum = o => Object.values(o || {}).reduce((t, q) => t + (Number(q) || 0), 0);
-  if (!cartCount()) return go("category");
-  go(sum(state.delivery) && !sum(state.flavors) && !sum(state.geladinho) ? "delivery-cart" : "cart");
-}
+function openCart() { go(cartCount() ? "cart" : "category"); }
 
 function decorateScreen() {
   const step = state.step;
@@ -126,7 +123,7 @@ function decorateScreen() {
       </button>
       </div>
     </header>`;
-  const active = { dashboard: "home", orders: "orders", loyalty: "loyalty", profile: "profile" }[step] || (["category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "cart", "delivery-cart"].includes(step) ? "home" : "");
+  const active = { dashboard: "home", orders: "orders", loyalty: "loyalty", profile: "profile" }[step] || (["category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "cart"].includes(step) ? "home" : "");
   const tab = (id, label, icon) => `<button class="${active === id ? "active" : ""}" onclick="goTab('${id}')">${icon}<span>${label}</span></button>`;
   const ic = p => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
   const nav = `
@@ -686,7 +683,7 @@ function renderDeliveryList() {
     </div>
     <div class="sticky-subtotal">
       <strong>Subtotal: ${fmt(total)}</strong>
-      <button ${has ? `onclick="go('delivery-cart')"` : "disabled"}>Ir para o carrinho</button>
+      <button ${has ? `onclick="go('cart')"` : "disabled"}>Ir para o carrinho</button>
     </div>`;
 }
 function changeDelivery(id, dir) {
@@ -698,87 +695,7 @@ function changeDelivery(id, dir) {
   decorateScreen();
 }
 
-function renderDeliveryCart() {
-  const items = Object.entries(state.delivery).map(([id, qty]) => ({ ...(state.deliveryCatalog || []).find(p => p.id === id), qty })).filter(i => i.id);
-  const total = deliveryTotal();
-  const isGuestOrder = state.guest || !auth.customer;
-  const c = auth.customer ? { name: auth.customer.full_name || "", phone: auth.customer.phone || "" } : state.customer;
-  const addr = state.customer.address !== undefined ? state.customer.address : formatAddress(auth.customer);
-  app.innerHTML = `
-    <section class="screen">
-      <div class="screen-head pink"><h2>Seu pedido delivery</h2></div>
-      ${items.length ? `
-      <div class="cart-summary">
-        ${items.map(i => `<div class="order-row-head"><span>${i.qty}x ${i.name}</span><strong>${fmt(Number(i.price) * i.qty)}</strong></div>`).join("")}
-        <div class="order-row-head" style="margin-top:8px"><strong>Total</strong><strong>${fmt(total)}</strong></div>
-      </div>
-      <div class="cart-form-block">
-        <p class="cart-section-title">${isGuestOrder ? "Seus dados" : "Dados do pedido"}</p>
-        ${isGuestOrder ? `
-          <label>Nome completo<input type="text" value="${state.customer.name}" oninput="c_update('name', this.value)"></label>
-          <label>Telefone / WhatsApp<input type="text" placeholder="(19) 99999-9999" value="${state.customer.phone}" oninput="maskPhone(this); c_update('phone', this.value)"></label>
-        ` : `<p class="hint">Usaremos seu nome e telefone do perfil: <strong>${c.name}</strong>.</p>`}
-        <label>Endereço de entrega *
-          <textarea rows="2" placeholder="Rua, número, bairro, cidade" oninput="c_update('address', this.value)">${addr}</textarea>
-        </label>
-        <label>Forma de pagamento
-          <select onchange="c_update('payment', this.value)">
-            <option value="">Selecione (opcional)</option>
-            <option value="Pix" ${state.customer.payment === "Pix" ? "selected" : ""}>PIX</option>
-            <option value="Crédito" ${state.customer.payment === "Crédito" ? "selected" : ""}>Crédito</option>
-          </select>
-        </label>
-      </div>
-      <button class="btn btn-primary btn-block btn-lg" id="deliverySendBtn" onclick="submitDeliveryOrder()">Enviar pelo WhatsApp</button>
-      ` : `<p class="hint center">Seu carrinho de delivery está vazio.</p>`}
-      <button class="btn btn-ghost sticky-back" onclick="goBack()">← Voltar</button>
-    </section>`;
-}
 
-async function submitDeliveryOrder() {
-  const items = Object.entries(state.delivery).map(([id, qty]) => ({ ...(state.deliveryCatalog || []).find(p => p.id === id), qty })).filter(i => i.id);
-  const total = deliveryTotal();
-  const c = auth.customer ? { name: auth.customer.full_name || "", phone: auth.customer.phone || "" } : state.customer;
-  const address = (state.customer.address !== undefined ? state.customer.address : formatAddress(auth.customer)).trim();
-  if (!items.length) return;
-  if (!c.name.trim() || !c.phone.trim()) { alert("Preencha nome e telefone."); return; }
-  if (!address) { alert("Informe o endereço de entrega."); return; }
-  const btn = document.getElementById("deliverySendBtn");
-  if (btn) { btn.disabled = true; btn.textContent = "Enviando..."; }
-  const whatsappWindow = window.open("about:blank", "_blank");
-  const paymentMap = { "Pix": "pix", "Crédito": "credito" };
-  const { error } = await sb.from("orders").insert({
-    customer_id: auth.customer ? auth.customer.id : null,
-    customer_name: c.name, customer_phone: c.phone,
-    customer_email: auth.customer ? auth.customer.email : null,
-    order_type: "delivery", origin: "site",
-    items: items.map(i => ({ id: i.id, product_name: i.name, category: "delivery", quantity: i.qty, unit_price: Number(i.price), subtotal: Number(i.price) * i.qty })),
-    payment_method: paymentMap[state.customer.payment] || null,
-    total, observations: `Endereço: ${address}`,
-  });
-  if (error) {
-    if (whatsappWindow) whatsappWindow.close();
-    console.error(error);
-    if (/Estoque insuficiente/i.test(error.message || "")) {
-      alert("Ops! Alguém acabou de levar um dos produtos. Atualizamos o estoque, confira o carrinho.");
-      await loadDeliveryCatalog();
-      state.orderTab = "delivery";
-      go("category");
-    } else {
-      alert("Não foi possível enviar o pedido. Tente novamente.");
-      if (btn) { btn.disabled = false; btn.textContent = "Enviar pelo WhatsApp"; }
-    }
-    return;
-  }
-  let msg = `Olá! Gostaria de fazer um pedido de delivery na Gizona Doces.\n\nNome: ${c.name}\nTelefone: ${c.phone}\nEndereço: ${address}\n`;
-  if (state.customer.payment) msg += `Forma de pagamento: ${state.customer.payment}\n`;
-  msg += `\n` + items.map(i => `  - ${i.qty}x ${i.name} = ${fmt(Number(i.price) * i.qty)}`).join("\n") + `\n\nTotal: ${fmt(total)}\n\nAguardo confirmação.`;
-  const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
-  if (whatsappWindow) whatsappWindow.location.href = url; else window.location.href = url;
-  state.delivery = {};
-  await loadDeliveryCatalog();
-  renderConfirmation();
-}
 function selectCategory(cat) {
   state.category = cat;
   go(cat === "brigadeiro" ? "brigadeiro-box" : "geladinho-info");
@@ -997,37 +914,113 @@ function changeGeladinho(id, direction) {
 }
 
 /* ---------------- CARRINHO ---------------- */
-function renderCart() {
+/* ============================================================
+   SACOLA ÚNICA — encomenda + delivery no mesmo carrinho
+   Resumo de valores, cupom e estimativa de entrega
+============================================================ */
+function bagData() {
   const brigItems = Object.keys(state.flavors).length
     ? Object.entries(state.flavors).map(([id, qty]) => ({ ...BRIGADEIRO_PRODUCTS.find(p => p.id === id), qty }))
     : [];
   const gelaItems = Object.keys(state.geladinho).length
     ? Object.entries(state.geladinho).map(([id, qty]) => ({ ...GELADINHO_PRODUCTS.find(p => p.id === id), qty }))
     : [];
-
+  const delItems = Object.entries(state.delivery)
+    .map(([id, qty]) => ({ ...(state.deliveryCatalog || []).find(p => p.id === id), qty })).filter(i => i.id);
   const brigSubtotal = state.box?.boxConfig?.fixedPrice
     ? state.box.boxConfig.fixedPrice
     : brigItems.reduce((s, i) => s + i.price * i.qty, 0);
   const gelaSubtotal = gelaItems.reduce((s, i) => s + i.price * i.qty, 0);
-  // A caixa de isopor não entra no valor estimado: o preço é combinado direto pelo WhatsApp.
-  const total = brigSubtotal + gelaSubtotal;
+  const encSub = brigSubtotal + gelaSubtotal;
+  const delSub = delItems.reduce((s, i) => s + Number(i.price) * i.qty, 0);
+  const itemCount = brigItems.reduce((s, i) => s + i.qty, 0) + gelaItems.reduce((s, i) => s + i.qty, 0) + delItems.reduce((s, i) => s + i.qty, 0);
+  return { brigItems, gelaItems, delItems, brigSubtotal, gelaSubtotal, encSub, delSub, itemCount, hasEnc: brigItems.length + gelaItems.length > 0, hasDel: delItems.length > 0 };
+}
+
+function bagMoney(b) {
+  b = b || bagData();
+  const itemsTotal = b.encSub + b.delSub;
+  const coupon = state.coupon && state.coupon.valid ? state.coupon : null;
+  const discount = coupon ? Math.min(Number(coupon.discount) || 0, itemsTotal) : 0;
+  const cfg = state.shipCfg;
+  const sh = state.shipping;
+  let fee = null, feeFree = false, feeNote = "";
+  if (b.hasDel) {
+    if (coupon && coupon.free_shipping) { feeFree = true; fee = 0; }
+    else if (cfg && cfg.free_above != null && itemsTotal - discount >= Number(cfg.free_above)) { feeFree = true; fee = 0; feeNote = "acima de " + fmt(Number(cfg.free_above)); }
+    else if (sh.status === "ok") fee = sh.fee;
+  }
+  const grand = itemsTotal - discount + (fee || 0);
+  return { itemsTotal, discount, fee, feeFree, feeNote, grand };
+}
+
+function paintBagTotals() {
+  const sumEl = document.getElementById("bagSummary");
+  const barEl = document.getElementById("bagBar");
+  if (!sumEl || !barEl) return;
+  const b = bagData();
+  const m = bagMoney(b);
+  const sh = state.shipping;
+  const cfg = state.shipCfg;
+  let feeRow = "";
+  if (b.hasDel) {
+    let val;
+    if (m.feeFree) val = `<s style="color:var(--muted)">${sh.status === "ok" ? fmt(sh.fee) : ""}</s> <strong class="free">Grátis</strong>`;
+    else if (sh.status === "loading") val = `<span class="muted">calculando...</span>`;
+    else if (sh.status === "ok") val = fmt(sh.fee);
+    else if (sh.status === "out") val = `<span class="muted">fora da área</span>`;
+    else val = `<span class="muted">informe o endereço</span>`;
+    feeRow = `<div class="sum-row"><span>Entrega <small>(estimativa${sh.status === "ok" && sh.km ? ` · ${sh.km.toFixed(1).replace(".", ",")} km` : ""})</small></span><span>${val}</span></div>
+      <p class="sum-note">${sh.status === "out" ? "Esse endereço fica fora da nossa área padrão — combinamos a entrega pelo WhatsApp." : sh.status === "error" ? "Não conseguimos calcular agora. A entrega será combinada pelo WhatsApp." : (cfg ? cfg.note : "")}</p>`;
+  }
+  sumEl.innerHTML = `
+    <p class="cart-section-title">Resumo de valores</p>
+    ${b.hasEnc ? `<div class="sum-row"><span>Encomendas</span><span>${fmt(b.encSub)}</span></div>` : ""}
+    ${b.hasDel ? `<div class="sum-row"><span>Delivery</span><span>${fmt(b.delSub)}</span></div>` : ""}
+    ${m.discount > 0 ? `<div class="sum-row"><span>Cupom ${state.coupon.code}</span><span class="free">- ${fmt(m.discount)}</span></div>` : ""}
+    ${feeRow}
+    <div class="sum-row total"><span>Total</span><span>${fmt(m.grand)}</span></div>
+    ${b.hasEnc && b.hasDel ? `<p class="sum-note">Seu pedido será separado em <strong>delivery</strong> (entrega agora) e <strong>encomenda</strong> (para a data do evento), mas você finaliza tudo de uma vez.</p>` : ""}
+    ${b.hasEnc && !b.hasDel ? `<p class="sum-note">Retirada no endereço combinado. Entrega de encomendas somente após pagamento total.</p>` : ""}`;
+  barEl.innerHTML = `
+    <div><small>Total${m.fee === 0 && b.hasDel ? " com <strong>entrega grátis</strong>" : ""}</small><strong>${fmt(m.grand)}</strong> <small>/ ${b.itemCount} ${b.itemCount === 1 ? "item" : "itens"}</small></div>
+    <button id="bagSendBtn" ${bagCanSubmit(b) ? "" : "disabled"} onclick="submitBag()">Enviar pedido</button>`;
+}
+
+function bagCanSubmit(b) {
+  b = b || bagData();
+  if (!b.hasEnc && !b.hasDel) return false;
+  const c = auth.customer ? { name: auth.customer.full_name || "", phone: auth.customer.phone || "" } : state.customer;
+  if (!c.name.trim() || !c.phone.trim()) return false;
+  if (b.hasDel && !bagAddress().trim()) return false;
+  return true;
+}
+function bagAddress() {
+  return state.customer.address !== undefined ? state.customer.address : formatAddress(auth.customer);
+}
+
+function renderCart() {
+  const b = bagData();
+  const isGuestOrder = state.guest || !auth.customer;
   const c = auth.customer
     ? { ...state.customer, name: auth.customer.full_name || state.customer.name, phone: auth.customer.phone || state.customer.phone }
     : state.customer;
-  const isGuestOrder = state.guest || !auth.customer;
-  const canSubmit = (!isGuestOrder || (c.name.trim() && c.phone.trim())) && (brigItems.length || gelaItems.length);
-
-  // sabores de brigadeiro ainda não escolhidos, pra trocar
   const unusedBrigFlavors = BRIGADEIRO_PRODUCTS.filter(p => !state.flavors[p.id]);
+  const empty = !b.hasEnc && !b.hasDel;
+
+  // dados auxiliares carregados em segundo plano
+  if (state.deliveryCatalog === null) loadDeliveryCatalog().then(() => { if (state.step === "cart") render(); });
+  if (!state.shipCfg) loadShipCfg().then(() => { if (state.step === "cart") paintBagTotals(); });
 
   app.innerHTML = `
     <section class="screen">
-      <div class="screen-head pink"><h2>Carrinho</h2><p>Revise seu pedido</p></div>
+      <div class="screen-head pink"><h2>Sacola</h2><p>Revise seu pedido</p></div>
+      ${empty ? `<div class="cart-summary"><p class="hint center">Sua sacola está vazia.</p><button class="btn btn-primary btn-block" onclick="go('category')">Ver produtos</button></div>` : ""}
 
-      ${brigItems.length ? `
+      ${b.brigItems.length ? `
         <div class="cart-summary">
-          <p class="cart-section-title">${state.box.boxConfig.title}</p>
-          ${brigItems.map(i => `
+          <p class="cart-section-title">Encomenda · ${state.box.boxConfig.title}</p>
+          ${b.brigItems.map(i => `
             <div class="cart-line-edit">
               <span>${i.name}</span>
               <span class="stepper">
@@ -1042,14 +1035,13 @@ function renderCart() {
               <button class="btn-remove" onclick="cartRemoveBrig('${i.id}')" title="Remover">✕</button>
             </div>
           `).join("")}
-          <div class="cart-line total"><span>Subtotal brigadeiros</span><strong>${fmt(brigSubtotal)}</strong></div>
-        </div>
-      ` : ""}
+          <div class="cart-line total"><span>Subtotal brigadeiros</span><strong>${fmt(b.brigSubtotal)}</strong></div>
+        </div>` : ""}
 
-      ${gelaItems.length ? `
+      ${b.gelaItems.length ? `
         <div class="cart-summary">
-          <p class="cart-section-title">Geladinhos Gourmet</p>
-          ${gelaItems.map(i => `
+          <p class="cart-section-title">Encomenda · Geladinhos Gourmet</p>
+          ${b.gelaItems.map(i => `
             <div class="cart-line-edit">
               <span>${i.name}</span>
               <span class="stepper">
@@ -1060,48 +1052,58 @@ function renderCart() {
               <button class="btn-remove" onclick="cartRemoveGeladinho('${i.id}')" title="Remover">✕</button>
             </div>
           `).join("")}
-          <div class="cart-line total"><span>Subtotal geladinhos</span><strong>${fmt(gelaSubtotal)}</strong></div>
+          <div class="cart-line total"><span>Subtotal geladinhos</span><strong>${fmt(b.gelaSubtotal)}</strong></div>
         </div>
-
         <div class="cart-summary">
           <label class="isopor-toggle">
             <input type="checkbox" ${state.isoporBox ? "checked" : ""} onchange="toggleIsoporBox(this.checked)">
             <span>Adicionar caixa de isopor personalizada</span>
           </label>
-          <p class="hint">O cliente pode optar por adicionar uma caixa de isopor personalizada, que garante maior conservação dos geladinhos, segurança no transporte e uma apresentação ainda mais especial. A arte é gratuita e personalizada conforme o tema do evento (até 3 alterações sem custo). A caixa é adquirida separadamente e <strong>o valor é combinado diretamente pelo WhatsApp</strong>.</p>
-        </div>
-      ` : ""}
+          <p class="hint">A caixa de isopor garante maior conservação dos geladinhos, segurança no transporte e uma apresentação ainda mais especial. A arte é gratuita e personalizada conforme o tema do evento (até 3 alterações sem custo). A caixa é adquirida separadamente e <strong>o valor é combinado diretamente pelo WhatsApp</strong>.</p>
+        </div>` : ""}
 
-      <div class="total-box"><span>Valor estimado total</span><strong>${fmt(total)}</strong></div>
+      ${b.hasDel ? `
+        <div class="cart-summary">
+          <p class="cart-section-title">Delivery</p>
+          ${b.delItems.map(i => `
+            <div class="cart-line-edit">
+              <span>${i.name}<br><small class="muted">${fmt(Number(i.price))} / un.</small></span>
+              <span class="stepper">
+                <button onclick="cartChangeDelivery('${i.id}', -1)">–</button>
+                <span>${i.qty}</span>
+                <button onclick="cartChangeDelivery('${i.id}', 1)" ${i.qty >= i.stock ? "disabled" : ""}>+</button>
+              </span>
+              <button class="btn-remove" onclick="cartRemoveDelivery('${i.id}')" title="Remover">✕</button>
+            </div>
+          `).join("")}
+          <div class="cart-line total"><span>Subtotal delivery</span><strong>${fmt(b.delSub)}</strong></div>
+        </div>` : ""}
 
-      ${renderSuggestions()}
+      ${!empty ? `<button class="btn btn-outline btn-block" onclick="go('category')">+ Adicionar mais itens</button>` : ""}
 
-      <div class="cart-summary">
-        <p class="cart-section-title">Continuar explorando</p>
-        <p class="hint">Quer conhecer as outras opções antes de finalizar?</p>
-        <button class="btn btn-outline btn-block" onclick="go('category')">Ver outros produtos</button>
-      </div>
-
-      ${state.wantsArt ? `
+      ${state.wantsArt && b.hasEnc ? `
         <div class="cart-summary">
           <p class="cart-section-title">Arte personalizada</p>
           ${state.personalization.birthday_name ? `<p class="small-line">Nome: ${state.personalization.birthday_name}${state.personalization.age ? `, ${state.personalization.age}` : ""}</p>` : ""}
           ${state.personalization.theme ? `<p class="small-line">Tema: ${state.personalization.theme}</p>` : ""}
           ${state.personalization.colors ? `<p class="small-line">Cores: ${state.personalization.colors}</p>` : ""}
-        </div>
-      ` : ""}
+        </div>` : ""}
 
+      ${!empty ? renderBagSuggestions(b) : ""}
+
+      ${!empty ? `
       <div class="cart-form-block">
         <p class="cart-section-title">${isGuestOrder ? "Seus dados para contato" : "Dados do pedido"}</p>
         ${isGuestOrder ? `
-          <label>Nome completo<input type="text" value="${c.name}" oninput="c_update('name', this.value)"></label>
-          <label>Telefone / WhatsApp<input type="text" placeholder="(19) 99999-9999" value="${c.phone}" oninput="c_update('phone', this.value)"></label>
+          <label>Nome completo<input type="text" value="${c.name}" oninput="c_update('name', this.value); paintBagTotals()"></label>
+          <label>Telefone / WhatsApp<input type="text" placeholder="(19) 99999-9999" value="${c.phone}" oninput="maskPhone(this); c_update('phone', this.value); paintBagTotals()"></label>
         ` : `<p class="hint">Usaremos os dados do seu perfil (nome e telefone): <strong>${auth.customer.full_name}</strong>.</p>`}
-        <label>Endereço <small style="font-weight:400">(pode editar se for diferente do cadastro)</small>
-          <textarea rows="2" placeholder="Rua, número, bairro, cidade" oninput="c_update('address', this.value)">${state.customer.address !== undefined ? state.customer.address : formatAddress(auth.customer)}</textarea>
+        <label>Endereço ${b.hasDel ? "de entrega *" : `<small style="font-weight:400">(pode editar se for diferente do cadastro)</small>`}
+          <textarea rows="2" placeholder="Rua, número, bairro, cidade" oninput="c_update('address', this.value); paintBagTotals()" onchange="estimateShipping()">${bagAddress()}</textarea>
         </label>
+        ${b.hasEnc ? `
         <label>Data do evento<input type="date" id="eventDateInput" min="${minEventDate()}" value="${c.eventDate}" onchange="handleEventDateInput(this)"></label>
-        <p class="hint" style="margin-top:-6px">Trabalhamos com antecedência mínima de 5 dias.</p>
+        <p class="hint" style="margin-top:-6px">Trabalhamos com antecedência mínima de 5 dias.</p>` : ""}
         <label>Forma de pagamento
           <select onchange="c_update('payment', this.value)">
             <option value="">Selecione (opcional)</option>
@@ -1111,12 +1113,299 @@ function renderCart() {
         </label>
       </div>
 
-      ${navButtons({
-        back: state.category === "brigadeiro" ? "brigadeiro-flavors" : "geladinho-flavors",
-      })}
-      <button class="btn btn-primary btn-block btn-lg" ${canSubmit ? "" : "disabled"} onclick="submitOrder(${total})">Enviar pelo WhatsApp</button>
+      <div class="cart-summary coupon-box">
+        <div class="coupon-head"><span class="coupon-ic">${couponIcon()}</span><div><strong>Cupom</strong><small>${state.coupon && state.coupon.valid ? "Cupom aplicado" : "Digite um código"}</small></div></div>
+        ${state.coupon && state.coupon.valid ? `
+          <div class="coupon-applied"><span>${state.coupon.code}${state.coupon.description ? ` · ${state.coupon.description}` : ""}</span><button onclick="removeCoupon()">Remover</button></div>
+        ` : `
+          <div class="coupon-form">
+            <input type="text" id="couponInput" placeholder="CÓDIGO" value="${escapeAttr(state.couponInput || "")}" oninput="state.couponInput = this.value.toUpperCase(); this.value = state.couponInput" style="text-transform:uppercase">
+            <button onclick="applyCoupon()">Adicionar</button>
+          </div>`}
+        ${state.couponMsg ? `<p class="coupon-msg ${state.coupon && state.coupon.valid ? "ok" : "bad"}">${state.couponMsg}</p>` : ""}
+      </div>
+
+      <div class="cart-summary sum-box" id="bagSummary"></div>
+      <div class="sticky-subtotal bag-bar" id="bagBar"></div>
+      ` : ""}
+      <button class="btn btn-ghost sticky-back" onclick="goBack()">← Voltar</button>
     </section>
   `;
+  if (!empty) {
+    paintBagTotals();
+    syncCouponWithBag();
+    if (b.hasDel && state.shipping.status === "idle" && bagAddress().trim()) estimateShipping();
+  }
+}
+
+function escapeAttr(v) { return String(v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+function couponIcon() { return `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3 8a2 2 0 012-2h14a2 2 0 012 2v2a2 2 0 100 4v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 100-4V8z"/></svg>`; }
+
+/* ---- "Você também pode gostar" ---- */
+function renderBagSuggestions(b) {
+  const cat = (state.deliveryCatalog || []).filter(p => p.stock > 0 && !(state.delivery[p.id] >= p.stock));
+  const delivSug = cat.filter(p => !state.delivery[p.id]);
+  let html = "";
+  if (b.hasEnc) html += renderSuggestions();
+  if (delivSug.length) {
+    html += `
+      <div class="cart-summary">
+        <p class="cart-section-title">${b.hasEnc ? "Aproveite e leve no delivery" : "Você também pode gostar"}</p>
+        ${b.hasEnc ? `<p class="hint" style="margin-top:-4px">Delivery e encomenda ficam na mesma sacola, mas são pedidos separados.</p>` : ""}
+        <div class="sug-scroll">
+          ${delivSug.map(p => `
+            <div class="sug-item">
+              <div class="sug-img"><img src="${p.image_url || ""}" alt="${p.name}" onerror="this.remove()"><button onclick="addDeliveryFromBag('${p.id}')" aria-label="Adicionar">+</button></div>
+              <strong>${fmt(Number(p.price))}</strong>
+              <span>${p.name}</span>
+            </div>`).join("")}
+        </div>
+      </div>`;
+  }
+  return html;
+}
+function addDeliveryFromBag(id) {
+  const p = (state.deliveryCatalog || []).find(x => x.id === id);
+  if (!p || p.stock <= 0) return;
+  state.delivery[id] = Math.min(p.stock, (state.delivery[id] || 0) + 1);
+  state.shipping = { status: "idle" };
+  render();
+}
+function cartChangeDelivery(id, dir) {
+  const p = (state.deliveryCatalog || []).find(x => x.id === id);
+  if (!p) return;
+  const next = Math.max(0, Math.min(p.stock, (state.delivery[id] || 0) + dir));
+  if (next) state.delivery[id] = next; else delete state.delivery[id];
+  render();
+}
+function cartRemoveDelivery(id) { delete state.delivery[id]; render(); }
+
+/* ---- Cupom ---- */
+async function loadShipCfg() {
+  try { const { data } = await sb.rpc("shipping_config"); state.shipCfg = data || null; } catch (e) { state.shipCfg = null; }
+}
+function couponInputs() {
+  const b = bagData();
+  return [b.encSub, b.delSub, auth.customer ? auth.customer.id : null, auth.customer ? auth.customer.phone : state.customer.phone];
+}
+async function callValidateCoupon(code) {
+  const [enc, del, cust, phone] = couponInputs();
+  const { data, error } = await sb.rpc("validate_coupon", { p_code: code, p_sub_enc: enc, p_sub_del: del, p_customer: cust, p_phone: phone || "" });
+  if (error) return { valid: false, message: "Não foi possível validar o cupom agora." };
+  return data;
+}
+async function applyCoupon() {
+  const code = (state.couponInput || "").trim();
+  if (!code) { state.couponMsg = "Digite o código do cupom."; return render(); }
+  const r = await callValidateCoupon(code);
+  state.coupon = r.valid ? r : null;
+  state.couponMsg = r.message || "";
+  state.couponSig = r.valid ? bagSignature() : "";
+  if (r.valid) state.couponInput = "";
+  render();
+}
+function removeCoupon() { state.coupon = null; state.couponMsg = ""; state.couponSig = ""; render(); }
+function bagSignature() { const b = bagData(); return `${b.encSub}|${b.delSub}`; }
+// o valor do desconto depende do que está na sacola: revalida quando ela muda
+async function syncCouponWithBag() {
+  if (!state.coupon || state.couponSig === bagSignature()) return;
+  const sig = bagSignature();
+  const r = await callValidateCoupon(state.coupon.code);
+  if (state.step !== "cart") return;
+  state.couponSig = sig;
+  if (r.valid) { state.coupon = r; state.couponMsg = ""; paintBagTotals(); }
+  else { state.coupon = null; state.couponMsg = r.message; render(); }
+}
+
+/* ---- Estimativa de entrega ---- */
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371, rad = x => x * Math.PI / 180;
+  const dLat = rad(lat2 - lat1), dLng = rad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+async function geocodeDestination(address) {
+  const cepMatch = address.match(/\b(\d{5})-?(\d{3})\b/);
+  const cep = cepMatch ? cepMatch[1] + cepMatch[2] : (auth.customer && auth.customer.cep && address.trim() === formatAddress(auth.customer).trim() ? String(auth.customer.cep).replace(/\D/g, "") : "");
+  if (cep.length === 8) {
+    try {
+      const r = await fetch(`https://cep.awesomeapi.com.br/json/${cep}`);
+      if (r.ok) { const d = await r.json(); if (d.lat && d.lng) return { lat: Number(d.lat), lng: Number(d.lng) }; }
+    } catch (e) { /* tenta o outro método */ }
+  }
+  try {
+    const q = encodeURIComponent(address.replace(/\s+/g, " ").trim() + ", Brasil");
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${q}`);
+    if (r.ok) { const d = await r.json(); if (d[0]) return { lat: Number(d[0].lat), lng: Number(d[0].lon) }; }
+  } catch (e) { /* sem rede */ }
+  return null;
+}
+let shippingToken = 0;
+async function estimateShipping() {
+  const b = bagData();
+  const address = bagAddress().trim();
+  if (!b.hasDel || !address) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
+  if (!state.shipCfg) await loadShipCfg();
+  const cfg = state.shipCfg;
+  if (!cfg || cfg.enabled === false || cfg.origin_lat == null || cfg.origin_lng == null) { state.shipping = { status: "error" }; paintBagTotals(); return; }
+  const token = ++shippingToken;
+  state.shipping = { status: "loading" };
+  paintBagTotals();
+  const dest = await geocodeDestination(address);
+  if (token !== shippingToken) return;
+  if (!dest) { state.shipping = { status: "error" }; paintBagTotals(); return; }
+  const km = haversineKm(cfg.origin_lat, cfg.origin_lng, dest.lat, dest.lng) * Number(cfg.circuity || 1.3);
+  if (km > Number(cfg.max_km)) { state.shipping = { status: "out", km }; paintBagTotals(); return; }
+  const raw = Math.max(Number(cfg.min_fee), Number(cfg.base_fee) + Number(cfg.per_km) * km);
+  state.shipping = { status: "ok", km, fee: Math.ceil(raw * 2) / 2 };
+  paintBagTotals();
+}
+
+/* ---- Envio ---- */
+function allocateDiscount(orders, discount, appliesTo) {
+  let left = discount;
+  const pref = appliesTo === "encomenda" ? ["encomenda", "delivery"] : appliesTo === "delivery" ? ["delivery", "encomenda"] : orders.slice().sort((a, b) => b.subtotal - a.subtotal).map(o => o.order_type);
+  pref.forEach(t => {
+    const o = orders.find(x => x.order_type === t);
+    if (!o || left <= 0) return;
+    if (appliesTo !== "all" && ((appliesTo === "encomenda" && t !== "encomenda") || (appliesTo === "delivery" && t !== "delivery"))) return;
+    const d = Math.min(left, o.subtotal);
+    o.discount_amount = Number(d.toFixed(2));
+    left -= d;
+  });
+}
+
+async function submitBag() {
+  const b = bagData();
+  if (!bagCanSubmit(b)) return;
+  const btn = document.getElementById("bagSendBtn");
+  const resetBtn = () => { if (btn) { btn.disabled = false; btn.textContent = "Enviar pedido"; } };
+  if (btn) { btn.disabled = true; btn.textContent = "Enviando..."; }
+  // A aba precisa abrir durante o toque no botão; se esperar o banco responder,
+  // navegadores móveis podem bloqueá-la como pop-up.
+  const whatsappWindow = window.open("about:blank", "_blank");
+  const abort = (msg) => { if (whatsappWindow) whatsappWindow.close(); if (msg) alert(msg); resetBtn(); };
+
+  const c = auth.customer
+    ? { ...state.customer, name: auth.customer.full_name || state.customer.name, phone: auth.customer.phone || state.customer.phone }
+    : state.customer;
+  const address = bagAddress().trim();
+
+  // confere o cupom de novo com os valores finais
+  let coupon = null;
+  if (state.coupon && state.coupon.valid) {
+    const r = await callValidateCoupon(state.coupon.code);
+    if (!r.valid) { state.coupon = null; state.couponMsg = r.message; abort("Seu cupom não pode mais ser usado: " + r.message); return render(); }
+    coupon = r; state.coupon = r;
+  }
+  if (b.hasDel && state.shipping.status === "loading") { abort("Aguarde o cálculo da entrega e tente novamente."); return; }
+
+  const m = bagMoney(b);
+  const paymentMap = { "Pix": "pix", "Crédito": "credito" };
+  const common = {
+    customer_id: auth.customer ? auth.customer.id : null,
+    customer_name: c.name, customer_phone: c.phone,
+    customer_email: auth.customer ? auth.customer.email : null,
+    payment_method: paymentMap[c.payment] || null,
+    origin: "site",
+  };
+  const orders = [];
+  let msg = `Olá! Gostaria de fazer um pedido na Gizona Doces.\n\nNome: ${c.name}\nTelefone: ${c.phone}\n`;
+  if (address) msg += `Endereço: ${address}\n`;
+  if (c.payment) msg += `Forma de pagamento: ${c.payment}\n`;
+  msg += `\n`;
+
+  if (b.hasDel) {
+    msg += `🛵 DELIVERY\n` + b.delItems.map(i => `  - ${i.qty}x ${i.name} = ${fmt(Number(i.price) * i.qty)}`).join("\n") + `\n  Subtotal: ${fmt(b.delSub)}\n\n`;
+    orders.push({
+      ...common, order_type: "delivery",
+      items: b.delItems.map(i => ({ id: i.id, product_name: i.name, category: "delivery", quantity: i.qty, unit_price: Number(i.price), subtotal: Number(i.price) * i.qty })),
+      subtotal: b.delSub, discount_amount: 0,
+      delivery_fee: m.fee || 0, delivery_km: state.shipping.status === "ok" ? Number(state.shipping.km.toFixed(2)) : null,
+      event_date: null, personalization: {}, observations: `Endereço: ${address}`,
+    });
+  }
+  if (b.hasEnc) {
+    msg += `📅 ENCOMENDA\n`;
+    if (c.eventDate) msg += `Data do evento: ${new Date(c.eventDate + "T00:00:00").toLocaleDateString("pt-BR")}\n`;
+    const items = [];
+    if (b.brigItems.length) {
+      msg += `${state.box.boxConfig.title}\n`;
+      b.brigItems.forEach(i => {
+        msg += `  - ${i.name}: ${i.qty} unidades\n`;
+        items.push({ product_name: i.name, category: "brigadeiro", quantity: i.qty, unit_price: i.price, subtotal: i.price * i.qty });
+      });
+      msg += `  Subtotal: ${fmt(b.brigSubtotal)}\n\n`;
+    }
+    if (b.gelaItems.length) {
+      msg += `Geladinhos Gourmet Tamanho Festa\n`;
+      b.gelaItems.forEach(i => {
+        msg += `  - ${i.name}: ${i.qty} unidades x ${fmt(i.price)} = ${fmt(i.price * i.qty)}\n`;
+        items.push({ product_name: i.name, category: "geladinho", quantity: i.qty, unit_price: i.price, subtotal: i.price * i.qty });
+      });
+      if (state.isoporBox) {
+        msg += `  Caixa de isopor personalizada: valor a combinar\n`;
+        items.push({ product_name: "Caixa de isopor personalizada", category: "geladinho", quantity: 1, unit_price: null, subtotal: null });
+      }
+      msg += `\n`;
+    }
+    if (state.wantsArt) {
+      const p = state.personalization;
+      msg += `Personalização de arte:\n`;
+      if (p.birthday_name) msg += `  Nome: ${p.birthday_name}\n`;
+      if (p.age) msg += `  Idade: ${p.age}\n`;
+      if (p.theme) msg += `  Tema: ${p.theme}\n`;
+      if (p.colors) msg += `  Cores: ${p.colors}\n`;
+      if (p.custom_text) msg += `  Texto: ${p.custom_text}\n`;
+      if (p.art_description) msg += `  Descrição: ${p.art_description}\n`;
+      msg += `\n`;
+    }
+    orders.push({
+      ...common, order_type: "encomenda", items, subtotal: b.encSub, discount_amount: 0, delivery_fee: 0,
+      event_date: c.eventDate || null, personalization: state.wantsArt ? state.personalization : {},
+      observations: address ? `Endereço: ${address}` : "",
+    });
+  }
+
+  // desconto do cupom distribuído entre os pedidos
+  if (coupon) {
+    allocateDiscount(orders, Math.min(Number(coupon.discount) || 0, b.encSub + b.delSub), coupon.applies_to);
+    const first = orders.find(o => o.discount_amount > 0) || orders.find(o => o.order_type === "delivery") || orders[0];
+    first.coupon_code = coupon.code;
+  }
+  orders.forEach(o => { o.total = Number((o.subtotal - o.discount_amount).toFixed(2)); });
+
+  if (coupon && m.discount > 0) msg += `Cupom ${coupon.code}: - ${fmt(m.discount)}\n`;
+  if (b.hasDel) msg += m.feeFree ? `Entrega: Grátis\n` : (state.shipping.status === "ok" ? `Entrega (estimativa): ${fmt(m.fee)} — pode haver reajuste\n` : `Entrega: a combinar\n`);
+  msg += `\nTotal estimado: ${fmt(m.grand)}${b.hasEnc && !b.hasDel ? "" : ""}\n\nAguardo confirmação.`;
+
+  // grava os pedidos (delivery primeiro: é ele que confere o estoque)
+  for (const o of orders) {
+    const { error } = await sb.from("orders").insert(o);
+    if (error) {
+      console.error(error);
+      const text = error.message || "";
+      if (/Estoque insuficiente/i.test(text)) {
+        await loadDeliveryCatalog();
+        abort("Alguém acabou de levar um dos produtos do delivery. Atualizamos o estoque — confira a sacola.");
+        return render();
+      }
+      if (/Cupom/i.test(text)) {
+        state.coupon = null; state.couponMsg = "Esse cupom não está mais disponível.";
+        abort("Esse cupom não está mais disponível. Remova-o e envie novamente.");
+        return render();
+      }
+      abort("Não foi possível enviar o pedido. Tente novamente.");
+      return;
+    }
+  }
+
+  const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
+  if (whatsappWindow) whatsappWindow.location.href = url; else window.location.href = url;
+  state.delivery = {}; state.coupon = null; state.couponMsg = ""; state.shipping = { status: "idle" };
+  loadDeliveryCatalog();
+  renderConfirmation();
+  decorateScreen();
 }
 
 /* ---------------- Sugestões "Você também pode gostar" ---------------- */
@@ -1233,86 +1522,6 @@ function handleEventDateInput(el) {
   state.customer.eventDate = el.value;
 }
 
-async function submitOrder(total) {
-  // A aba precisa abrir durante o toque no botão; se esperar o banco responder,
-  // navegadores móveis podem bloqueá-la como pop-up.
-  const whatsappWindow = window.open("about:blank", "_blank");
-  const c = auth.customer
-    ? { ...state.customer, name: auth.customer.full_name || state.customer.name, phone: auth.customer.phone || state.customer.phone }
-    : state.customer;
-  let msg = `Olá! Gostaria de fazer uma encomenda na Gizona Doces.\n\n`;
-  msg += `Nome: ${c.name}\nTelefone: ${c.phone}\n`;
-  const addressText = (state.customer.address !== undefined ? state.customer.address : formatAddress(auth.customer)).trim();
-  if (addressText) msg += `Endereço: ${addressText}\n`;
-  if (c.eventDate) msg += `Data do evento: ${new Date(c.eventDate + "T00:00:00").toLocaleDateString("pt-BR")}\n`;
-  if (c.payment) msg += `Forma de pagamento: ${c.payment}\n`;
-  msg += `\n`;
-
-  const items = [];
-
-  if (Object.keys(state.flavors).length) {
-    msg += `${state.box.boxConfig.title}\n`;
-    Object.entries(state.flavors).forEach(([id, qty]) => {
-      const p = BRIGADEIRO_PRODUCTS.find(p => p.id === id);
-      msg += `  - ${p.name}: ${qty} unidades\n`;
-      items.push({ product_name: p.name, category: "brigadeiro", quantity: qty, unit_price: p.price, subtotal: p.price * qty });
-    });
-    const subtotal = state.box.boxConfig.fixedPrice || Object.entries(state.flavors).reduce((s, [id, qty]) => s + BRIGADEIRO_PRODUCTS.find(p => p.id === id).price * qty, 0);
-    msg += `  Subtotal: ${fmt(subtotal)}\n\n`;
-  }
-  if (Object.keys(state.geladinho).length) {
-    msg += `Geladinhos Gourmet Tamanho Festa\n`;
-    Object.entries(state.geladinho).forEach(([id, qty]) => {
-      const p = GELADINHO_PRODUCTS.find(p => p.id === id);
-      msg += `  - ${p.name}: ${qty} unidades x ${fmt(p.price)} = ${fmt(p.price * qty)}\n`;
-      items.push({ product_name: p.name, category: "geladinho", quantity: qty, unit_price: p.price, subtotal: p.price * qty });
-    });
-    if (state.isoporBox) {
-      msg += `  Caixa de isopor personalizada: valor a combinar\n`;
-      items.push({ product_name: "Caixa de isopor personalizada", category: "geladinho", quantity: 1, unit_price: null, subtotal: null });
-    }
-    msg += `\n`;
-  }
-
-  if (state.wantsArt) {
-    const p = state.personalization;
-    msg += `Personalização de arte:\n`;
-    if (p.birthday_name) msg += `  Nome: ${p.birthday_name}\n`;
-    if (p.age) msg += `  Idade: ${p.age}\n`;
-    if (p.theme) msg += `  Tema: ${p.theme}\n`;
-    if (p.colors) msg += `  Cores: ${p.colors}\n`;
-    if (p.custom_text) msg += `  Texto: ${p.custom_text}\n`;
-    if (p.art_description) msg += `  Descrição: ${p.art_description}\n`;
-    msg += `\n`;
-  }
-
-  msg += `Valor estimado: ${fmt(total)}\n\nAguardo retorno sobre disponibilidade.`;
-
-  const whatsappUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
-  if (whatsappWindow) whatsappWindow.location.href = whatsappUrl;
-  else window.location.href = whatsappUrl;
-
-  // Salva o pedido no banco (fica no histórico e conta ponto de fidelidade se logado)
-  try {
-    const paymentMap = { "Pix": "pix", "Crédito": "credito" };
-    await sb.from("orders").insert({
-      customer_id: auth.customer ? auth.customer.id : null,
-      customer_name: c.name,
-      customer_phone: c.phone,
-      customer_email: auth.customer ? auth.customer.email : null,
-      event_date: c.eventDate || null,
-      items,
-      personalization: state.wantsArt ? state.personalization : {},
-      payment_method: paymentMap[c.payment] || null,
-      total,
-      observations: addressText ? `Endereço: ${addressText}` : "",
-    });
-  } catch (e) {
-    console.error("Erro ao salvar pedido:", e);
-  }
-
-  renderConfirmation();
-}
 
 function renderConfirmation() {
   app.innerHTML = `
@@ -1330,6 +1539,8 @@ function resetOrder() {
   state.flavors = {};
   state.geladinho = {};
   state.delivery = {};
+  state.coupon = null; state.couponMsg = ""; state.couponInput = "";
+  state.shipping = { status: "idle" };
   state.wantsArt = null;
   state.isoporBox = false;
   state.suggestQty = {};
