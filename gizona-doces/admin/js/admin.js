@@ -3528,7 +3528,7 @@ async function toggleDeliveryOpen(open) {
   if (error) { console.error(error); alert("Não foi possível alterar: " + (error.message || "") + "\n\nRode o script add_delivery_aberto.sql no Supabase."); await loadEstoqueProdutos(document.getElementById("adminMain")); return; }
   admin.data.showNotify = open;
   admin.data.notified = new Set();
-  admin.data.notifyMsg = null;
+  admin.data.notifyMsg = null; admin.data.notifyEdited = false;
   await loadEstoqueProdutos(document.getElementById("adminMain"));
 }
 async function saveClosedMessage() {
@@ -3544,8 +3544,8 @@ function toggleNotifyPanel() {
 function siteUrl() { return location.origin + location.pathname.replace(/\/admin\/?.*$/, "/"); }
 function defaultNotifyMessage() {
   const rows = deliveryStockRows().filter(r => r.stock > 0);
-  const list = rows.length ? rows.map(r => `• ${r.p.name} — ${fmt(Number(r.p.price))} (${r.stock} ${r.stock === 1 ? "unidade" : "unidades"})`).join("\n") : "• (cadastre as levas para listar os produtos)";
-  return `Oi! 💕 O delivery da Gizona Doces está ABERTO!\n\nTemos hoje:\n${list}\n\nGaranta o seu enquanto tem estoque 👉 ${siteUrl()}`;
+  const list = rows.map(r => `- ${r.p.name}: ${fmt(Number(r.p.price))} (${r.stock} ${r.stock === 1 ? "unidade" : "unidades"})`).join("\n");
+  return `Oi! O delivery da Gizona Doces está ABERTO!\n\n${list ? "Temos hoje:\n" + list + "\n\n" : ""}Garanta o seu enquanto tem estoque:\n${siteUrl()}`;
 }
 function notifyPhone(p) {
   const d = String(p || "").replace(/\D/g, "");
@@ -3553,7 +3553,7 @@ function notifyPhone(p) {
   return d.length <= 11 ? "55" + d : d;
 }
 function renderNotifyPanel() {
-  if (admin.data.notifyMsg == null) admin.data.notifyMsg = defaultNotifyMessage();
+  if (admin.data.notifyMsg == null || !admin.data.notifyEdited) admin.data.notifyMsg = defaultNotifyMessage();
   const cs = admin.data.dCustomers || [];
   const withPhone = cs.filter(c => notifyPhone(c.phone));
   const withMail = cs.filter(c => c.email);
@@ -3561,9 +3561,9 @@ function renderNotifyPanel() {
   return `
     <div class="admin-card">
       <h2>Avisar clientes cadastrados</h2>
-      <p class="hint">Edite a mensagem e envie. O WhatsApp abre já com o texto pronto para cada cliente — é só tocar em enviar. (O envio 100% automático e em massa exige um serviço pago de WhatsApp/e-mail; aqui o envio é com um toque por cliente.)</p>
+      <p class="hint">Edite a mensagem e envie. O WhatsApp abre já com o texto pronto e o nome de cada cliente — é só tocar em enviar. <strong>A mensagem sai do WhatsApp que estiver aberto neste aparelho</strong>: para sair pelo (19) 99748-9773, use este painel no computador com o WhatsApp Web desse número conectado (ou no celular dele). (O envio 100% automático e em massa exige um serviço pago de WhatsApp/e-mail; aqui o envio é com um toque por cliente.)</p>
       <label>Mensagem
-        <textarea id="notifyMsg" rows="9" oninput="admin.data.notifyMsg = this.value">${escapeHtml(admin.data.notifyMsg)}</textarea></label>
+        <textarea id="notifyMsg" rows="9" oninput="admin.data.notifyMsg = this.value; admin.data.notifyEdited = true">${escapeHtml(admin.data.notifyMsg)}</textarea></label>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
         <button class="btn btn-outline btn-sm" onclick="copyNotifyMsg()">Copiar mensagem</button>
         <button class="btn btn-outline btn-sm" onclick="resetNotifyMsg()">Refazer com o estoque atual</button>
@@ -3597,7 +3597,7 @@ async function copyNotifyMsg() {
   try { await navigator.clipboard.writeText(document.getElementById("notifyMsg").value); alert("Mensagem copiada."); }
   catch (e) { document.getElementById("notifyMsg").select(); alert("Selecione e copie a mensagem (Ctrl+C)."); }
 }
-function resetNotifyMsg() { admin.data.notifyMsg = defaultNotifyMessage(); document.getElementById("notifyMsg").value = admin.data.notifyMsg; }
+function resetNotifyMsg() { admin.data.notifyEdited = false; admin.data.notifyMsg = defaultNotifyMessage(); document.getElementById("notifyMsg").value = admin.data.notifyMsg; }
 function mailList() { return (admin.data.dCustomers || []).map(c => c.email).filter(Boolean); }
 function mailNotify() {
   const list = mailList();

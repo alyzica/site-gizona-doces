@@ -30,6 +30,7 @@ const state = {
   deliveryStatus: null,    // { open, message } (RPC delivery_status); null = ainda não carregou / script não rodado
   fulfillment: null,       // "delivery" | "pickup" (null = padrão conforme a sacola)
   originCoords: null, geoCache: {}, bagNotice: "",
+  addrMode: null, otherAddr: { cep: "", street: "", number: "", complement: "", neighborhood: "", city: "", state: "" },
 };
 
 const app = document.getElementById("app");
@@ -1000,7 +1001,7 @@ function paintBagTotals() {
   if (b.hasDel && mode === "pickup") {
     feeRow = `<div class="sum-row"><span>Retirada</span><span><strong class="free">Grátis</strong></span></div>`;
   } else if (b.hasDel) {
-    const hasAddr = bagAddress().trim().length >= 6;
+    const hasAddr = addrComplete();
     let val, note;
     if (m.feeFree) val = `<s style="color:var(--muted)">${sh.status === "ok" ? fmt(sh.fee) : ""}</s> <strong class="free">Grátis</strong>`;
     else if (sh.status === "loading" || (sh.status === "idle" && hasAddr)) val = `<span class="muted">calculando...</span>`;
@@ -1035,12 +1036,41 @@ function bagCanSubmit(b) {
   if (!b.hasEnc && !b.hasDel) return false;
   const c = auth.customer ? { name: auth.customer.full_name || "", phone: auth.customer.phone || "" } : state.customer;
   if (!c.name.trim() || !c.phone.trim()) return false;
-  if (fulfillMode(b) === "delivery" && !bagAddress().trim()) return false;
+  if (fulfillMode(b) === "delivery" && !addrComplete()) return false;
   if (b.hasDel && deliveryClosed()) return false;
   return true;
 }
+function hasSavedAddress() { return !!(auth.customer && auth.customer.street); }
+function addrMode() { return state.addrMode || (hasSavedAddress() ? "saved" : "other"); }
+function currentAddrObj() {
+  if (addrMode() === "saved" && hasSavedAddress()) {
+    const c = auth.customer;
+    return { cep: String(c.cep || "").replace(/\D/g, ""), street: c.street || "", number: c.number || "", complement: c.complement || "", neighborhood: c.neighborhood || "", city: c.city || "", state: c.state || "" };
+  }
+  const o = state.otherAddr;
+  return { ...o, cep: String(o.cep || "").replace(/\D/g, "") };
+}
+function addrComplete(o) { o = o || currentAddrObj(); return !!(o.street.trim() && String(o.number).trim() && o.city.trim()); }
 function bagAddress() {
-  return state.customer.address !== undefined ? state.customer.address : formatAddress(auth.customer);
+  const o = currentAddrObj();
+  if (!o.street.trim()) return "";
+  const cep = o.cep.length === 8 ? ` – CEP ${o.cep.slice(0, 5)}-${o.cep.slice(5)}` : "";
+  return formatAddress(o) + cep;
+}
+function setAddrMode(m) { state.addrMode = m; state.shipping = { status: "idle" }; render(); }
+function oaInput(key, val) { state.otherAddr[key] = val; if (key !== "complement") scheduleShipping(); }
+async function oaCep(el) {
+  let v = el.value.replace(/\D/g, "").slice(0, 8);
+  el.value = v.length > 5 ? v.slice(0, 5) + "-" + v.slice(5) : v;
+  state.otherAddr.cep = v;
+  if (v.length !== 8) return;
+  const a = await auth_fetchCep(v);
+  if (a) {
+    Object.assign(state.otherAddr, a);
+    ["street", "neighborhood", "city", "state"].forEach(k => { const i = document.getElementById("oa_" + k); if (i) i.value = a[k] || ""; });
+    const n = document.getElementById("oa_number"); if (n && !n.value) n.focus();
+  }
+  scheduleShipping();
 }
 
 function renderCart() {
@@ -1154,9 +1184,7 @@ function renderCart() {
           <label>Nome completo<input type="text" value="${c.name}" oninput="c_update('name', this.value); paintBagTotals()"></label>
           <label>Telefone / WhatsApp<input type="text" placeholder="(19) 99999-9999" value="${c.phone}" oninput="maskPhone(this); c_update('phone', this.value); paintBagTotals()"></label>
         ` : `<p class="hint">Usaremos os dados do seu perfil (nome e telefone): <strong>${auth.customer.full_name}</strong>.</p>`}
-        ${fm === "delivery" ? `<label>Endereço de entrega *
-          <textarea rows="2" placeholder="Rua, número, bairro, cidade" oninput="c_update('address', this.value); scheduleShipping()" onchange="estimateShipping()">${bagAddress()}</textarea>
-        </label>` : ""}
+        ${fm === "delivery" ? renderAddressPicker() : ""}
         ${b.hasEnc ? `
         <label>Data do evento<input type="date" id="eventDateInput" min="${minEventDate()}" value="${c.eventDate}" onchange="handleEventDateInput(this)"></label>
         <p class="hint" style="margin-top:-6px">Trabalhamos com antecedência mínima de 5 dias.</p>` : ""}
@@ -1190,11 +1218,31 @@ function renderCart() {
   if (!empty) {
     paintBagTotals();
     syncCouponWithBag();
-    if (b.hasDel && fm === "delivery" && state.shipping.status === "idle" && bagAddress().trim()) estimateShipping();
+    if (b.hasDel && fm === "delivery" && state.shipping.status === "idle" && addrComplete()) estimateShipping();
   }
   state.bagNotice = "";
 }
 
+function renderAddressPicker() {
+  const saved = hasSavedAddress(), m = addrMode(), o = state.otherAddr;
+  const cs = auth.customer;
+  return `
+    <p class="cart-section-title" style="margin-top:6px">Endereço de entrega *</p>
+    <div class="addr-choice">
+      ${saved ? `<label class="addr-opt ${m === "saved" ? "on" : ""}"><input type="radio" name="addrmode" ${m === "saved" ? "checked" : ""} onchange="setAddrMode('saved')"><span><strong>Meu endereço cadastrado</strong><small>${escapeAttr(formatAddress(cs))}${cs.cep ? " · CEP " + escapeAttr(cs.cep) : ""}</small></span></label>` : ""}
+      <label class="addr-opt ${m === "other" ? "on" : ""}"><input type="radio" name="addrmode" ${m === "other" ? "checked" : ""} onchange="setAddrMode('other')"><span><strong>${saved ? "Entregar em outro endereço" : "Informe o endereço"}</strong>${saved ? "" : "<small>Digite o CEP e preenchemos o resto</small>"}</span></label>
+      ${m === "other" ? `
+        <div class="addr-fields">
+          <label>CEP<input id="oa_cep" inputmode="numeric" placeholder="00000-000" maxlength="9" value="${escapeAttr(o.cep.length === 8 ? o.cep.slice(0, 5) + "-" + o.cep.slice(5) : o.cep)}" oninput="oaCep(this)"></label>
+          <label>Rua<input id="oa_street" value="${escapeAttr(o.street)}" oninput="oaInput('street', this.value)"></label>
+          <div class="addr-row"><label>Número<input id="oa_number" inputmode="numeric" value="${escapeAttr(o.number)}" oninput="oaInput('number', this.value)"></label>
+          <label>Complemento<input id="oa_complement" value="${escapeAttr(o.complement)}" oninput="oaInput('complement', this.value)"></label></div>
+          <label>Bairro<input id="oa_neighborhood" value="${escapeAttr(o.neighborhood)}" oninput="oaInput('neighborhood', this.value)"></label>
+          <div class="addr-row"><label>Cidade<input id="oa_city" value="${escapeAttr(o.city)}" oninput="oaInput('city', this.value)"></label>
+          <label style="max-width:80px">UF<input id="oa_state" maxlength="2" value="${escapeAttr(o.state)}" oninput="oaInput('state', this.value.toUpperCase())"></label></div>
+        </div>` : ""}
+    </div>`;
+}
 function escapeAttr(v) { return String(v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
 function couponIcon() { return `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3 8a2 2 0 012-2h14a2 2 0 012 2v2a2 2 0 100 4v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 100-4V8z"/></svg>`; }
 
@@ -1280,50 +1328,58 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(a));
 }
-async function nominatim(q) {
-  try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${encodeURIComponent(q)}`);
-    if (r.ok) { const d = await r.json(); if (d[0]) return { lat: Number(d[0].lat), lng: Number(d[0].lon) }; }
-  } catch (e) { /* sem rede */ }
+async function jget(url) {
+  try { const r = await fetch(url); if (r.ok) return await r.json(); } catch (e) { /* sem rede / bloqueado */ }
   return null;
 }
-async function geocodeText(address, cepHint) {
-  const key = address.replace(/\s+/g, " ").trim().toLowerCase();
-  if (state.geoCache[key]) return state.geoCache[key];
-  const cepMatch = address.match(/\b(\d{5})-?(\d{3})\b/);
-  const cep = cepMatch ? cepMatch[1] + cepMatch[2] : (cepHint || "");
-  let found = null, viaCep = null;
-  if (cep.length === 8) {
-    try {
-      const r = await fetch(`https://cep.awesomeapi.com.br/json/${cep}`);
-      if (r.ok) { const d = await r.json(); if (d.lat && d.lng) found = { lat: Number(d.lat), lng: Number(d.lng) }; }
-    } catch (e) { /* tenta o próximo */ }
-    if (!found) {
-      try {
-        const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
-        if (r.ok) { const d = await r.json(); if (!d.erro) viaCep = d; }
-      } catch (e) { /* tenta o próximo */ }
-    }
-  }
-  const clean = address.replace(/\s+/g, " ").trim();
-  if (!found) found = await nominatim(clean + ", Brasil");
-  if (!found && viaCep) found = await nominatim(`${viaCep.logradouro || ""}, ${viaCep.bairro || ""}, ${viaCep.localidade} - ${viaCep.uf}, Brasil`) || await nominatim(`${viaCep.bairro || ""}, ${viaCep.localidade} - ${viaCep.uf}, Brasil`);
-  if (!found) {
-    // sem o número da casa (ex.: "Rua X, 74, Bairro, Cidade" -> "Rua X, Bairro, Cidade")
-    const noNum = clean.replace(/[,\s-]+\d+[a-zA-Z]?(?=[,\s-]|$)/, "");
-    if (noNum !== clean) found = await nominatim(noNum + ", Brasil");
-  }
-  if (!found) {
-    // última tentativa: só bairro/cidade (últimos trechos)
-    const parts = clean.split(/[,\-]/).map(x => x.trim()).filter(Boolean);
-    if (parts.length > 2) found = await nominatim(parts.slice(-2).join(", ") + ", Brasil");
-  }
-  if (found) state.geoCache[key] = found;
-  return found;
+async function nominatim(q) {
+  const d = await jget(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${encodeURIComponent(q)}`);
+  return d && d[0] ? { lat: Number(d[0].lat), lng: Number(d[0].lon) } : null;
 }
-async function geocodeDestination(address) {
-  const cepHint = auth.customer && auth.customer.cep && address.trim() === formatAddress(auth.customer).trim() ? String(auth.customer.cep).replace(/\D/g, "") : "";
-  return geocodeText(address, cepHint);
+async function nominatimStruct(o) {
+  const p = new URLSearchParams({ format: "json", limit: "1", countrycodes: "br", street: `${o.number} ${o.street}`.trim(), city: o.city || "", state: o.state || "", country: "Brasil" });
+  const d = await jget(`https://nominatim.openstreetmap.org/search?${p}`);
+  return d && d[0] ? { lat: Number(d[0].lat), lng: Number(d[0].lon) } : null;
+}
+async function photon(q) {
+  const d = await jget(`https://photon.komoot.io/api/?limit=1&q=${encodeURIComponent(q)}`);
+  const f = d && d.features && d.features[0];
+  return f ? { lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0] } : null;
+}
+async function geocodeByCep(cep) {
+  if (!cep || cep.length !== 8) return null;
+  const br = await jget(`https://brasilapi.com.br/api/cep/v2/${cep}`);
+  const bc = br && br.location && br.location.coordinates;
+  if (bc && bc.latitude && bc.longitude) return { lat: Number(bc.latitude), lng: Number(bc.longitude) };
+  const aw = await jget(`https://cep.awesomeapi.com.br/json/${cep}`);
+  if (aw && aw.lat && aw.lng) return { lat: Number(aw.lat), lng: Number(aw.lng) };
+  return null;
+}
+// endereço -> coordenadas: tenta CEP, depois busca por endereço, depois bairro/cidade
+async function geocodeAddr(o) {
+  const key = JSON.stringify([o.cep, o.street, o.number, o.neighborhood, o.city, o.state]).toLowerCase();
+  if (state.geoCache[key]) return state.geoCache[key];
+  let f = await geocodeByCep(o.cep);
+  if (!f && o.street) f = await nominatimStruct(o);
+  const city = [o.city, o.state].filter(Boolean).join(" - ");
+  const full = `${o.street} ${o.number}, ${o.neighborhood}, ${city}, Brasil`.replace(/\s+,/g, ",");
+  if (!f) f = await nominatim(full);
+  if (!f) f = await photon(full);
+  if (!f && o.neighborhood) f = await nominatim(`${o.neighborhood}, ${city}, Brasil`) || await photon(`${o.neighborhood}, ${city}, Brasil`);
+  if (!f && o.street) f = await nominatim(`${o.street}, ${city}, Brasil`);
+  if (!f && o.cep.length === 8) f = await nominatim(`${o.cep.slice(0, 5)}-${o.cep.slice(5)}, Brasil`);
+  if (!f && city) f = await nominatim(`${city}, Brasil`);
+  if (f) state.geoCache[key] = f;
+  return f;
+}
+async function geocodeText(address, cepHint) {
+  const m = address.match(/\b(\d{5})-?(\d{3})\b/);
+  const cep = m ? m[1] + m[2] : (cepHint || "");
+  const key = "t:" + address.replace(/\s+/g, " ").trim().toLowerCase();
+  if (state.geoCache[key]) return state.geoCache[key];
+  let f = await geocodeByCep(cep) || await nominatim(address + ", Brasil") || await photon(address + ", Brasil");
+  if (f) state.geoCache[key] = f;
+  return f;
 }
 // ponto de saída: usa as coordenadas do admin; se faltarem, descobre pelo endereço cadastrado
 async function resolveOrigin(cfg) {
@@ -1337,8 +1393,7 @@ let shippingToken = 0, shippingTimer = null;
 function scheduleShipping() {
   clearTimeout(shippingTimer);
   shippingToken++;
-  const addr = bagAddress().trim();
-  if (addr.length < 6) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
+  if (!addrComplete()) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
   state.shipping = { status: "loading" };
   paintBagTotals();
   shippingTimer = setTimeout(() => estimateShipping(), 800);
@@ -1347,15 +1402,15 @@ async function estimateShipping(force) {
   clearTimeout(shippingTimer);
   const b = bagData();
   const address = bagAddress().trim();
-  if (!b.hasDel || fulfillMode(b) !== "delivery" || address.length < 6) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
+  if (!b.hasDel || fulfillMode(b) !== "delivery" || !addrComplete()) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
   if (!state.shipCfg) await loadShipCfg();
   const cfg = state.shipCfg;
   if (!cfg || cfg.enabled === false) { state.shipping = { status: "off" }; paintBagTotals(); return; }
   const token = ++shippingToken;
   state.shipping = { status: "loading" };
   paintBagTotals();
-  if (force) delete state.geoCache[address.replace(/\s+/g, " ").trim().toLowerCase()];
-  const [origin, dest] = await Promise.all([resolveOrigin(cfg), geocodeDestination(address)]);
+  if (force) state.geoCache = {};
+  const [origin, dest] = await Promise.all([resolveOrigin(cfg), geocodeAddr(currentAddrObj())]);
   if (token !== shippingToken) return;
   if (!dest) { state.shipping = { status: "error" }; paintBagTotals(); return; }
   const km = haversineKm(origin.lat, origin.lng, dest.lat, dest.lng) * Number(cfg.circuity || 1.3);
