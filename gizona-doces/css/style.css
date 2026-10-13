@@ -319,3 +319,14 @@ input,select,textarea{font-family:var(--font-body);}
 .sug-img img{width:100%;height:100%;object-fit:cover;}
 .sug-img button{position:absolute;right:8px;bottom:8px;width:34px;height:34px;border-radius:50%;border:0;background:#fff;color:var(--ink);font-size:20px;box-shadow:0 2px 8px rgba(0,0,0,.18);}
 .sug-item strong{font-size:13.5px;margin-top:4px;}
+
+/* ---- Retirada / Entrega, delivery aberto ---- */
+.fulfil-box{padding:16px 18px;}
+.seg{display:flex;gap:6px;background:var(--pink-soft,#FFF0F5);border-radius:999px;padding:4px;}
+.seg button{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;border:0;background:transparent;border-radius:999px;padding:11px 10px;font-family:var(--font-body);font-weight:600;font-size:14px;color:var(--muted);cursor:pointer;transition:all .18s;}
+.seg button.on{background:var(--pink);color:#fff;box-shadow:0 4px 12px rgba(233,90,140,.28);}
+.pickup-card{display:flex;flex-direction:column;gap:3px;margin-top:12px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius-md);background:#fff;font-size:13.5px;}
+.pickup-card small{color:var(--muted);font-size:12px;}
+.open-pill{display:inline-flex;align-items:center;gap:7px;margin:0 0 12px;padding:6px 12px;border-radius:999px;background:#E9F7EE;color:#2E7D46;font-weight:600;font-size:12.5px;}
+.open-pill i{width:8px;height:8px;border-radius:50%;background:#2E9D55;box-shadow:0 0 0 3px rgba(46,157,85,.2);}
+.bag-notice{background:#FFF6E5;border-color:#F2D79A;color:#8A6200;font-size:13px;}

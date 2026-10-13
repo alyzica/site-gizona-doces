@@ -583,12 +583,13 @@ async function saveManualOrder() {
     payment_amount_2: Number(document.getElementById("ofPay2Amount").value) || null,
     observations: document.getElementById("ofObs").value.trim() || null,
   };
-  const { error } = await sb.from("orders").insert(payload);
+  const { data: created, error } = await sb.from("orders").insert(payload).select().single();
   if (error) {
     console.error(error);
     alert(/Estoque insuficiente/i.test(error.message || "") ? "Estoque insuficiente para um dos produtos. Registre uma nova leva no Estoque de Produtos." : "Não foi possível salvar o pedido: " + (error.message || ""));
     return;
   }
+  if (created && payload.status === "delivered") await ensureRevenueForOrderQuiet(created);
   document.getElementById("orderFormArea").innerHTML = "";
   await loadOrders(document.getElementById("adminMain"));
 }
@@ -1928,11 +1929,15 @@ function renderResultados(main) {
 /* ---------------- ESTOQUE DE PRODUTOS (delivery, movido por vendas) ---------------- */
 
 async function loadEstoqueProdutos(main) {
-  const [pr, ba, sa] = await Promise.all([
+  const [pr, ba, sa, st, cu] = await Promise.all([
     sb.from("products").select("*").eq("category", "delivery").order("sort_order").order("name"),
     sb.from("delivery_stock_batches").select("*").order("produced_at", { ascending: false }),
     sb.from("delivery_sales").select("*, orders(order_number, customer_name)").order("created_at", { ascending: false }),
+    sb.from("delivery_settings").select("*").eq("id", 1).maybeSingle(),
+    sb.from("customers").select("id, full_name, email, phone").order("full_name"),
   ]);
+  admin.data.dSettings = st.error ? null : st.data;
+  admin.data.dCustomers = cu.error ? [] : (cu.data || []);
   if (pr.error) throw pr.error;
   if (ba.error) throw ba.error;
   if (sa.error) throw sa.error;
@@ -1963,11 +1968,13 @@ function renderEstoqueProdutos(main) {
   main.innerHTML = `
     <div class="admin-topbar"><h1>Estoque de Produtos</h1>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-outline" onclick="setTab('orders')">Lançar venda (Pedidos)</button>
+        <button class="btn btn-outline" onclick="openQuickSale()">Dar baixa rápida</button>
         <button class="btn btn-pink" onclick="openStockBatchForm()">+ Nova leva</button>
       </div>
     </div>
-    <p class="hint">Produtos de delivery cadastrados na aba Produtos → Delivery. O estoque é controlado pela aba <strong>Pedidos</strong>: cada pedido de delivery (do site ou lançado manualmente) dá baixa sozinho, e cancelar/excluir o pedido devolve o produto. Para uma venda fora do site, lance um pedido manual do tipo Delivery.</p>
+    ${renderDeliverySwitch()}
+    <div id="notifyArea">${admin.data.showNotify ? renderNotifyPanel() : ""}</div>
+    <p class="hint">Produtos cadastrados em Produtos → Delivery. Toda venda dá baixa no estoque: pedidos do site e vendas feitas por fora (use <strong>Dar baixa rápida</strong>) — cancelar ou excluir o pedido devolve o produto.</p>
     <div id="stockFormArea"></div>
     <div class="admin-card">
       <p class="hint" style="margin:0">Faturado: <strong style="color:#2E7D46">${fmt(totInv)}</strong> · Ainda a faturar (estoque × preço): <strong>${fmt(totPot)}</strong></p>
@@ -3484,4 +3491,174 @@ async function saveEntrega() {
   if (error) { console.error(error); alert("Não foi possível salvar: " + (error.message || "")); return; }
   await loadEntrega(document.getElementById("adminMain"));
   alert("Configurações de entrega salvas.");
+}
+
+
+/* ---------------- DELIVERY: abrir/fechar, avisos e baixa rápida ---------------- */
+function renderDeliverySwitch() {
+  const st = admin.data.dSettings;
+  if (!st || !("delivery_open" in st)) {
+    return `<div class="error-box">Para abrir e fechar o delivery, rode o script <strong>add_delivery_aberto.sql</strong> no Supabase.</div>`;
+  }
+  const open = !!st.delivery_open;
+  return `
+    <div class="admin-card delivery-switch ${open ? "is-open" : ""}">
+      <div class="ds-row">
+        <div class="ds-info">
+          <span class="ds-dot"></span>
+          <div><strong>${open ? "Delivery aberto" : "Delivery fechado"}</strong>
+          <small>${open ? "Os clientes já podem pedir no site." : "No site aparece “Delivery fechado” e ninguém consegue pedir."}</small></div>
+        </div>
+        <label class="ds-toggle"><input type="checkbox" ${open ? "checked" : ""} onchange="toggleDeliveryOpen(this.checked)"><span></span></label>
+      </div>
+      <div class="ds-extra">
+        <label>Mensagem exibida quando fechado
+          <input id="dsClosedMsg" value="${escapeHtml(st.closed_message || "")}"></label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" onclick="saveClosedMessage()">Salvar mensagem</button>
+          <button class="btn btn-pink btn-sm" onclick="toggleNotifyPanel()">Avisar clientes</button>
+        </div>
+      </div>
+    </div>`;
+}
+async function toggleDeliveryOpen(open) {
+  const payload = { delivery_open: open, updated_at: new Date().toISOString() };
+  if (open) payload.delivery_opened_at = new Date().toISOString();
+  const { error } = await sb.from("delivery_settings").update(payload).eq("id", 1);
+  if (error) { console.error(error); alert("Não foi possível alterar: " + (error.message || "") + "\n\nRode o script add_delivery_aberto.sql no Supabase."); await loadEstoqueProdutos(document.getElementById("adminMain")); return; }
+  admin.data.showNotify = open;
+  admin.data.notified = new Set();
+  admin.data.notifyMsg = null;
+  await loadEstoqueProdutos(document.getElementById("adminMain"));
+}
+async function saveClosedMessage() {
+  const v = document.getElementById("dsClosedMsg").value.trim();
+  const { error } = await sb.from("delivery_settings").update({ closed_message: v || "O delivery está fechado no momento." }).eq("id", 1);
+  if (error) { console.error(error); alert("Não foi possível salvar."); return; }
+  alert("Mensagem salva.");
+}
+function toggleNotifyPanel() {
+  admin.data.showNotify = !admin.data.showNotify;
+  document.getElementById("notifyArea").innerHTML = admin.data.showNotify ? renderNotifyPanel() : "";
+}
+function siteUrl() { return location.origin + location.pathname.replace(/\/admin\/?.*$/, "/"); }
+function defaultNotifyMessage() {
+  const rows = deliveryStockRows().filter(r => r.stock > 0);
+  const list = rows.length ? rows.map(r => `• ${r.p.name} — ${fmt(Number(r.p.price))} (${r.stock} ${r.stock === 1 ? "unidade" : "unidades"})`).join("\n") : "• (cadastre as levas para listar os produtos)";
+  return `Oi! 💕 O delivery da Gizona Doces está ABERTO!\n\nTemos hoje:\n${list}\n\nGaranta o seu enquanto tem estoque 👉 ${siteUrl()}`;
+}
+function notifyPhone(p) {
+  const d = String(p || "").replace(/\D/g, "");
+  if (d.length < 10) return "";
+  return d.length <= 11 ? "55" + d : d;
+}
+function renderNotifyPanel() {
+  if (admin.data.notifyMsg == null) admin.data.notifyMsg = defaultNotifyMessage();
+  const cs = admin.data.dCustomers || [];
+  const withPhone = cs.filter(c => notifyPhone(c.phone));
+  const withMail = cs.filter(c => c.email);
+  const done = admin.data.notified || (admin.data.notified = new Set());
+  return `
+    <div class="admin-card">
+      <h2>Avisar clientes cadastrados</h2>
+      <p class="hint">Edite a mensagem e envie. O WhatsApp abre já com o texto pronto para cada cliente — é só tocar em enviar. (O envio 100% automático e em massa exige um serviço pago de WhatsApp/e-mail; aqui o envio é com um toque por cliente.)</p>
+      <label>Mensagem
+        <textarea id="notifyMsg" rows="9" oninput="admin.data.notifyMsg = this.value">${escapeHtml(admin.data.notifyMsg)}</textarea></label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
+        <button class="btn btn-outline btn-sm" onclick="copyNotifyMsg()">Copiar mensagem</button>
+        <button class="btn btn-outline btn-sm" onclick="resetNotifyMsg()">Refazer com o estoque atual</button>
+        <button class="btn btn-outline btn-sm" onclick="mailNotify()">E-mail para todos (${withMail.length})</button>
+        <button class="btn btn-outline btn-sm" onclick="copyNotifyEmails()">Copiar e-mails</button>
+      </div>
+      <p class="hint" style="margin:6px 0">WhatsApp — ${withPhone.length} cliente(s) com telefone · ${done.size} já aberto(s)</p>
+      <div class="notify-list">
+        ${withPhone.length ? withPhone.map(c => `
+          <div class="notify-row ${done.has(c.id) ? "done" : ""}" id="nr-${c.id}">
+            <span>${escapeHtml(c.full_name || "Cliente")}<small>${escapeHtml(c.phone || "")}</small></span>
+            <button class="btn btn-pink btn-sm" onclick="sendNotifyWa('${c.id}')">${done.has(c.id) ? "Reenviar" : "WhatsApp"}</button>
+          </div>`).join("") : `<p class="center-msg">Nenhum cliente com telefone cadastrado.</p>`}
+      </div>
+    </div>`;
+}
+function notifyText(name) {
+  const first = String(name || "").trim().split(/\s+/)[0];
+  const base = (document.getElementById("notifyMsg") || { value: admin.data.notifyMsg }).value;
+  return first ? base.replace(/^Oi!/, `Oi, ${first}!`) : base;
+}
+function sendNotifyWa(id) {
+  const c = (admin.data.dCustomers || []).find(x => x.id === id);
+  if (!c) return;
+  window.open(`https://wa.me/${notifyPhone(c.phone)}?text=${encodeURIComponent(notifyText(c.full_name))}`, "_blank");
+  admin.data.notified.add(id);
+  const row = document.getElementById("nr-" + id);
+  if (row) { row.classList.add("done"); row.querySelector("button").textContent = "Reenviar"; }
+}
+async function copyNotifyMsg() {
+  try { await navigator.clipboard.writeText(document.getElementById("notifyMsg").value); alert("Mensagem copiada."); }
+  catch (e) { document.getElementById("notifyMsg").select(); alert("Selecione e copie a mensagem (Ctrl+C)."); }
+}
+function resetNotifyMsg() { admin.data.notifyMsg = defaultNotifyMessage(); document.getElementById("notifyMsg").value = admin.data.notifyMsg; }
+function mailList() { return (admin.data.dCustomers || []).map(c => c.email).filter(Boolean); }
+function mailNotify() {
+  const list = mailList();
+  if (!list.length) { alert("Nenhum cliente com e-mail."); return; }
+  const body = document.getElementById("notifyMsg").value;
+  location.href = `mailto:?bcc=${encodeURIComponent(list.join(","))}&subject=${encodeURIComponent("Delivery aberto — Gizona Doces")}&body=${encodeURIComponent(body)}`;
+}
+async function copyNotifyEmails() {
+  const txt = mailList().join(", ");
+  try { await navigator.clipboard.writeText(txt); alert("E-mails copiados. Cole no campo CCO do seu e-mail."); } catch (e) { prompt("Copie os e-mails:", txt); }
+}
+
+function openQuickSale() {
+  if (!admin.data.dProducts.length) { alert("Cadastre antes um produto em Produtos → Delivery."); return; }
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById("stockFormArea").innerHTML = `
+    <div class="admin-card"><h2>Dar baixa rápida</h2>
+      <p class="hint">Para vendas feitas por fora do site. Cria um pedido de delivery já entregue (aparece em Pedidos e no Financeiro) e o estoque diminui também no site.</p>
+      <div class="form-grid">
+        <label>Produto<select id="qsProduct" onchange="qsFill()">${admin.data.dProducts.map(p => `<option value="${p.id}" data-price="${p.price}">${p.name}</option>`).join("")}</select></label>
+        <label>Quantidade<input type="number" min="1" step="1" id="qsQty" value="1"></label>
+        <label>Valor unitário (R$)<input type="number" min="0" step="0.01" id="qsPrice"></label>
+        <label>Pagamento<select id="qsPay">${PAYMENT_OPTIONS.map(o => `<option>${o}</option>`).join("")}</select></label>
+        <label>Cliente (opcional)<input id="qsName" placeholder="Venda avulsa"></label>
+        <label>Data<input type="date" id="qsDate" value="${today}"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveQuickSale()">Registrar baixa</button>
+        <button class="btn btn-outline" onclick="document.getElementById('stockFormArea').innerHTML=''">Cancelar</button>
+      </div></div>`;
+  qsFill();
+}
+function qsFill() {
+  const sel = document.getElementById("qsProduct");
+  const opt = sel && sel.options[sel.selectedIndex];
+  if (opt) document.getElementById("qsPrice").value = opt.dataset.price || "";
+}
+async function saveQuickSale() {
+  const pid = document.getElementById("qsProduct").value;
+  const qty = parseInt(document.getElementById("qsQty").value);
+  const price = Number(document.getElementById("qsPrice").value) || 0;
+  if (!pid || !qty || qty <= 0) { alert("Informe o produto e a quantidade."); return; }
+  const prod = admin.data.dProducts.find(p => p.id === pid);
+  const row = deliveryStockRows().find(r => r.p.id === pid);
+  if (row && qty > row.stock) { alert(`Só há ${row.stock} em estoque. Registre antes uma nova leva.`); return; }
+  const total = Number((qty * price).toFixed(2));
+  const pay = document.getElementById("qsPay").value;
+  const { data, error } = await sb.from("orders").insert({
+    order_date: document.getElementById("qsDate").value || null,
+    origin: "manual", order_type: "delivery", status: "delivered",
+    customer_name: document.getElementById("qsName").value.trim() || "Venda avulsa", customer_phone: "—",
+    items: [{ id: pid, product_name: prod.name, category: "delivery", quantity: qty, unit_price: price, subtotal: total }],
+    total, subtotal: total, payment_method_1: pay, payment_amount_1: total, observations: "Baixa rápida (venda por fora do site)",
+  }).select().single();
+  if (error) { console.error(error); alert(/Estoque insuficiente/i.test(error.message || "") ? "Estoque insuficiente." : "Não foi possível registrar: " + (error.message || "")); return; }
+  await ensureRevenueForOrderQuiet(data);
+  await loadEstoqueProdutos(document.getElementById("adminMain"));
+}
+async function ensureRevenueForOrderQuiet(order) {
+  const { data: existing } = await sb.from("revenue_entries").select("id").eq("order_id", order.id).maybeSingle();
+  if (existing) return;
+  const { error } = await sb.from("revenue_entries").insert({ entry_date: new Date().toISOString().slice(0, 10), description: "Pedido " + order.order_number, amount: order.total, source: "site", order_id: order.id });
+  if (error) { console.error(error); alert("A baixa foi registrada, mas a receita não entrou no Financeiro: " + (error.message || "")); }
 }

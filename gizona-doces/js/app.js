@@ -27,6 +27,9 @@ const state = {
   coupon: null, couponInput: "", couponMsg: "", couponSig: "",
   shipping: { status: "idle" }, shipCfg: null,
   deliveryCatalog: null,   // produtos de delivery com estoque (RPC delivery_catalog)
+  deliveryStatus: null,    // { open, message } (RPC delivery_status); null = ainda não carregou / script não rodado
+  fulfillment: null,       // "delivery" | "pickup" (null = padrão conforme a sacola)
+  originCoords: null, geoCache: {}, bagNotice: "",
 };
 
 const app = document.getElementById("app");
@@ -629,11 +632,20 @@ async function setOrderTab(tab) {
 }
 
 /* ---------------- DELIVERY ---------------- */
+async function loadDeliveryStatus() {
+  try {
+    const { data, error } = await sb.rpc("delivery_status");
+    state.deliveryStatus = error || !data ? null : data;
+  } catch (e) { state.deliveryStatus = null; }
+}
+function deliveryClosed() { return !!(state.deliveryStatus && state.deliveryStatus.open === false); }
 async function loadDeliveryCatalog() {
   if (!sb) { state.deliveryCatalog = []; return; }
   try {
-    const { data, error } = await sb.rpc("delivery_catalog");
+    const hadItems = Object.keys(state.delivery).length > 0;
+    const [{ data, error }] = await Promise.all([sb.rpc("delivery_catalog"), loadDeliveryStatus()]);
     state.deliveryCatalog = error ? [] : (data || []);
+    if (hadItems && deliveryClosed()) { state.delivery = {}; state.bagNotice = "O delivery foi fechado e os itens de delivery saíram da sua sacola."; }
     // remove do carrinho o que acabou ou passou do estoque
     Object.keys(state.delivery).forEach(id => {
       const p = state.deliveryCatalog.find(x => x.id === id);
@@ -651,6 +663,13 @@ function deliveryTotal() {
 function renderDeliveryList() {
   const cat = state.deliveryCatalog;
   if (cat === null) return `<p class="hint center">Carregando...</p>`;
+  if (deliveryClosed()) return `
+    <div class="delivery-soon">
+      <svg viewBox="0 0 24 24" width="34" height="34" fill="none"><path d="M3 7h11v9H3V7z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 10h4l3 3v3h-7v-6z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/><circle cx="7" cy="18" r="1.6" stroke="var(--pink)" stroke-width="1.4"/><circle cx="17" cy="18" r="1.6" stroke="var(--pink)" stroke-width="1.4"/></svg>
+      <p class="delivery-soon-title">Delivery fechado</p>
+      <p class="delivery-soon-text">${escapeAttr((state.deliveryStatus && state.deliveryStatus.message) || "O delivery está fechado no momento. Assim que abrirmos uma nova fornada você será avisado!")}</p>
+      <p class="delivery-soon-text">As encomendas continuam abertas — é só escolher na aba Encomendas.</p>
+    </div>`;
   if (!cat.length) return `
     <div class="delivery-soon">
       <svg viewBox="0 0 24 24" width="34" height="34" fill="none"><path d="M3 7h11v9H3V7z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 10h4l3 3v3h-7v-6z" stroke="var(--pink)" stroke-width="1.6" stroke-linejoin="round"/><circle cx="7" cy="18" r="1.6" stroke="var(--pink)" stroke-width="1.4"/><circle cx="17" cy="18" r="1.6" stroke="var(--pink)" stroke-width="1.4"/></svg>
@@ -660,6 +679,7 @@ function renderDeliveryList() {
   const total = deliveryTotal();
   const has = Object.keys(state.delivery).length > 0;
   return `
+    ${state.deliveryStatus && state.deliveryStatus.open ? `<p class="open-pill"><i></i>Delivery aberto</p>` : ""}
     <div class="flavor-list">
       ${cat.map(p => {
         const qty = state.delivery[p.id] || 0;
@@ -937,6 +957,19 @@ function bagData() {
   return { brigItems, gelaItems, delItems, brigSubtotal, gelaSubtotal, encSub, delSub, itemCount, hasEnc: brigItems.length + gelaItems.length > 0, hasDel: delItems.length > 0 };
 }
 
+function fulfillMode(b) {
+  b = b || bagData();
+  return state.fulfillment || (b.hasDel ? "delivery" : "pickup");
+}
+function setFulfillment(mode) {
+  state.fulfillment = mode;
+  state.shipping = { status: "idle" };
+  render();
+}
+function pickupAddress() {
+  return (state.shipCfg && state.shipCfg.origin_address) || "";
+}
+
 function bagMoney(b) {
   b = b || bagData();
   const itemsTotal = b.encSub + b.delSub;
@@ -945,7 +978,7 @@ function bagMoney(b) {
   const cfg = state.shipCfg;
   const sh = state.shipping;
   let fee = null, feeFree = false, feeNote = "";
-  if (b.hasDel) {
+  if (b.hasDel && fulfillMode(b) === "delivery") {
     if (coupon && coupon.free_shipping) { feeFree = true; fee = 0; }
     else if (cfg && cfg.free_above != null && itemsTotal - discount >= Number(cfg.free_above)) { feeFree = true; fee = 0; feeNote = "acima de " + fmt(Number(cfg.free_above)); }
     else if (sh.status === "ok") fee = sh.fee;
@@ -963,15 +996,24 @@ function paintBagTotals() {
   const sh = state.shipping;
   const cfg = state.shipCfg;
   let feeRow = "";
-  if (b.hasDel) {
-    let val;
+  const mode = fulfillMode(b);
+  if (b.hasDel && mode === "pickup") {
+    feeRow = `<div class="sum-row"><span>Retirada</span><span><strong class="free">Grátis</strong></span></div>`;
+  } else if (b.hasDel) {
+    const hasAddr = bagAddress().trim().length >= 6;
+    let val, note;
     if (m.feeFree) val = `<s style="color:var(--muted)">${sh.status === "ok" ? fmt(sh.fee) : ""}</s> <strong class="free">Grátis</strong>`;
-    else if (sh.status === "loading") val = `<span class="muted">calculando...</span>`;
+    else if (sh.status === "loading" || (sh.status === "idle" && hasAddr)) val = `<span class="muted">calculando...</span>`;
     else if (sh.status === "ok") val = fmt(sh.fee);
     else if (sh.status === "out") val = `<span class="muted">fora da área</span>`;
+    else if (sh.status === "error" || sh.status === "off") val = `<span class="muted">a combinar</span>`;
     else val = `<span class="muted">informe o endereço</span>`;
+    if (sh.status === "out") note = "Esse endereço fica fora da nossa área padrão — combinamos a entrega pelo WhatsApp.";
+    else if (sh.status === "error") note = `Não conseguimos localizar esse endereço. Confira rua, número e cidade ou <a href="#" onclick="estimateShipping(true);return false">tente de novo</a> — se preferir, combinamos a entrega pelo WhatsApp.`;
+    else if (sh.status === "off") note = "A entrega será combinada pelo WhatsApp.";
+    else note = cfg ? cfg.note : "";
     feeRow = `<div class="sum-row"><span>Entrega <small>(estimativa${sh.status === "ok" && sh.km ? ` · ${sh.km.toFixed(1).replace(".", ",")} km` : ""})</small></span><span>${val}</span></div>
-      <p class="sum-note">${sh.status === "out" ? "Esse endereço fica fora da nossa área padrão — combinamos a entrega pelo WhatsApp." : sh.status === "error" ? "Não conseguimos calcular agora. A entrega será combinada pelo WhatsApp." : (cfg ? cfg.note : "")}</p>`;
+      <p class="sum-note">${note}</p>`;
   }
   sumEl.innerHTML = `
     <p class="cart-section-title">Resumo de valores</p>
@@ -981,7 +1023,8 @@ function paintBagTotals() {
     ${feeRow}
     <div class="sum-row total"><span>Total</span><span>${fmt(m.grand)}</span></div>
     ${b.hasEnc && b.hasDel ? `<p class="sum-note">Seu pedido será separado em <strong>delivery</strong> (entrega agora) e <strong>encomenda</strong> (para a data do evento), mas você finaliza tudo de uma vez.</p>` : ""}
-    ${b.hasEnc && !b.hasDel ? `<p class="sum-note">Retirada no endereço combinado. Entrega de encomendas somente após pagamento total.</p>` : ""}`;
+    ${b.hasEnc && mode === "pickup" ? `<p class="sum-note">Retirada da encomenda no endereço combinado.</p>` : ""}
+    ${b.hasEnc && mode === "delivery" ? `<p class="sum-note">A entrega da encomenda é combinada pelo WhatsApp e acontece somente após o pagamento total.</p>` : ""}`;
   barEl.innerHTML = `
     <div><small>Total${m.fee === 0 && b.hasDel ? " com <strong>entrega grátis</strong>" : ""}</small><strong>${fmt(m.grand)}</strong> <small>/ ${b.itemCount} ${b.itemCount === 1 ? "item" : "itens"}</small></div>
     <button id="bagSendBtn" ${bagCanSubmit(b) ? "" : "disabled"} onclick="submitBag()">Enviar pedido</button>`;
@@ -992,7 +1035,8 @@ function bagCanSubmit(b) {
   if (!b.hasEnc && !b.hasDel) return false;
   const c = auth.customer ? { name: auth.customer.full_name || "", phone: auth.customer.phone || "" } : state.customer;
   if (!c.name.trim() || !c.phone.trim()) return false;
-  if (b.hasDel && !bagAddress().trim()) return false;
+  if (fulfillMode(b) === "delivery" && !bagAddress().trim()) return false;
+  if (b.hasDel && deliveryClosed()) return false;
   return true;
 }
 function bagAddress() {
@@ -1007,6 +1051,7 @@ function renderCart() {
     : state.customer;
   const unusedBrigFlavors = BRIGADEIRO_PRODUCTS.filter(p => !state.flavors[p.id]);
   const empty = !b.hasEnc && !b.hasDel;
+  const fm = fulfillMode(b);
 
   // dados auxiliares carregados em segundo plano
   if (state.deliveryCatalog === null) loadDeliveryCatalog().then(() => { if (state.step === "cart") render(); });
@@ -1015,6 +1060,7 @@ function renderCart() {
   app.innerHTML = `
     <section class="screen">
       <div class="screen-head pink"><h2>Sacola</h2><p>Revise seu pedido</p></div>
+      ${state.bagNotice ? `<div class="cart-summary bag-notice">${escapeAttr(state.bagNotice)}</div>` : ""}
       ${empty ? `<div class="cart-summary"><p class="hint center">Sua sacola está vazia.</p><button class="btn btn-primary btn-block" onclick="go('category')">Ver produtos</button></div>` : ""}
 
       ${b.brigItems.length ? `
@@ -1092,15 +1138,25 @@ function renderCart() {
       ${!empty ? renderBagSuggestions(b) : ""}
 
       ${!empty ? `
+      <div class="cart-summary fulfil-box">
+        <p class="cart-section-title">Como você quer receber?</p>
+        <div class="seg">
+          <button class="${fm === "delivery" ? "on" : ""}" onclick="setFulfillment('delivery')"><svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M3 7h11v9H3V7z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 10h4l3 3v3h-7v-6z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="7" cy="18" r="1.6" stroke="currentColor" stroke-width="1.5"/><circle cx="17" cy="18" r="1.6" stroke="currentColor" stroke-width="1.5"/></svg>Entrega</button>
+          <button class="${fm === "pickup" ? "on" : ""}" onclick="setFulfillment('pickup')"><svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M12 21s7-6.2 7-11.5A7 7 0 005 9.5C5 14.800 12 21 12 21z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="9.5" r="2.5" stroke="currentColor" stroke-width="1.6"/></svg>Retirada</button>
+        </div>
+        ${fm === "pickup" ? `
+          <div class="pickup-card"><strong>Retirar em</strong><span>${pickupAddress() ? escapeAttr(pickupAddress()) : "Endereço combinado pelo WhatsApp"}</span><small>Sem taxa de entrega. Avisamos pelo WhatsApp quando estiver pronto.</small></div>`
+        : (b.hasDel ? `<p class="hint" style="margin:10px 0 0">Entrega com taxa estimada pela distância até o endereço abaixo.</p>` : "")}
+      </div>
       <div class="cart-form-block">
         <p class="cart-section-title">${isGuestOrder ? "Seus dados para contato" : "Dados do pedido"}</p>
         ${isGuestOrder ? `
           <label>Nome completo<input type="text" value="${c.name}" oninput="c_update('name', this.value); paintBagTotals()"></label>
           <label>Telefone / WhatsApp<input type="text" placeholder="(19) 99999-9999" value="${c.phone}" oninput="maskPhone(this); c_update('phone', this.value); paintBagTotals()"></label>
         ` : `<p class="hint">Usaremos os dados do seu perfil (nome e telefone): <strong>${auth.customer.full_name}</strong>.</p>`}
-        <label>Endereço ${b.hasDel ? "de entrega *" : `<small style="font-weight:400">(pode editar se for diferente do cadastro)</small>`}
-          <textarea rows="2" placeholder="Rua, número, bairro, cidade" oninput="c_update('address', this.value); paintBagTotals()" onchange="estimateShipping()">${bagAddress()}</textarea>
-        </label>
+        ${fm === "delivery" ? `<label>Endereço de entrega *
+          <textarea rows="2" placeholder="Rua, número, bairro, cidade" oninput="c_update('address', this.value); scheduleShipping()" onchange="estimateShipping()">${bagAddress()}</textarea>
+        </label>` : ""}
         ${b.hasEnc ? `
         <label>Data do evento<input type="date" id="eventDateInput" min="${minEventDate()}" value="${c.eventDate}" onchange="handleEventDateInput(this)"></label>
         <p class="hint" style="margin-top:-6px">Trabalhamos com antecedência mínima de 5 dias.</p>` : ""}
@@ -1134,8 +1190,9 @@ function renderCart() {
   if (!empty) {
     paintBagTotals();
     syncCouponWithBag();
-    if (b.hasDel && state.shipping.status === "idle" && bagAddress().trim()) estimateShipping();
+    if (b.hasDel && fm === "delivery" && state.shipping.status === "idle" && bagAddress().trim()) estimateShipping();
   }
+  state.bagNotice = "";
 }
 
 function escapeAttr(v) { return String(v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
@@ -1168,7 +1225,6 @@ function addDeliveryFromBag(id) {
   const p = (state.deliveryCatalog || []).find(x => x.id === id);
   if (!p || p.stock <= 0) return;
   state.delivery[id] = Math.min(p.stock, (state.delivery[id] || 0) + 1);
-  state.shipping = { status: "idle" };
   render();
 }
 function cartChangeDelivery(id, dir) {
@@ -1224,37 +1280,85 @@ function haversineKm(lat1, lng1, lat2, lng2) {
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(a));
 }
-async function geocodeDestination(address) {
-  const cepMatch = address.match(/\b(\d{5})-?(\d{3})\b/);
-  const cep = cepMatch ? cepMatch[1] + cepMatch[2] : (auth.customer && auth.customer.cep && address.trim() === formatAddress(auth.customer).trim() ? String(auth.customer.cep).replace(/\D/g, "") : "");
-  if (cep.length === 8) {
-    try {
-      const r = await fetch(`https://cep.awesomeapi.com.br/json/${cep}`);
-      if (r.ok) { const d = await r.json(); if (d.lat && d.lng) return { lat: Number(d.lat), lng: Number(d.lng) }; }
-    } catch (e) { /* tenta o outro método */ }
-  }
+async function nominatim(q) {
   try {
-    const q = encodeURIComponent(address.replace(/\s+/g, " ").trim() + ", Brasil");
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${q}`);
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${encodeURIComponent(q)}`);
     if (r.ok) { const d = await r.json(); if (d[0]) return { lat: Number(d[0].lat), lng: Number(d[0].lon) }; }
   } catch (e) { /* sem rede */ }
   return null;
 }
-let shippingToken = 0;
-async function estimateShipping() {
+async function geocodeText(address, cepHint) {
+  const key = address.replace(/\s+/g, " ").trim().toLowerCase();
+  if (state.geoCache[key]) return state.geoCache[key];
+  const cepMatch = address.match(/\b(\d{5})-?(\d{3})\b/);
+  const cep = cepMatch ? cepMatch[1] + cepMatch[2] : (cepHint || "");
+  let found = null, viaCep = null;
+  if (cep.length === 8) {
+    try {
+      const r = await fetch(`https://cep.awesomeapi.com.br/json/${cep}`);
+      if (r.ok) { const d = await r.json(); if (d.lat && d.lng) found = { lat: Number(d.lat), lng: Number(d.lng) }; }
+    } catch (e) { /* tenta o próximo */ }
+    if (!found) {
+      try {
+        const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+        if (r.ok) { const d = await r.json(); if (!d.erro) viaCep = d; }
+      } catch (e) { /* tenta o próximo */ }
+    }
+  }
+  const clean = address.replace(/\s+/g, " ").trim();
+  if (!found) found = await nominatim(clean + ", Brasil");
+  if (!found && viaCep) found = await nominatim(`${viaCep.logradouro || ""}, ${viaCep.bairro || ""}, ${viaCep.localidade} - ${viaCep.uf}, Brasil`) || await nominatim(`${viaCep.bairro || ""}, ${viaCep.localidade} - ${viaCep.uf}, Brasil`);
+  if (!found) {
+    // sem o número da casa (ex.: "Rua X, 74, Bairro, Cidade" -> "Rua X, Bairro, Cidade")
+    const noNum = clean.replace(/[,\s-]+\d+[a-zA-Z]?(?=[,\s-]|$)/, "");
+    if (noNum !== clean) found = await nominatim(noNum + ", Brasil");
+  }
+  if (!found) {
+    // última tentativa: só bairro/cidade (últimos trechos)
+    const parts = clean.split(/[,\-]/).map(x => x.trim()).filter(Boolean);
+    if (parts.length > 2) found = await nominatim(parts.slice(-2).join(", ") + ", Brasil");
+  }
+  if (found) state.geoCache[key] = found;
+  return found;
+}
+async function geocodeDestination(address) {
+  const cepHint = auth.customer && auth.customer.cep && address.trim() === formatAddress(auth.customer).trim() ? String(auth.customer.cep).replace(/\D/g, "") : "";
+  return geocodeText(address, cepHint);
+}
+// ponto de saída: usa as coordenadas do admin; se faltarem, descobre pelo endereço cadastrado
+async function resolveOrigin(cfg) {
+  if (cfg.origin_lat != null && cfg.origin_lng != null) return { lat: Number(cfg.origin_lat), lng: Number(cfg.origin_lng) };
+  if (state.originCoords) return state.originCoords;
+  const g = await geocodeText(cfg.origin_address || "Americana, SP", "");
+  state.originCoords = g || { lat: -22.7392, lng: -47.3314 }; // centro de Americana/SP (último recurso)
+  return state.originCoords;
+}
+let shippingToken = 0, shippingTimer = null;
+function scheduleShipping() {
+  clearTimeout(shippingTimer);
+  shippingToken++;
+  const addr = bagAddress().trim();
+  if (addr.length < 6) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
+  state.shipping = { status: "loading" };
+  paintBagTotals();
+  shippingTimer = setTimeout(() => estimateShipping(), 800);
+}
+async function estimateShipping(force) {
+  clearTimeout(shippingTimer);
   const b = bagData();
   const address = bagAddress().trim();
-  if (!b.hasDel || !address) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
+  if (!b.hasDel || fulfillMode(b) !== "delivery" || address.length < 6) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
   if (!state.shipCfg) await loadShipCfg();
   const cfg = state.shipCfg;
-  if (!cfg || cfg.enabled === false || cfg.origin_lat == null || cfg.origin_lng == null) { state.shipping = { status: "error" }; paintBagTotals(); return; }
+  if (!cfg || cfg.enabled === false) { state.shipping = { status: "off" }; paintBagTotals(); return; }
   const token = ++shippingToken;
   state.shipping = { status: "loading" };
   paintBagTotals();
-  const dest = await geocodeDestination(address);
+  if (force) delete state.geoCache[address.replace(/\s+/g, " ").trim().toLowerCase()];
+  const [origin, dest] = await Promise.all([resolveOrigin(cfg), geocodeDestination(address)]);
   if (token !== shippingToken) return;
   if (!dest) { state.shipping = { status: "error" }; paintBagTotals(); return; }
-  const km = haversineKm(cfg.origin_lat, cfg.origin_lng, dest.lat, dest.lng) * Number(cfg.circuity || 1.3);
+  const km = haversineKm(origin.lat, origin.lng, dest.lat, dest.lng) * Number(cfg.circuity || 1.3);
   if (km > Number(cfg.max_km)) { state.shipping = { status: "out", km }; paintBagTotals(); return; }
   const raw = Math.max(Number(cfg.min_fee), Number(cfg.base_fee) + Number(cfg.per_km) * km);
   state.shipping = { status: "ok", km, fee: Math.ceil(raw * 2) / 2 };
@@ -1289,7 +1393,8 @@ async function submitBag() {
   const c = auth.customer
     ? { ...state.customer, name: auth.customer.full_name || state.customer.name, phone: auth.customer.phone || state.customer.phone }
     : state.customer;
-  const address = bagAddress().trim();
+  const mode = fulfillMode(b);
+  const address = mode === "delivery" ? bagAddress().trim() : "";
 
   // confere o cupom de novo com os valores finais
   let coupon = null;
@@ -1298,7 +1403,7 @@ async function submitBag() {
     if (!r.valid) { state.coupon = null; state.couponMsg = r.message; abort("Seu cupom não pode mais ser usado: " + r.message); return render(); }
     coupon = r; state.coupon = r;
   }
-  if (b.hasDel && state.shipping.status === "loading") { abort("Aguarde o cálculo da entrega e tente novamente."); return; }
+  if (b.hasDel && mode === "delivery" && state.shipping.status === "loading") { abort("Aguarde o cálculo da entrega e tente novamente."); return; }
 
   const m = bagMoney(b);
   const paymentMap = { "Pix": "pix", "Crédito": "credito" };
@@ -1307,11 +1412,12 @@ async function submitBag() {
     customer_name: c.name, customer_phone: c.phone,
     customer_email: auth.customer ? auth.customer.email : null,
     payment_method: paymentMap[c.payment] || null,
-    origin: "site",
+    origin: "site", fulfillment: mode,
   };
   const orders = [];
   let msg = `Olá! Gostaria de fazer um pedido na Gizona Doces.\n\nNome: ${c.name}\nTelefone: ${c.phone}\n`;
-  if (address) msg += `Endereço: ${address}\n`;
+  if (mode === "pickup") msg += `🏠 RETIRADA no local${pickupAddress() ? ` (${pickupAddress()})` : ""}\n`;
+  else if (address) msg += `🛵 ENTREGA — Endereço: ${address}\n`;
   if (c.payment) msg += `Forma de pagamento: ${c.payment}\n`;
   msg += `\n`;
 
@@ -1321,8 +1427,8 @@ async function submitBag() {
       ...common, order_type: "delivery",
       items: b.delItems.map(i => ({ id: i.id, product_name: i.name, category: "delivery", quantity: i.qty, unit_price: Number(i.price), subtotal: Number(i.price) * i.qty })),
       subtotal: b.delSub, discount_amount: 0,
-      delivery_fee: m.fee || 0, delivery_km: state.shipping.status === "ok" ? Number(state.shipping.km.toFixed(2)) : null,
-      event_date: null, personalization: {}, observations: `Endereço: ${address}`,
+      delivery_fee: mode === "delivery" ? (m.fee || 0) : 0, delivery_km: mode === "delivery" && state.shipping.status === "ok" ? Number(state.shipping.km.toFixed(2)) : null,
+      event_date: null, personalization: {}, observations: mode === "delivery" ? `Endereço: ${address}` : "Retirada no local",
     });
   }
   if (b.hasEnc) {
@@ -1363,7 +1469,7 @@ async function submitBag() {
     orders.push({
       ...common, order_type: "encomenda", items, subtotal: b.encSub, discount_amount: 0, delivery_fee: 0,
       event_date: c.eventDate || null, personalization: state.wantsArt ? state.personalization : {},
-      observations: address ? `Endereço: ${address}` : "",
+      observations: mode === "delivery" ? (address ? `Endereço: ${address}` : "") : "Retirada no local",
     });
   }
 
@@ -1376,7 +1482,7 @@ async function submitBag() {
   orders.forEach(o => { o.total = Number((o.subtotal - o.discount_amount).toFixed(2)); });
 
   if (coupon && m.discount > 0) msg += `Cupom ${coupon.code}: - ${fmt(m.discount)}\n`;
-  if (b.hasDel) msg += m.feeFree ? `Entrega: Grátis\n` : (state.shipping.status === "ok" ? `Entrega (estimativa): ${fmt(m.fee)} — pode haver reajuste\n` : `Entrega: a combinar\n`);
+  if (b.hasDel && mode === "delivery") msg += m.feeFree ? `Entrega: Grátis\n` : (state.shipping.status === "ok" ? `Entrega (estimativa): ${fmt(m.fee)} — pode haver reajuste\n` : `Entrega: a combinar\n`);
   msg += `\nTotal estimado: ${fmt(m.grand)}${b.hasEnc && !b.hasDel ? "" : ""}\n\nAguardo confirmação.`;
 
   // grava os pedidos (delivery primeiro: é ele que confere o estoque)
@@ -1385,6 +1491,11 @@ async function submitBag() {
     if (error) {
       console.error(error);
       const text = error.message || "";
+      if (/Delivery fechado/i.test(text)) {
+        await loadDeliveryCatalog();
+        abort("O delivery acabou de fechar. Tire os itens de delivery da sacola (ou envie só a encomenda).");
+        return render();
+      }
       if (/Estoque insuficiente/i.test(text)) {
         await loadDeliveryCatalog();
         abort("Alguém acabou de levar um dos produtos do delivery. Atualizamos o estoque — confira a sacola.");
@@ -1402,7 +1513,7 @@ async function submitBag() {
 
   const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
   if (whatsappWindow) whatsappWindow.location.href = url; else window.location.href = url;
-  state.delivery = {}; state.coupon = null; state.couponMsg = ""; state.shipping = { status: "idle" };
+  state.delivery = {}; state.coupon = null; state.couponMsg = ""; state.shipping = { status: "idle" }; state.fulfillment = null;
   loadDeliveryCatalog();
   renderConfirmation();
   decorateScreen();
@@ -1567,6 +1678,24 @@ function navButtons({ back, next, nextLabel }) {
     </div>
   `;
 }
+
+/* ---------------- Atualização do delivery (estoque / aberto-fechado) ---------------- */
+function deliverySig() {
+  return JSON.stringify([state.deliveryStatus && state.deliveryStatus.open, (state.deliveryCatalog || []).map(p => [p.id, p.stock, p.price])]);
+}
+async function refreshDelivery() {
+  if (!sb || document.hidden) return;
+  const onList = state.step === "category" && state.orderTab === "delivery";
+  const onCart = state.step === "cart" && Object.keys(state.delivery).length > 0;
+  if (!onList && !onCart) return;
+  const before = deliverySig();
+  await loadDeliveryCatalog();
+  if (before === deliverySig() && !state.bagNotice) return;
+  if (state.step === "category" && state.orderTab === "delivery") { renderCategory(); decorateScreen(); }
+  else if (state.step === "cart") { render(); }
+}
+setInterval(refreshDelivery, 20000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshDelivery(); });
 
 /* ---------------- Init ---------------- */
 (async function init() {
