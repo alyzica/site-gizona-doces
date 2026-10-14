@@ -796,7 +796,7 @@ function renderBrigadeiroFlavors() {
                     onclick="toggleBrigFlavor('${p.id}')" ${!isSel && !canSel ? "disabled" : ""}>
               <span class="flavor-thumb-pair">
                 <span class="flavor-thumb"><img src="${p.image}" alt="${p.name}" style="--img-scale:${p.imageScale};--img-x:${p.imageX}%;--img-y:${p.imageY}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
-                <span class="flavor-thumb"><img src="${p.image2}" alt="${p.name} mordido" style="--img-scale:${p.image2Scale};--img-x:${p.image2X}%;--img-y:${p.image2Y}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
+                ${p.image2 ? `<span class="flavor-thumb"><img src="${p.image2}" alt="${p.name} mordido" style="--img-scale:${p.image2Scale};--img-x:${p.image2X}%;--img-y:${p.image2Y}%" onerror="this.parentElement.remove()"></span>` : ""}
               </span>
               <span class="flavor-info">
                 <strong>${p.name}</strong>

@@ -97,6 +97,7 @@ function navIcon(name) {
     calendar: `<rect x="3" y="5" width="18" height="16" rx="2" fill="none"/><path d="M3 10h18M8 3v4M16 3v4" fill="none"/>`,
     ticket: `<path d="M3 8a2 2 0 012-2h14a2 2 0 012 2v2a2 2 0 100 4v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 100-4V8z" fill="none"/><path d="M13 6v12" fill="none" stroke-dasharray="2 2"/>`,
     truck: `<path d="M3 7h11v9H3V7z" fill="none"/><path d="M14 10h4l3 3v3h-7v-6z" fill="none"/><circle cx="7" cy="18" r="1.6" fill="none"/><circle cx="17" cy="18" r="1.6" fill="none"/>`,
+    sheet: `<path d="M7 3h8l4 4v14H7z" fill="none"/><path d="M15 3v4h4M10 12h6M10 16h6" fill="none"/>`,
     crown: `<path d="M3 8l4 3 5-6 5 6 4-3-2 10H5L3 8z" fill="currentColor" stroke="none"/>`,
     gift: `<rect x="4" y="9" width="16" height="11" rx="1" fill="none"/><path d="M4 13h16M12 9v11M12 9c-1.5-4-6-4-6-1.5S9 9 12 9zm0 0c1.5-4 6-4 6-1.5S15 9 12 9z" fill="none"/>`,
   };
@@ -118,6 +119,7 @@ function renderShell() {
           <button class="${admin.tab === 'estoque' ? 'active' : ''}" onclick="setTab('estoque')">${navIcon("box")}Estoque de Insumos</button>
           <button class="${admin.tab === 'estoque_produtos' ? 'active' : ''}" onclick="setTab('estoque_produtos')">${navIcon("cube")}Estoque de Produtos</button>
           <button class="${admin.tab === 'receitas' ? 'active' : ''}" onclick="setTab('receitas')">${navIcon("book")}Receitas</button>
+          <button class="${admin.tab === 'fichas' ? 'active' : ''}" onclick="setTab('fichas')">${navIcon("sheet")}Ficha técnica</button>
           <button class="${admin.tab === 'precificacao' ? 'active' : ''}" onclick="setTab('precificacao')">${navIcon("calc")}Precificação</button>
           <button class="${admin.tab === 'calendario' ? 'active' : ''}" onclick="setTab('calendario')">${navIcon("calendar")}Calendário</button>
           <button class="${admin.tab === 'cupons' ? 'active' : ''}" onclick="setTab('cupons')">${navIcon("ticket")}Cupons</button>
@@ -147,6 +149,7 @@ async function loadTab() {
     else if (admin.tab === "estoque") await loadEstoque(main);
     else if (admin.tab === "estoque_produtos") await loadEstoqueProdutos(main);
     else if (admin.tab === "receitas") await loadReceitas(main);
+    else if (admin.tab === "fichas") await loadFichas(main);
     else if (admin.tab === "precificacao") await loadPrecificacao(main);
     else if (admin.tab === "calendario") await loadCalendario(main);
     else if (admin.tab === "cupons") await loadCupons(main);
@@ -662,7 +665,7 @@ function renderProductsTable(main) {
                 <td>${p.name}</td>
                 <td>${p.category === "brigadeiro" ? "Brigadeiro" : p.category === "geladinho" ? "Geladinho" : "Delivery"}</td>
                 <td>${fmt(p.price)}</td>
-                <td>${p.active ? "Sim" : "Não"}</td>
+                <td><label class="ds-toggle sm" title="${p.active ? "Ativo — clique para desativar" : "Inativo — clique para ativar"}"><input type="checkbox" ${p.active ? "checked" : ""} onchange="toggleProductActive('${p.id}', this.checked)"><span></span></label></td>
                 <td>
                   <button class="btn btn-outline btn-sm" onclick="openProductForm('${p.id}')">Editar</button>
                   <button class="btn btn-danger btn-sm" onclick="deleteProduct('${p.id}')">Excluir</button>
@@ -674,6 +677,19 @@ function renderProductsTable(main) {
       ` : `<p class="center-msg">Nenhum produto cadastrado.</p>`}
     </div>
   `;
+}
+async function toggleProductActive(id, active) {
+  const { error } = await sb.from("products").update({ active }).eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível alterar: " + (error.message || "")); await loadProducts(document.getElementById("adminMain")); return; }
+  const p = admin.data.products.find(x => x.id === id);
+  if (p) p.active = active;
+  renderProductsTable(document.getElementById("adminMain"));
+}
+function setPhotoCount(n) {
+  const box = document.getElementById("photo2Box");
+  if (box) box.style.display = n === 2 ? "" : "none";
+  document.querySelectorAll(".photo-count button").forEach(b => b.classList.toggle("on", Number(b.dataset.n) === n));
+  document.getElementById("pfPhotoCount").value = String(n);
 }
 function setProductTab(t) {
   admin.data.productTab = t;
@@ -697,9 +713,16 @@ function openProductForm(id) {
       </div>
       <label style="display:block;margin-top:10px">Descrição<textarea id="pfDesc" rows="2">${p ? p.description || "" : ""}</textarea></label>
 
+      <p class="photo-upload-label" style="margin-top:14px">Quantas fotos o produto tem?</p>
+      <input type="hidden" id="pfPhotoCount" value="${p && p.image_url_2 ? 2 : 1}">
+      <div class="photo-count">
+        <button type="button" data-n="1" class="${p && p.image_url_2 ? "" : "on"}" onclick="setPhotoCount(1)">Uma foto</button>
+        <button type="button" data-n="2" class="${p && p.image_url_2 ? "on" : ""}" onclick="setPhotoCount(2)">Duas fotos</button>
+      </div>
+      <p class="hint" style="margin:6px 0 0">Com uma foto, só ela aparece no site (sem quadro vazio ao lado).</p>
       <div class="photo-upload-row">
         <div class="photo-upload-box">
-          <p class="photo-upload-label">Foto inteira</p>
+          <p class="photo-upload-label">${p && p.image_url_2 ? "Foto inteira" : "Foto"}</p>
           <div id="pfImagePreview" class="photo-preview">${p && p.image_url ? productImagePreviewHTML(p.image_url, p, "primary") : "Sem foto"}</div>
           <input type="hidden" id="pfImage" value="${p ? p.image_url || "" : ""}">
           <input type="file" accept="image/*" id="pfImageFile" onchange="handlePhotoUpload(this, 'pfImage')">
@@ -707,7 +730,7 @@ function openProductForm(id) {
           ${imageAdjustControlsHTML(p, "primary")}
           <p id="pfImageStatus" class="photo-status"></p>
         </div>
-        <div class="photo-upload-box">
+        <div class="photo-upload-box" id="photo2Box" style="${p && p.image_url_2 ? "" : "display:none"}">
           <p class="photo-upload-label">Foto mordida</p>
           <div id="pfImage2Preview" class="photo-preview">${p && p.image_url_2 ? productImagePreviewHTML(p.image_url_2, p, "secondary") : "Sem foto"}</div>
           <input type="hidden" id="pfImage2" value="${p ? p.image_url_2 || "" : ""}">
@@ -746,7 +769,7 @@ function imageAdjustControlsHTML(p, kind) {
     <div class="image-adjust-controls">
       <div class="image-adjust-title">Ajuste da foto</div>
       <label>Zoom <output id="${prefix}ScaleOut">${Math.round(scale * 100)}%</output>
-        <input id="${prefix}Scale" type="range" min="0.5" max="2" step="0.01" value="${scale}" oninput="updateProductImagePreview('${prefix}')">
+        <input id="${prefix}Scale" type="range" min="1" max="3" step="0.01" value="${scale}" oninput="updateProductImagePreview('${prefix}')">
       </label>
       <label>Horizontal <output id="${prefix}XOut">${Math.round(x)}%</output>
         <input id="${prefix}X" type="range" min="0" max="100" step="1" value="${x}" oninput="updateProductImagePreview('${prefix}')">
@@ -821,7 +844,7 @@ function openImageCropper(targetFieldId, title) {
   imageCropper.targetFieldId = targetFieldId;
   imageCropper.title = title || "Ajustar foto";
   imageCropper.url = url;
-  imageCropper.scale = imageSetting(p, scaleKey, 1);
+  imageCropper.scale = Math.max(1, imageSetting(p, scaleKey, 1));
   imageCropper.x = imageSetting(p, xKey, 50);
   imageCropper.y = imageSetting(p, yKey, 50);
 
@@ -837,7 +860,7 @@ function openImageCropper(targetFieldId, title) {
         </div>
         <div class="cropper-zoom-row">
           <span>−</span>
-          <input id="cropperZoom" type="range" min="0.5" max="3" step="0.01" value="${imageCropper.scale}">
+          <input id="cropperZoom" type="range" min="1" max="3" step="0.01" value="${imageCropper.scale}">
           <span>+</span>
         </div>
         <div class="cropper-zoom-value" id="cropperZoomValue">${Math.round(imageCropper.scale * 100)}%</div>
@@ -1047,7 +1070,7 @@ async function saveProduct(id) {
     sort_order: parseInt(document.getElementById("pfSort").value) || 0,
     description: document.getElementById("pfDesc").value.trim(),
     image_url: document.getElementById("pfImage").value.trim(),
-    image_url_2: document.getElementById("pfImage2").value.trim(),
+    image_url_2: document.getElementById("pfPhotoCount").value === "2" ? document.getElementById("pfImage2").value.trim() : "",
     image_scale: Number(document.getElementById("pfImageScale")?.value) || 1,
     image_position_x: Number(document.getElementById("pfImageX")?.value) || 50,
     image_position_y: Number(document.getElementById("pfImageY")?.value) || 50,
@@ -1241,6 +1264,9 @@ function renderCaixa(main) {
   const totalSaidas = entries.filter(e => e.type === "saida").reduce((s, e) => s + Number(e.amount), 0);
   const totalRetiradas = entries.filter(e => e.type === "retirada").reduce((s, e) => s + Number(e.amount), 0);
   const saldo = totalEntradas - totalSaidas - totalRetiradas;
+  const norm = m => { const t = String(m || "").toLowerCase(); return t.includes("pix") ? "pix" : t.includes("dinheiro") ? "dinheiro" : "outros"; };
+  const bal = { dinheiro: 0, pix: 0, outros: 0 };
+  entries.forEach(e => { bal[norm(e.payment_method)] += (e.type === "entrada" ? 1 : -1) * Number(e.amount); });
 
   main.innerHTML = `
     <div class="admin-topbar"><h1>Caixa</h1><button class="btn btn-pink" onclick="openCashForm()">+ Nova movimentação</button></div>
@@ -1250,7 +1276,12 @@ function renderCaixa(main) {
       <div class="stat-card"><div class="label">Entradas</div><div class="value" style="color:#2E7D46">${fmt(totalEntradas)}</div></div>
       <div class="stat-card"><div class="label">Saídas</div><div class="value" style="color:#B23434">${fmt(totalSaidas)}</div></div>
       <div class="stat-card"><div class="label">Retiradas</div><div class="value" style="color:#6A2CC4">${fmt(totalRetiradas)}</div></div>
-      <div class="stat-card"><div class="label">Saldo</div><div class="value">${fmt(saldo)}</div></div>
+      <div class="stat-card"><div class="label">Saldo total</div><div class="value">${fmt(saldo)}</div></div>
+    </div>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">Saldo em dinheiro</div><div class="value" style="color:${bal.dinheiro < 0 ? "#B23434" : "var(--ink)"}">${fmt(bal.dinheiro)}</div></div>
+      <div class="stat-card"><div class="label">Saldo no Pix</div><div class="value" style="color:${bal.pix < 0 ? "#B23434" : "var(--ink)"}">${fmt(bal.pix)}</div></div>
+      ${Math.abs(bal.outros) > 0.004 ? `<div class="stat-card"><div class="label">Cartão / outros</div><div class="value">${fmt(bal.outros)}</div></div>` : ""}
     </div>
 
     <div id="cashFormArea"></div>
@@ -2216,23 +2247,35 @@ function openRecipeDetail(recipeId) {
 
   document.getElementById("recipeFormArea").innerHTML = `
     <div class="admin-card">
-      <div class="admin-topbar" style="margin-bottom:6px"><h2 style="margin:0">${recipe.name}</h2><button class="btn btn-outline btn-sm" onclick="document.getElementById('recipeFormArea').innerHTML=''">Fechar</button></div>
+      <div class="admin-topbar" style="margin-bottom:6px"><h2 style="margin:0">Receita</h2><button class="btn btn-outline btn-sm" onclick="document.getElementById('recipeFormArea').innerHTML=''">Fechar</button></div>
 
       <div class="form-grid" style="margin-bottom:14px">
+        <label class="span-2">Título da receita<input type="text" id="rpEditName" value="${escapeHtml(recipe.name)}"></label>
         <label>Rendimento (quantidade)<input type="number" step="0.01" id="rpEditYieldQty" value="${recipe.yield_qty}"></label>
         <label>Unidade do rendimento
           <select id="rpEditYieldUnit">${YIELD_UNITS.map(u => `<option value="${u}" ${u === recipe.yield_unit ? "selected" : ""}>${u}</option>`).join("")}</select>
         </label>
-        <button class="btn btn-outline btn-sm" style="align-self:end" onclick="saveRecipeYield('${recipeId}')">Salvar rendimento</button>
+        <button class="btn btn-pink btn-sm" style="align-self:end" onclick="saveRecipeBasics('${recipeId}')">Salvar título e rendimento</button>
       </div>
 
-      <table>
+      <div class="seg-tabs">
+        <button class="${admin.data.recipeTab === "notes" ? "" : "on"}" onclick="setRecipeTab('${recipeId}', 'ing')">Ingredientes</button>
+        <button class="${admin.data.recipeTab === "notes" ? "on" : ""}" onclick="setRecipeTab('${recipeId}', 'notes')">Observações${recipe.notes ? " •" : ""}</button>
+      </div>
+
+      ${admin.data.recipeTab === "notes" ? `
+        <label>Observações da receita
+          <textarea id="rpNotes" rows="8" placeholder="Dicas, ponto da massa, tempo de forno, validade..." onchange="saveRecipeNotes('${recipeId}')">${escapeHtml(recipe.notes || "")}</textarea></label>
+        <p class="hint" id="rpNotesStatus" style="margin:6px 0 0"></p>
+        <div style="margin-top:14px"><button class="btn btn-danger btn-sm" onclick="deleteRecipe('${recipeId}')">Excluir receita</button></div>
+      </div>` : ""}
+      ${admin.data.recipeTab === "notes" ? "" : `<table>
         <thead><tr><th>Ingrediente</th><th>Quantidade</th><th>Custo</th><th></th></tr></thead>
         <tbody>
           ${(recipe.recipe_ingredients || []).map(ri => `
             <tr>
               <td>${ri.ingredients ? ri.ingredients.name : "—"}</td>
-              <td>${ri.quantity} ${ri.ingredients ? ri.ingredients.unit : ""}</td>
+              <td><input type="number" step="0.001" value="${ri.quantity}" style="width:110px;border:1.5px solid var(--border);border-radius:10px;padding:7px 9px" onchange="saveRecipeIngredientQty('${ri.id}', '${recipeId}', this.value)"> ${ri.ingredients ? ri.ingredients.unit : ""}</td>
               <td>${fmt(Number(ri.ingredients?.cost_per_unit || 0) * Number(ri.quantity))}</td>
               <td><button class="btn btn-outline btn-sm" onclick="removeRecipeIngredient('${ri.id}', '${recipeId}')">Remover</button></td>
             </tr>
@@ -2258,7 +2301,7 @@ function openRecipeDetail(recipeId) {
           <strong>Custo por ${recipe.yield_unit}: ${fmt(unitCost)}</strong>
         </div>
         <button class="btn btn-danger btn-sm" onclick="deleteRecipe('${recipeId}')">Excluir receita</button>
-      </div>
+      </div>`}
     </div>
   `;
 }
@@ -2530,6 +2573,10 @@ async function loadCalendario(main) {
   const { data: events, error } = await sb.from("production_events").select("*").order("event_date", { ascending: true }).order("event_time", { ascending: true });
   if (error) throw error;
   admin.data.productionEvents = events || [];
+  const cc = await sb.from("calendar_categories").select("*").order("sort_order").order("created_at");
+  admin.data.calCatsOk = !cc.error;
+  admin.data.calCats = cc.error ? [] : (cc.data || []);
+  if (admin.data.calCats.length) applyCalCats(admin.data.calCats);
   const now = new Date();
   admin.data.calYear = admin.data.calYear || now.getFullYear();
   admin.data.calMonth = admin.data.calMonth ?? now.getMonth(); // 0-11
@@ -2555,6 +2602,13 @@ function changeCalYear(delta) {
 
 const CAL_CATEGORY_COLOR = { encomenda: "#F06292", producao: "#6A9BD8", outro: "#8C6B76" };
 const CAL_CATEGORY_LABEL = { encomenda: "Encomenda", producao: "Produção", outro: "Outro" };
+function applyCalCats(list) {
+  Object.keys(CAL_CATEGORY_COLOR).forEach(k => delete CAL_CATEGORY_COLOR[k]);
+  Object.keys(CAL_CATEGORY_LABEL).forEach(k => delete CAL_CATEGORY_LABEL[k]);
+  list.forEach(c => { CAL_CATEGORY_COLOR[c.key] = c.color; CAL_CATEGORY_LABEL[c.key] = c.name; });
+  if (!CAL_CATEGORY_COLOR.outro) { CAL_CATEGORY_COLOR.outro = "#8C6B76"; CAL_CATEGORY_LABEL.outro = "Outro"; }
+}
+function calColor(k) { return CAL_CATEGORY_COLOR[k] || CAL_CATEGORY_COLOR.outro; }
 const WEEKDAY_NAMES = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 function eventTimeLabel(e) {
@@ -2605,8 +2659,9 @@ function renderCalendario(main) {
           <button class="btn btn-outline btn-sm" onclick="changeCalMonth(1)">›</button>
           <button class="btn btn-outline btn-sm" onclick="changeCalYear(1)">»</button>
         </div>
-        <button class="btn btn-outline btn-sm" onclick="goToCalToday()">Hoje</button>
+        <div style="display:flex;gap:8px"><button class="btn btn-outline btn-sm" onclick="toggleCalCats()">Categorias e cores</button><button class="btn btn-outline btn-sm" onclick="goToCalToday()">Hoje</button></div>
       </div>
+      <div id="calCatsArea">${admin.data.showCalCats ? renderCalCats() : ""}</div>
 
       <div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap">
         ${Object.entries(CAL_CATEGORY_LABEL).map(([k, v]) => `
@@ -2626,7 +2681,7 @@ function renderCalendario(main) {
             <div class="cal-cell ${isToday ? "cal-cell-today" : ""}">
               <span class="cal-day-num">${d}</span>
               ${dayEvents.map(e => `
-                <div class="cal-event" style="background:${CAL_CATEGORY_COLOR[e.category] || CAL_CATEGORY_COLOR.outro};${e.done ? "opacity:.45;text-decoration:line-through" : ""}" onclick="openEventForm('${e.id}')" title="${e.title}">
+                <div class="cal-event" style="background:${calColor(e.category)};${e.done ? "opacity:.45;text-decoration:line-through" : ""}" onclick="openEventForm('${e.id}')" title="${e.title}">
                   ${eventTimeLabel(e)}${e.title}
                 </div>
               `).join("")}
@@ -2648,7 +2703,7 @@ function renderCalendario(main) {
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);${e.done ? "opacity:.55" : ""}">
           <div style="display:flex;align-items:center;gap:10px">
             <input type="checkbox" ${e.done ? "checked" : ""} onchange="toggleEventDone('${e.id}', this.checked)" title="Marcar como concluído" style="width:18px;height:18px;flex-shrink:0;cursor:pointer">
-            <span style="width:10px;height:10px;border-radius:50%;background:${CAL_CATEGORY_COLOR[e.category] || CAL_CATEGORY_COLOR.outro};display:inline-block;flex-shrink:0"></span>
+            <span style="width:10px;height:10px;border-radius:50%;background:${calColor(e.category)};display:inline-block;flex-shrink:0"></span>
             <div>
               <strong style="${e.done ? "text-decoration:line-through" : ""}">${new Date(e.event_date + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })}${e.event_time ? " — " + eventTimeLabel(e).trim() : ""} · ${e.title}</strong>
               ${e.description ? `<div class="hint" style="margin:2px 0 0;white-space:pre-line">${escapeHtml(e.description)}</div>` : ""}
@@ -3661,4 +3716,189 @@ async function ensureRevenueForOrderQuiet(order) {
   if (existing) return;
   const { error } = await sb.from("revenue_entries").insert({ entry_date: new Date().toISOString().slice(0, 10), description: "Pedido " + order.order_number, amount: order.total, source: "site", order_id: order.id });
   if (error) { console.error(error); alert("A baixa foi registrada, mas a receita não entrou no Financeiro: " + (error.message || "")); }
+}
+
+
+/* ---------------- CALENDÁRIO: categorias e cores ---------------- */
+function toggleCalCats() {
+  admin.data.showCalCats = !admin.data.showCalCats;
+  document.getElementById("calCatsArea").innerHTML = admin.data.showCalCats ? renderCalCats() : "";
+}
+function renderCalCats() {
+  if (!admin.data.calCatsOk) return `<div class="error-box">Para criar categorias, rode o script <strong>add_ajustes_admin.sql</strong> no Supabase.</div>`;
+  const cats = admin.data.calCats;
+  return `
+    <div class="cat-panel">
+      <p class="hint" style="margin:0 0 10px">Crie suas categorias e escolha a cor de cada uma. Elas aparecem ao criar um evento.</p>
+      ${cats.map(c => `
+        <div class="cat-row">
+          <input type="color" value="${c.color}" onchange="saveCalCat('${c.id}', 'color', this.value)" title="Escolher cor">
+          <input type="text" value="${escapeHtml(c.name)}" onchange="saveCalCat('${c.id}', 'name', this.value)">
+          <button class="btn btn-danger btn-sm" onclick="deleteCalCat('${c.id}')">Excluir</button>
+        </div>`).join("")}
+      <div class="cat-row new">
+        <input type="color" id="ncColor" value="#F06292" title="Escolher cor">
+        <input type="text" id="ncName" placeholder="Nome da nova categoria" onkeydown="if(event.key==='Enter')addCalCat()">
+        <button class="btn btn-pink btn-sm" onclick="addCalCat()">+ Adicionar</button>
+      </div>
+    </div>`;
+}
+async function addCalCat() {
+  const name = document.getElementById("ncName").value.trim();
+  if (!name) { alert("Digite o nome da categoria."); return; }
+  const color = document.getElementById("ncColor").value;
+  const key = "c_" + Date.now().toString(36);
+  const sort_order = (admin.data.calCats.reduce((m, c) => Math.max(m, c.sort_order || 0), 0)) + 1;
+  const { error } = await sb.from("calendar_categories").insert({ key, name, color, sort_order });
+  if (error) { console.error(error); alert("Não foi possível criar: " + (error.message || "")); return; }
+  await loadCalendario(document.getElementById("adminMain"));
+}
+async function saveCalCat(id, field, value) {
+  value = String(value).trim();
+  if (field === "name" && !value) { alert("O nome não pode ficar vazio."); await loadCalendario(document.getElementById("adminMain")); return; }
+  const { error } = await sb.from("calendar_categories").update({ [field]: value }).eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível salvar."); return; }
+  await loadCalendario(document.getElementById("adminMain"));
+}
+async function deleteCalCat(id) {
+  const c = admin.data.calCats.find(x => x.id === id);
+  if (!c) return;
+  if (c.key === "outro") { alert("A categoria “Outro” é a padrão e não pode ser excluída."); return; }
+  const used = admin.data.productionEvents.filter(e => e.category === c.key).length;
+  if (!confirm(`Excluir “${c.name}”?${used ? ` ${used} evento(s) dela passarão a aparecer como “Outro”.` : ""}`)) return;
+  if (used) await sb.from("production_events").update({ category: "outro" }).eq("category", c.key);
+  const { error } = await sb.from("calendar_categories").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível excluir."); return; }
+  await loadCalendario(document.getElementById("adminMain"));
+}
+
+/* ---------------- RECEITAS: edição, observações ---------------- */
+function setRecipeTab(id, tab) { admin.data.recipeTab = tab; openRecipeDetail(id); }
+async function saveRecipeBasics(recipeId) {
+  const name = document.getElementById("rpEditName").value.trim();
+  const yieldQty = Number(document.getElementById("rpEditYieldQty").value) || 1;
+  const yieldUnit = document.getElementById("rpEditYieldUnit").value;
+  if (!name) { alert("O título da receita não pode ficar vazio."); return; }
+  const { error } = await sb.from("recipes").update({ name, yield_qty: yieldQty, yield_unit: yieldUnit }).eq("id", recipeId);
+  if (error) { console.error(error); alert("Não foi possível salvar."); return; }
+  await loadReceitas(document.getElementById("adminMain"));
+  openRecipeDetail(recipeId);
+}
+async function saveRecipeIngredientQty(riId, recipeId, value) {
+  const q = Number(String(value).replace(",", "."));
+  if (!q || q <= 0) { alert("Informe uma quantidade válida."); openRecipeDetail(recipeId); return; }
+  const { error } = await sb.from("recipe_ingredients").update({ quantity: q }).eq("id", riId);
+  if (error) { console.error(error); alert("Não foi possível salvar a quantidade."); return; }
+  await loadReceitas(document.getElementById("adminMain"));
+  openRecipeDetail(recipeId);
+}
+async function saveRecipeNotes(recipeId) {
+  const notes = document.getElementById("rpNotes").value;
+  const { error } = await sb.from("recipes").update({ notes: notes.trim() || null }).eq("id", recipeId);
+  if (error) { console.error(error); alert("Não foi possível salvar as observações.\n\nRode o script add_ajustes_admin.sql no Supabase."); return; }
+  const r = admin.data.recipes.find(x => x.id === recipeId); if (r) r.notes = notes.trim() || null;
+  const st = document.getElementById("rpNotesStatus"); if (st) { st.textContent = "✓ Salvo"; setTimeout(() => { st.textContent = ""; }, 1800); }
+}
+
+/* ---------------- FICHA TÉCNICA ---------------- */
+async function loadFichas(main) {
+  const { data, error } = await sb.from("tech_sheets").select("*, tech_sheet_rows(*)").order("title", { ascending: true });
+  if (error) {
+    console.error(error);
+    main.innerHTML = `<div class="error-box">Para usar a Ficha técnica, rode o script <strong>add_ajustes_admin.sql</strong> no Supabase.</div>`;
+    return;
+  }
+  admin.data.sheets = (data || []).map(x => ({ ...x, tech_sheet_rows: (x.tech_sheet_rows || []).sort((a, b) => a.sort_order - b.sort_order || String(a.created_at).localeCompare(String(b.created_at))) }));
+  renderFichas(main);
+}
+function renderFichas(main) {
+  const sheets = admin.data.sheets;
+  const open = admin.data.sheetOpen && sheets.find(x => x.id === admin.data.sheetOpen);
+  if (open) { renderFichaDetail(main, open); return; }
+  main.innerHTML = `
+    <div class="admin-topbar"><h1>Ficha técnica</h1></div>
+    <p class="hint">Como montar cada produto: ingrediente, quantidade e descrição. Tudo é editável à mão.</p>
+    <div class="admin-card">
+      <div class="cat-row new" style="margin:0">
+        <input type="text" id="nsTitle" placeholder="Título da ficha (ex: Bolo gelado de cocada cremosa)" onkeydown="if(event.key==='Enter')createSheet()">
+        <button class="btn btn-pink btn-sm" onclick="createSheet()">+ Nova ficha</button>
+      </div>
+    </div>
+    <div class="admin-card">
+      ${sheets.length ? sheets.map(x => `
+        <div class="sheet-item">
+          <div><strong>${escapeHtml(x.title)}</strong><small>${x.tech_sheet_rows.length} ${x.tech_sheet_rows.length === 1 ? "linha" : "linhas"}</small></div>
+          <button class="btn btn-outline btn-sm" onclick="openSheet('${x.id}')">Abrir</button>
+        </div>`).join("") : `<p class="center-msg">Nenhuma ficha ainda. Digite o título acima para criar a primeira.</p>`}
+    </div>`;
+}
+async function createSheet() {
+  const title = document.getElementById("nsTitle").value.trim();
+  if (!title) { alert("Digite o título da ficha."); return; }
+  const { data, error } = await sb.from("tech_sheets").insert({ title }).select().single();
+  if (error) { console.error(error); alert("Não foi possível criar: " + (error.message || "")); return; }
+  admin.data.sheetOpen = data.id;
+  await loadFichas(document.getElementById("adminMain"));
+}
+function openSheet(id) { admin.data.sheetOpen = id; renderFichas(document.getElementById("adminMain")); window.scrollTo(0, 0); }
+function closeSheet() { admin.data.sheetOpen = null; renderFichas(document.getElementById("adminMain")); }
+function renderFichaDetail(main, x) {
+  main.innerHTML = `
+    <div class="admin-topbar"><h1>Ficha técnica</h1><button class="btn btn-outline" onclick="closeSheet()">← Voltar</button></div>
+    <div class="admin-card">
+      <label>Título<input type="text" class="sheet-title" value="${escapeHtml(x.title)}" onchange="saveSheetTitle('${x.id}', this.value)"></label>
+      <div class="sheet-table-wrap">
+      <table class="sheet-table">
+        <thead><tr><th>Ingrediente</th><th style="width:150px">Quantidade</th><th>Descrição</th><th style="width:48px"></th></tr></thead>
+        <tbody>
+          ${x.tech_sheet_rows.map(r => `
+            <tr>
+              <td><input value="${escapeHtml(r.ingredient)}" onchange="saveSheetRow('${r.id}', 'ingredient', this.value)" placeholder="Ex: Massa de chocolate"></td>
+              <td><input value="${escapeHtml(r.quantity)}" onchange="saveSheetRow('${r.id}', 'quantity', this.value)" placeholder="Ex: 1,5"></td>
+              <td><input value="${escapeHtml(r.description)}" onchange="saveSheetRow('${r.id}', 'description', this.value)" placeholder="Ex: forma 25x25cm"></td>
+              <td><button class="btn btn-danger btn-sm" onclick="deleteSheetRow('${r.id}')" title="Remover linha">✕</button></td>
+            </tr>`).join("")}
+        </tbody>
+      </table></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;justify-content:space-between">
+        <button class="btn btn-pink btn-sm" onclick="addSheetRow('${x.id}')">+ Adicionar linha</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteSheet('${x.id}')">Excluir ficha</button>
+      </div>
+      <p class="hint" style="margin-top:10px">As alterações são salvas automaticamente ao sair de cada campo.</p>
+    </div>`;
+}
+async function saveSheetTitle(id, value) {
+  value = value.trim();
+  if (!value) { alert("O título não pode ficar vazio."); await loadFichas(document.getElementById("adminMain")); return; }
+  const { error } = await sb.from("tech_sheets").update({ title: value }).eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível salvar."); return; }
+  const x = admin.data.sheets.find(s => s.id === id); if (x) x.title = value;
+}
+async function saveSheetRow(id, field, value) {
+  const { error } = await sb.from("tech_sheet_rows").update({ [field]: value }).eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível salvar."); return; }
+  admin.data.sheets.forEach(x => x.tech_sheet_rows.forEach(r => { if (r.id === id) r[field] = value; }));
+}
+async function addSheetRow(sheetId) {
+  const x = admin.data.sheets.find(s => s.id === sheetId);
+  const sort_order = x.tech_sheet_rows.reduce((m, r) => Math.max(m, r.sort_order || 0), 0) + 1;
+  const { data, error } = await sb.from("tech_sheet_rows").insert({ sheet_id: sheetId, sort_order }).select().single();
+  if (error) { console.error(error); alert("Não foi possível adicionar a linha."); return; }
+  x.tech_sheet_rows.push(data);
+  renderFichaDetail(document.getElementById("adminMain"), x);
+  const inputs = document.querySelectorAll(".sheet-table tbody tr:last-child input");
+  if (inputs[0]) inputs[0].focus();
+}
+async function deleteSheetRow(id) {
+  const { error } = await sb.from("tech_sheet_rows").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível remover."); return; }
+  admin.data.sheets.forEach(x => { x.tech_sheet_rows = x.tech_sheet_rows.filter(r => r.id !== id); });
+  renderFichas(document.getElementById("adminMain"));
+}
+async function deleteSheet(id) {
+  if (!confirm("Excluir esta ficha técnica inteira?")) return;
+  const { error } = await sb.from("tech_sheets").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível excluir."); return; }
+  admin.data.sheetOpen = null;
+  await loadFichas(document.getElementById("adminMain"));
 }

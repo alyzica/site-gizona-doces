@@ -68,7 +68,7 @@ tr:last-child td{border-bottom:none;}
 .photo-upload-box{border:1.5px dashed var(--border);border-radius:14px;padding:12px;text-align:center;}
 .photo-upload-label{font-size:12px;font-weight:700;color:var(--muted);margin:0 0 8px;}
 .photo-preview{width:100%;aspect-ratio:1;border-radius:10px;background:#fff;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;color:var(--muted);font-size:12px;margin-bottom:8px;}
-.photo-preview img{max-width:100%;max-height:100%;object-fit:contain;}
+.photo-preview img{max-width:100%;max-height:100%;object-fit:cover;}
 .photo-upload-box input[type="file"]{width:100%;font-size:11px;}
 .photo-status{font-size:11px;color:var(--pink-dark);margin:6px 0 0;min-height:14px;}
 .image-adjust-controls{margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:12px;background:#fff;display:flex;flex-direction:column;gap:8px;text-align:left}
@@ -76,7 +76,7 @@ tr:last-child td{border-bottom:none;}
 .image-adjust-controls label{display:grid;grid-template-columns:1fr auto;gap:4px;font-size:11px;font-weight:700;color:var(--muted)}
 .image-adjust-controls label input[type="range"]{grid-column:1 / -1;width:100%;padding:0;height:18px}
 .image-adjust-controls output{font-weight:800;color:var(--pink-dark)}
-.photo-preview img{position:absolute;left:var(--img-x,50%);top:var(--img-y,50%);width:100%;height:100%;max-width:none;max-height:none;object-fit:contain;transform:translate(-50%,-50%) scale(var(--img-scale,1));transform-origin:center center;display:block}
+.photo-preview img{position:absolute;left:var(--img-x,50%);top:var(--img-y,50%);width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;transform:translate(-50%,-50%) scale(max(var(--img-scale,1),1));transform-origin:center center;display:block}
 .photo-preview{position:relative}
 .cropper-overlay{position:fixed;inset:0;background:rgba(43,20,32,.62);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px}
 .cropper-box{background:#fff;border-radius:22px;padding:22px;max-width:360px;width:100%;text-align:center;box-shadow:0 24px 70px rgba(43,20,32,.25)}
@@ -214,3 +214,27 @@ input[type="checkbox"]{accent-color:var(--pink);}
 .notify-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border:1px solid #F3C1D1;border-radius:14px;background:#fff;}
 .notify-row small{display:block;color:var(--muted);}
 .notify-row.done{background:#F2FAF5;border-color:#BFE3CA;}
+
+/* ---- Calendário: categorias, receitas, ficha técnica, fotos ---- */
+.cat-panel{background:#fff;border:1px solid var(--border);border-radius:16px;padding:14px;margin-bottom:14px;}
+.cat-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.cat-row input[type=text]{flex:1;min-width:0;}
+.cat-row input[type=color]{width:42px;height:42px;padding:2px;border:1.5px solid var(--border);border-radius:50%;background:#fff;cursor:pointer;flex:none;}
+.cat-row.new{border-top:1px dashed var(--border);padding-top:10px;margin-top:4px;}
+.seg-tabs{display:inline-flex;gap:4px;background:var(--pink-soft);border-radius:999px;padding:4px;margin:10px 0;}
+.seg-tabs button{border:0;background:transparent;border-radius:999px;padding:8px 16px;font-family:inherit;font-weight:600;font-size:13px;color:var(--muted);cursor:pointer;}
+.seg-tabs button.on{background:var(--pink);color:#fff;}
+.photo-count{display:inline-flex;gap:4px;background:var(--pink-soft);border-radius:999px;padding:4px;margin-bottom:10px;}
+.photo-count button{border:0;background:transparent;border-radius:999px;padding:8px 16px;font-family:inherit;font-weight:600;font-size:13px;color:var(--muted);cursor:pointer;}
+.photo-count button.on{background:var(--pink);color:#fff;}
+.ds-toggle.sm{width:44px;height:24px;}
+.ds-toggle.sm span::before{width:18px;height:18px;}
+.ds-toggle.sm input:checked + span::before{transform:translateX(20px);}
+.sheet-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 4px;border-bottom:1px solid var(--border);}
+.sheet-item:last-child{border-bottom:none;}
+.sheet-item small{display:block;color:var(--muted);}
+.sheet-title{font-weight:700;font-size:16px;}
+.sheet-table-wrap{overflow-x:auto;margin-top:12px;}
+.sheet-table input{width:100%;border:1.5px solid transparent;border-radius:10px;padding:9px 10px;background:#fff;font:inherit;}
+.sheet-table input:hover,.sheet-table input:focus{border-color:#F3C1D1;outline:none;}
+.sheet-table td{padding:4px;}
