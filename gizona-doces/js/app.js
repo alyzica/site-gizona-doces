@@ -979,7 +979,7 @@ function bagMoney(b) {
   const cfg = state.shipCfg;
   const sh = state.shipping;
   let fee = null, feeFree = false, feeNote = "";
-  if (b.hasDel && fulfillMode(b) === "delivery") {
+  if (wantsShip(b)) {
     if (coupon && coupon.free_shipping) { feeFree = true; fee = 0; }
     else if (cfg && cfg.free_above != null && itemsTotal - discount >= Number(cfg.free_above)) { feeFree = true; fee = 0; feeNote = "acima de " + fmt(Number(cfg.free_above)); }
     else if (sh.status === "ok") fee = sh.fee;
@@ -998,21 +998,21 @@ function paintBagTotals() {
   const cfg = state.shipCfg;
   let feeRow = "";
   const mode = fulfillMode(b);
-  if (b.hasDel && mode === "pickup") {
+  if ((b.hasDel || b.hasEnc) && mode === "pickup") {
     feeRow = `<div class="sum-row"><span>Retirada</span><span><strong class="free">Grátis</strong></span></div>`;
-  } else if (b.hasDel) {
-    const hasAddr = addrComplete();
+  } else if (wantsShip(b)) {
+    const hasAddr = addrReady();
     let val, note;
     if (m.feeFree) val = `<s style="color:var(--muted)">${sh.status === "ok" ? fmt(sh.fee) : ""}</s> <strong class="free">Grátis</strong>`;
     else if (sh.status === "loading" || (sh.status === "idle" && hasAddr)) val = `<span class="muted">calculando...</span>`;
-    else if (sh.status === "ok") val = fmt(sh.fee);
+    else if (sh.status === "ok") val = (sh.approx ? "≈ " : "") + fmt(sh.fee);
     else if (sh.status === "out") val = `<span class="muted">fora da área</span>`;
     else if (sh.status === "error" || sh.status === "off") val = `<span class="muted">a combinar</span>`;
-    else val = `<span class="muted">informe o endereço</span>`;
+    else val = `<span class="muted">${bagAddress().trim() ? "complete o endereço" : "informe o endereço"}</span>`;
     if (sh.status === "out") note = "Esse endereço fica fora da nossa área padrão — combinamos a entrega pelo WhatsApp.";
     else if (sh.status === "error") note = `Não conseguimos localizar esse endereço. Confira rua, número e cidade ou <a href="#" onclick="estimateShipping(true);return false">tente de novo</a> — se preferir, combinamos a entrega pelo WhatsApp.`;
     else if (sh.status === "off") note = "A entrega será combinada pelo WhatsApp.";
-    else note = cfg ? cfg.note : "";
+    else note = (sh.status === "ok" && sh.approx ? "Não localizamos o endereço exato; mostramos o valor mínimo da sua cidade. " : "") + (cfg ? cfg.note : "");
     feeRow = `<div class="sum-row"><span>Entrega <small>(estimativa${sh.status === "ok" && sh.km ? ` · ${sh.km.toFixed(1).replace(".", ",")} km` : ""})</small></span><span>${val}</span></div>
       <p class="sum-note">${note}</p>`;
   }
@@ -1027,7 +1027,7 @@ function paintBagTotals() {
     ${b.hasEnc && mode === "pickup" ? `<p class="sum-note">Retirada da encomenda no endereço combinado.</p>` : ""}
     ${b.hasEnc && mode === "delivery" ? `<p class="sum-note">A entrega da encomenda é combinada pelo WhatsApp e acontece somente após o pagamento total.</p>` : ""}`;
   barEl.innerHTML = `
-    <div><small>Total${m.fee === 0 && b.hasDel ? " com <strong>entrega grátis</strong>" : ""}</small><strong>${fmt(m.grand)}</strong> <small>/ ${b.itemCount} ${b.itemCount === 1 ? "item" : "itens"}</small></div>
+    <div><small>Total${m.fee === 0 && wantsShip(b) ? " com <strong>entrega grátis</strong>" : ""}</small><strong>${fmt(m.grand)}</strong> <small>/ ${b.itemCount} ${b.itemCount === 1 ? "item" : "itens"}</small></div>
     <button id="bagSendBtn" ${bagCanSubmit(b) ? "" : "disabled"} onclick="submitBag()">Enviar pedido</button>`;
 }
 
@@ -1040,7 +1040,7 @@ function bagCanSubmit(b) {
   if (b.hasDel && deliveryClosed()) return false;
   return true;
 }
-function hasSavedAddress() { return !!(auth.customer && auth.customer.street); }
+function hasSavedAddress() { return !!(auth.customer && (auth.customer.street || auth.customer.cep)); }
 function addrMode() { return state.addrMode || (hasSavedAddress() ? "saved" : "other"); }
 function currentAddrObj() {
   if (addrMode() === "saved" && hasSavedAddress()) {
@@ -1050,12 +1050,20 @@ function currentAddrObj() {
   const o = state.otherAddr;
   return { ...o, cep: String(o.cep || "").replace(/\D/g, "") };
 }
-function addrComplete(o) { o = o || currentAddrObj(); return !!(o.street.trim() && String(o.number).trim() && o.city.trim()); }
+// basta CEP, ou rua + cidade, para estimar o frete
+function addrReady(o) { o = o || currentAddrObj(); return o.cep.length === 8 || !!(o.street.trim() && o.city.trim()); }
+// para enviar: endereço do cadastro vale como está; endereço novo precisa de rua, número e cidade
+function addrComplete(o) {
+  o = o || currentAddrObj();
+  if (addrMode() === "saved" && hasSavedAddress()) return addrReady(o);
+  return !!(o.street.trim() && String(o.number).trim() && o.city.trim());
+}
+function wantsShip(b) { b = b || bagData(); return fulfillMode(b) === "delivery" && (b.hasDel || b.hasEnc); }
 function bagAddress() {
   const o = currentAddrObj();
-  if (!o.street.trim()) return "";
-  const cep = o.cep.length === 8 ? ` – CEP ${o.cep.slice(0, 5)}-${o.cep.slice(5)}` : "";
-  return formatAddress(o) + cep;
+  const cep = o.cep.length === 8 ? `CEP ${o.cep.slice(0, 5)}-${o.cep.slice(5)}` : "";
+  if (!o.street.trim()) return [cep, o.neighborhood, [o.city, o.state].filter(Boolean).join("/")].filter(Boolean).join(", ");
+  return formatAddress(o) + (cep ? " – " + cep : "");
 }
 function setAddrMode(m) { state.addrMode = m; state.shipping = { status: "idle" }; render(); }
 function oaInput(key, val) { state.otherAddr[key] = val; if (key !== "complement") scheduleShipping(); }
@@ -1218,7 +1226,7 @@ function renderCart() {
   if (!empty) {
     paintBagTotals();
     syncCouponWithBag();
-    if (b.hasDel && fm === "delivery" && state.shipping.status === "idle" && addrComplete()) estimateShipping();
+    if (wantsShip(b) && state.shipping.status === "idle" && addrReady()) estimateShipping();
   }
   state.bagNotice = "";
 }
@@ -1393,7 +1401,7 @@ let shippingToken = 0, shippingTimer = null;
 function scheduleShipping() {
   clearTimeout(shippingTimer);
   shippingToken++;
-  if (!addrComplete()) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
+  if (!addrReady()) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
   state.shipping = { status: "loading" };
   paintBagTotals();
   shippingTimer = setTimeout(() => estimateShipping(), 800);
@@ -1402,7 +1410,7 @@ async function estimateShipping(force) {
   clearTimeout(shippingTimer);
   const b = bagData();
   const address = bagAddress().trim();
-  if (!b.hasDel || fulfillMode(b) !== "delivery" || !addrComplete()) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
+  if (!wantsShip(b) || !addrReady()) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
   if (!state.shipCfg) await loadShipCfg();
   const cfg = state.shipCfg;
   if (!cfg || cfg.enabled === false) { state.shipping = { status: "off" }; paintBagTotals(); return; }
@@ -1412,7 +1420,13 @@ async function estimateShipping(force) {
   if (force) state.geoCache = {};
   const [origin, dest] = await Promise.all([resolveOrigin(cfg), geocodeAddr(currentAddrObj())]);
   if (token !== shippingToken) return;
-  if (!dest) { state.shipping = { status: "error" }; paintBagTotals(); return; }
+  if (!dest) {
+    // sem coordenadas: se for a mesma cidade da saída, usa a taxa mínima (aproximada)
+    const oc = (currentAddrObj().city || "").trim().toLowerCase();
+    if (oc && String(cfg.origin_address || "").toLowerCase().includes(oc)) { state.shipping = { status: "ok", km: 0, fee: Math.ceil(Number(cfg.min_fee) * 2) / 2, approx: true }; }
+    else state.shipping = { status: "error" };
+    paintBagTotals(); return;
+  }
   const km = haversineKm(origin.lat, origin.lng, dest.lat, dest.lng) * Number(cfg.circuity || 1.3);
   if (km > Number(cfg.max_km)) { state.shipping = { status: "out", km }; paintBagTotals(); return; }
   const raw = Math.max(Number(cfg.min_fee), Number(cfg.base_fee) + Number(cfg.per_km) * km);
@@ -1458,7 +1472,7 @@ async function submitBag() {
     if (!r.valid) { state.coupon = null; state.couponMsg = r.message; abort("Seu cupom não pode mais ser usado: " + r.message); return render(); }
     coupon = r; state.coupon = r;
   }
-  if (b.hasDel && mode === "delivery" && state.shipping.status === "loading") { abort("Aguarde o cálculo da entrega e tente novamente."); return; }
+  if (wantsShip(b) && state.shipping.status === "loading") { abort("Aguarde o cálculo da entrega e tente novamente."); return; }
 
   const m = bagMoney(b);
   const paymentMap = { "Pix": "pix", "Crédito": "credito" };
@@ -1522,7 +1536,7 @@ async function submitBag() {
       msg += `\n`;
     }
     orders.push({
-      ...common, order_type: "encomenda", items, subtotal: b.encSub, discount_amount: 0, delivery_fee: 0,
+      ...common, order_type: "encomenda", items, subtotal: b.encSub, discount_amount: 0, delivery_fee: !b.hasDel && mode === "delivery" ? (m.fee || 0) : 0, delivery_km: !b.hasDel && mode === "delivery" && state.shipping.status === "ok" && state.shipping.km ? Number(state.shipping.km.toFixed(2)) : null,
       event_date: c.eventDate || null, personalization: state.wantsArt ? state.personalization : {},
       observations: mode === "delivery" ? (address ? `Endereço: ${address}` : "") : "Retirada no local",
     });
@@ -1537,7 +1551,7 @@ async function submitBag() {
   orders.forEach(o => { o.total = Number((o.subtotal - o.discount_amount).toFixed(2)); });
 
   if (coupon && m.discount > 0) msg += `Cupom ${coupon.code}: - ${fmt(m.discount)}\n`;
-  if (b.hasDel && mode === "delivery") msg += m.feeFree ? `Entrega: Grátis\n` : (state.shipping.status === "ok" ? `Entrega (estimativa): ${fmt(m.fee)} — pode haver reajuste\n` : `Entrega: a combinar\n`);
+  if (wantsShip(b)) msg += m.feeFree ? `Entrega: Grátis\n` : (state.shipping.status === "ok" ? `Entrega (estimativa): ${fmt(m.fee)} — pode haver reajuste\n` : `Entrega: a combinar\n`);
   msg += `\nTotal estimado: ${fmt(m.grand)}${b.hasEnc && !b.hasDel ? "" : ""}\n\nAguardo confirmação.`;
 
   // grava os pedidos (delivery primeiro: é ele que confere o estoque)
