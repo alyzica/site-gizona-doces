@@ -30,6 +30,8 @@ const state = {
   deliveryStatus: null,    // { open, message } (RPC delivery_status); null = ainda não carregou / script não rodado
   fulfillment: null,       // "delivery" | "pickup" (null = padrão conforme a sacola)
   originCoords: null, geoCache: {}, bagNotice: "",
+  media: {},               // fotos do menu de encomendas (tabela site_media)
+  cakes: [], cakeDraft: null,
   addrMode: null, otherAddr: { cep: "", street: "", number: "", complement: "", neighborhood: "", city: "", state: "" },
 };
 
@@ -71,6 +73,7 @@ function render() {
     personalization: renderPersonalization,
     "geladinho-info": renderGeladinhoInfo,
     "geladinho-flavors": renderGeladinhoFlavors,
+    bolo: renderBolo,
     cart: renderCart,
   }[state.step];
   const stepAtRender = state.step;
@@ -78,12 +81,12 @@ function render() {
 }
 
 /* ---------------- Barra superior, rodapé e menu inferior ---------------- */
-const NAV_STEPS = ["dashboard", "profile", "orders", "loyalty", "category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "cart"];
-const STEP_TITLE = { dashboard: "Início", profile: "Perfil", orders: "Pedidos", loyalty: "Fidelidade", category: "Faça seu pedido", "brigadeiro-box": "Brigadeiro Gourmet", "brigadeiro-flavors": "Brigadeiro Gourmet", personalization: "Personalização", "geladinho-info": "Geladinho Gourmet", "geladinho-flavors": "Geladinho Gourmet", cart: "Sacola" };
+const NAV_STEPS = ["dashboard", "profile", "orders", "loyalty", "category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "bolo", "cart"];
+const STEP_TITLE = { dashboard: "Início", profile: "Perfil", orders: "Pedidos", loyalty: "Fidelidade", category: "Faça seu pedido", "brigadeiro-box": "Brigadeiro Gourmet", "brigadeiro-flavors": "Brigadeiro Gourmet", personalization: "Personalização", "geladinho-info": "Geladinho Gourmet", "geladinho-flavors": "Geladinho Gourmet", bolo: "Bolos Decorados", cart: "Sacola" };
 
 function cartCount() {
   const sum = o => Object.values(o || {}).reduce((t, q) => t + (Number(q) || 0), 0);
-  return sum(state.flavors) + sum(state.geladinho) + sum(state.delivery);
+  return sum(state.flavors) + sum(state.geladinho) + sum(state.delivery) + state.cakes.length;
 }
 function goBack() {
   const prev = NAV_STACK.pop();
@@ -127,7 +130,7 @@ function decorateScreen() {
       </button>
       </div>
     </header>`;
-  const active = { dashboard: "home", orders: "orders", loyalty: "loyalty", profile: "profile" }[step] || (["category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "cart"].includes(step) ? "home" : "");
+  const active = { dashboard: "home", orders: "orders", loyalty: "loyalty", profile: "profile" }[step] || (["category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "bolo", "cart"].includes(step) ? "home" : "");
   const tab = (id, label, icon) => `<button class="${active === id ? "active" : ""}" onclick="goTab('${id}')">${icon}<span>${label}</span></button>`;
   const ic = p => `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
   const nav = `
@@ -586,24 +589,18 @@ function renderCategory() {
 
       ${state.orderTab === "delivery" ? renderDeliveryList() : `
       <div class="cat-choices">
-        <button class="cat-card" onclick="selectCategory('brigadeiro')">
-          <span class="cat-emoji">
-            <img src="images/icons/icon-brigadeiro.png" alt="Brigadeiro">
-          </span>
+        ${[
+          { key: "brigadeiro", title: "Brigadeiro Gourmet", sub: "18 a 20g cada - caixas com 50 ou 100 unidades", icon: `<img src="images/icons/icon-brigadeiro.png" alt="Brigadeiro">` },
+          { key: "geladinho", title: "Geladinho Gourmet", sub: "Tamanho festa 7cm - mín. 10 por sabor", icon: `<img src="images/icons/icon-geladinho.png" alt="Geladinho">` },
+          { key: "bolo", title: "Bolos Decorados", sub: "3 tamanhos - monte com 1 massa e até 2 recheios", icon: cakeIcon() },
+        ].map(c => `
+        <button class="cat-card" onclick="selectCategory('${c.key}')">
+          ${state.media[c.key] ? `<span class="cat-photo"><img src="${escapeAttr(state.media[c.key])}" alt="${c.title}" onerror="this.parentElement.classList.add('no-photo');this.remove()"></span>` : `<span class="cat-emoji">${c.icon}</span>`}
           <span class="cat-info">
-            <strong>Brigadeiro Gourmet</strong>
-            <small>18 a 20g cada - caixas com 50 ou 100 unidades</small>
+            <strong>${c.title}</strong>
+            <small>${c.sub}</small>
           </span>
-        </button>
-        <button class="cat-card" onclick="selectCategory('geladinho')">
-          <span class="cat-emoji">
-            <img src="images/icons/icon-geladinho.png" alt="Geladinho">
-          </span>
-          <span class="cat-info">
-            <strong>Geladinho Gourmet</strong>
-            <small>Tamanho festa 8cm - mín. 10 por sabor</small>
-          </span>
-        </button>
+        </button>`).join("")}
       </div>
       `}
 
@@ -631,6 +628,108 @@ async function setOrderTab(tab) {
     if (state.step === "category" && state.orderTab === "delivery") { renderCategory(); decorateScreen(); }
   }
 }
+
+/* ---------------- Fotos do menu (admin sobe em Produtos) ---------------- */
+async function loadSiteMedia() {
+  if (!sb) return;
+  try {
+    const { data, error } = await sb.from("site_media").select("key, image_url");
+    if (error || !data) return;
+    state.media = {};
+    data.forEach(r => { if (r.image_url) state.media[r.key] = r.image_url; });
+  } catch (e) { /* sem a tabela ainda: segue com os ícones */ }
+}
+function cakeIcon() {
+  return `<svg viewBox="0 0 64 64" width="64" height="64" fill="none" stroke="var(--pink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 34h40v18a3 3 0 01-3 3H15a3 3 0 01-3-3V34z"/><path d="M12 42c5 4 9 4 13 0s9-4 14 0 9 4 13 0"/><path d="M12 34c0-5 4-8 9-8h22c5 0 9 3 9 8"/><path d="M32 26v-8M32 14c-2 2-2 4 0 5 2-1 2-3 0-5z"/></svg>`;
+}
+
+/* ---------------- BOLOS DECORADOS ---------------- */
+const BOLO_SIZES = [
+  { id: "P", slices: "13 a 15 fatias", price: 165 },
+  { id: "M", slices: "23 a 30 fatias", price: 250 },
+  { id: "G", slices: "40 a 45 fatias", price: 330 },
+];
+const BOLO_MASSAS = ["Chocolate", "Baunilha"];
+const BOLO_RECHEIOS = ["Brigadeiro tradicional", "Ninho", "Cocada cremosa", "Doce de leite", "Maracujá", "Mousse de limão"];
+const BOLO_ADICIONAIS = ["Morango", "Abacaxi", "Coco em flocos", "Geleia de morango", "Nutella", "Gotas de chocolate branco", "Gotas de chocolate ao leite"];
+const BOLO_MAX_RECHEIOS = 2;
+
+function newCakeDraft() { return { size: null, massa: null, recheios: [], adicionais: [], obs: "" }; }
+function boloSize(id) { return BOLO_SIZES.find(x => x.id === id); }
+function cakeTitle(c) { return `Bolo Decorado ${c.size}`; }
+function cakeDetails(c) {
+  const sz = boloSize(c.size);
+  return [`${sz ? sz.slices : ""}`, `Massa ${c.massa.toLowerCase()}`, `Recheio${c.recheios.length > 1 ? "s" : ""}: ${c.recheios.join(" + ")}`,
+    c.adicionais.length ? `Adicionais: ${c.adicionais.join(", ")} (valor a combinar)` : "", c.obs ? `Decoração/obs.: ${c.obs}` : ""].filter(Boolean);
+}
+function renderBolo() {
+  if (!state.cakeDraft) state.cakeDraft = newCakeDraft();
+  const d = state.cakeDraft;
+  const ok = d.size && d.massa && d.recheios.length >= 1;
+  const price = d.size ? boloSize(d.size).price : 0;
+  const chip = (label, on, fn, disabled) => `<button type="button" class="opt-chip ${on ? "on" : ""}" ${disabled ? "disabled" : ""} onclick="${fn}">${on ? "✓ " : ""}${escapeAttr(label)}</button>`;
+  app.innerHTML = `
+    <section class="screen">
+      <div class="screen-head pink"><h2>Bolos Decorados</h2><p>Monte o seu bolo</p></div>
+      <div class="info-card">
+        <p>Nossos bolos são finalizados com cobertura de chantininho. O valor inclui caixa para transporte e decoração básica.</p>
+        <p>Topper e outros elementos decorativos podem ser adicionados à parte, mediante consulta pelo WhatsApp.</p>
+      </div>
+
+      <div class="cart-summary">
+        <p class="cart-section-title">1. Tamanho</p>
+        <div class="size-grid">
+          ${BOLO_SIZES.map(sz => `
+            <button type="button" class="size-card ${d.size === sz.id ? "on" : ""}" onclick="boloSet('size','${sz.id}')">
+              <b>${sz.id}</b><span>${sz.slices}</span><strong>${fmt(sz.price)}</strong>
+            </button>`).join("")}
+        </div>
+        <p class="hint" style="margin:8px 0 0">Rendimento aproximado.</p>
+      </div>
+
+      <div class="cart-summary">
+        <p class="cart-section-title">2. Massa <small style="font-weight:500">(escolha 1)</small></p>
+        <div class="chip-row">${BOLO_MASSAS.map(m => chip(m, d.massa === m, `boloSet('massa','${m}')`)).join("")}</div>
+      </div>
+
+      <div class="cart-summary">
+        <p class="cart-section-title">3. Recheios <small style="font-weight:500">(até ${BOLO_MAX_RECHEIOS})</small></p>
+        <div class="chip-row">${BOLO_RECHEIOS.map(r => chip(r, d.recheios.includes(r), `boloToggle('recheios','${r}')`, !d.recheios.includes(r) && d.recheios.length >= BOLO_MAX_RECHEIOS)).join("")}</div>
+      </div>
+
+      <div class="cart-summary">
+        <p class="cart-section-title">4. Adicionais <small style="font-weight:500">(opcional)</small></p>
+        <p class="hint" style="margin:0 0 10px">Consulte o valor do adicional conforme o tamanho do bolo — combinamos pelo WhatsApp.</p>
+        <div class="chip-row">${BOLO_ADICIONAIS.map(r => chip(r, d.adicionais.includes(r), `boloToggle('adicionais','${r}')`)).join("")}</div>
+      </div>
+
+      <div class="cart-summary">
+        <p class="cart-section-title">5. Decoração / observações <small style="font-weight:500">(opcional)</small></p>
+        <textarea rows="3" class="bolo-obs" placeholder="Tema, topper, cores, mensagem no bolo..." oninput="state.cakeDraft.obs = this.value">${escapeAttr(d.obs)}</textarea>
+      </div>
+
+      <div class="sticky-subtotal">
+        <strong>${d.size ? "Bolo " + d.size + ": " + fmt(price) : "Escolha o tamanho"}</strong>
+        <button ${ok ? `onclick="addCakeToBag()"` : "disabled"}>Adicionar à sacola</button>
+      </div>
+      <button class="btn btn-ghost sticky-back" onclick="goBack()">← Voltar</button>
+    </section>`;
+}
+function boloSet(key, val) { state.cakeDraft[key] = val; renderBolo(); decorateScreen(); }
+function boloToggle(key, val) {
+  const arr = state.cakeDraft[key], i = arr.indexOf(val);
+  if (i >= 0) arr.splice(i, 1);
+  else if (key !== "recheios" || arr.length < BOLO_MAX_RECHEIOS) arr.push(val);
+  renderBolo(); decorateScreen();
+}
+function addCakeToBag() {
+  const d = state.cakeDraft;
+  if (!(d.size && d.massa && d.recheios.length)) return;
+  state.cakes.push({ ...d, recheios: [...d.recheios], adicionais: [...d.adicionais], price: boloSize(d.size).price });
+  state.cakeDraft = null;
+  go("cart");
+}
+function cartRemoveCake(i) { state.cakes.splice(i, 1); render(); }
 
 /* ---------------- DELIVERY ---------------- */
 async function loadDeliveryStatus() {
@@ -719,6 +818,7 @@ function changeDelivery(id, dir) {
 
 function selectCategory(cat) {
   state.category = cat;
+  if (cat === "bolo") { state.cakeDraft = newCakeDraft(); return go("bolo"); }
   go(cat === "brigadeiro" ? "brigadeiro-box" : "geladinho-info");
 }
 
@@ -857,7 +957,7 @@ function renderGeladinhoInfo() {
     <section class="screen">
       <div class="screen-head pink"><h2>Geladinho Gourmet</h2><p>Tamanho Festa</p></div>
       <div class="info-card">
-        <p><strong>Nossos geladinhos tamanho festa possuem 8 cm.</strong></p>
+        <p><strong>Nossos geladinhos tamanho festa possuem 7 cm.</strong></p>
         <p>Ideal para aniversários, festas corporativas, chá de bebê e outras comemorações.</p>
       </div>
       <div class="rule-card">
@@ -952,10 +1052,12 @@ function bagData() {
     ? state.box.boxConfig.fixedPrice
     : brigItems.reduce((s, i) => s + i.price * i.qty, 0);
   const gelaSubtotal = gelaItems.reduce((s, i) => s + i.price * i.qty, 0);
-  const encSub = brigSubtotal + gelaSubtotal;
+  const cakeItems = state.cakes.map((c, i) => ({ ...c, idx: i }));
+  const cakeSubtotal = cakeItems.reduce((t, c) => t + c.price, 0);
+  const encSub = brigSubtotal + gelaSubtotal + cakeSubtotal;
   const delSub = delItems.reduce((s, i) => s + Number(i.price) * i.qty, 0);
-  const itemCount = brigItems.reduce((s, i) => s + i.qty, 0) + gelaItems.reduce((s, i) => s + i.qty, 0) + delItems.reduce((s, i) => s + i.qty, 0);
-  return { brigItems, gelaItems, delItems, brigSubtotal, gelaSubtotal, encSub, delSub, itemCount, hasEnc: brigItems.length + gelaItems.length > 0, hasDel: delItems.length > 0 };
+  const itemCount = brigItems.reduce((s, i) => s + i.qty, 0) + gelaItems.reduce((s, i) => s + i.qty, 0) + delItems.reduce((s, i) => s + i.qty, 0) + cakeItems.length;
+  return { brigItems, gelaItems, cakeItems, cakeSubtotal, delItems, brigSubtotal, gelaSubtotal, encSub, delSub, itemCount, hasEnc: brigItems.length + gelaItems.length + cakeItems.length > 0, hasDel: delItems.length > 0 };
 }
 
 function fulfillMode(b) {
@@ -1121,6 +1223,14 @@ function renderCart() {
           `).join("")}
           <div class="cart-line total"><span>Subtotal brigadeiros</span><strong>${fmt(b.brigSubtotal)}</strong></div>
         </div>` : ""}
+
+      ${b.cakeItems.map(c => `
+        <div class="cart-summary">
+          <p class="cart-section-title">Encomenda · ${cakeTitle(c)}</p>
+          <div class="cart-line-edit"><span>${cakeDetails(c).map(escapeAttr).join("<br>")}</span>
+            <button class="btn-remove" onclick="cartRemoveCake(${c.idx})" title="Remover">✕</button></div>
+          <div class="cart-line total"><span>Valor do bolo</span><strong>${fmt(c.price)}</strong></div>
+        </div>`).join("")}
 
       ${b.gelaItems.length ? `
         <div class="cart-summary">
@@ -1555,6 +1665,12 @@ async function submitBag() {
       });
       msg += `  Subtotal: ${fmt(b.brigSubtotal)}\n\n`;
     }
+    b.cakeItems.forEach(c => {
+      msg += `${cakeTitle(c)} — ${fmt(c.price)}\n` + cakeDetails(c).map(l => `  - ${l}\n`).join("") + `\n`;
+      items.push({ product_name: `${cakeTitle(c)} — massa ${c.massa}; recheio${c.recheios.length > 1 ? "s" : ""}: ${c.recheios.join(" + ")}`, category: "bolo", quantity: 1, unit_price: c.price, subtotal: c.price });
+      if (c.adicionais.length) items.push({ product_name: `Adicionais do bolo ${c.size}: ${c.adicionais.join(", ")}`, category: "bolo", quantity: 1, unit_price: null, subtotal: null });
+      if (c.obs) items.push({ product_name: `Decoração do bolo ${c.size}: ${c.obs}`, category: "bolo", quantity: 1, unit_price: null, subtotal: null });
+    });
     if (b.gelaItems.length) {
       msg += `Geladinhos Gourmet Tamanho Festa\n`;
       b.gelaItems.forEach(i => {
@@ -1761,6 +1877,7 @@ function resetOrder() {
   state.box = null;
   state.flavors = {};
   state.geladinho = {};
+  state.cakes = []; state.cakeDraft = null;
   state.delivery = {};
   state.coupon = null; state.couponMsg = ""; state.couponInput = "";
   state.shipping = { status: "idle" };
@@ -1817,6 +1934,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
     console.error("Erro ao verificar login:", e);
   }
   await loadProductsFromDB();
+  loadSiteMedia().then(() => { if (state.step === "category" && state.orderTab === "encomendas") { renderCategory(); decorateScreen(); } });
   if (auth.session && auth.customer) {
     syncOrderCustomerFromProfile();
     state.step = "dashboard";

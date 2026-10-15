@@ -342,3 +342,19 @@ input,select,textarea{font-family:var(--font-body);}
 .addr-row label{flex:1;min-width:0;}
 
 .cover-screen + .site-footer{margin-top:0;}
+
+/* ---- fotos do menu e bolos ---- */
+.cat-photo{width:92px;height:92px;border-radius:22px;overflow:hidden;flex-shrink:0;background:linear-gradient(135deg,var(--pink-soft),#fff);}
+.cat-photo img{width:100%;height:100%;object-fit:cover;display:block;}
+.cat-emoji svg{width:64px;height:64px;}
+.size-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.size-card{display:flex;flex-direction:column;align-items:center;gap:3px;padding:14px 6px;border:2px solid var(--border);border-radius:20px;background:#fff;font-family:inherit;cursor:pointer;transition:all .15s;}
+.size-card b{font-family:var(--font-display);font-size:28px;color:var(--pink);line-height:1;}
+.size-card span{font-size:11px;color:var(--muted);text-align:center;font-weight:600;}
+.size-card strong{font-size:14px;color:var(--ink);}
+.size-card.on{border-color:var(--pink);background:var(--pink-soft);}
+.chip-row{display:flex;flex-wrap:wrap;gap:8px;}
+.opt-chip{border:1.5px solid var(--border);background:#fff;border-radius:999px;padding:10px 16px;font-family:inherit;font-size:13.5px;font-weight:600;color:var(--ink);cursor:pointer;transition:all .15s;}
+.opt-chip.on{background:var(--pink);border-color:var(--pink);color:#fff;}
+.opt-chip:disabled{opacity:.4;cursor:not-allowed;}
+.bolo-obs{width:100%;box-sizing:border-box;border:1.5px solid var(--border);border-radius:16px;padding:12px;font-family:inherit;font-size:14px;}

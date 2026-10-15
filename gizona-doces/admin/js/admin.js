@@ -641,6 +641,9 @@ async function saveOrderEdit(id) {
 async function loadProducts(main) {
   const { data: products } = await sb.from("products").select("*").order("category").order("sort_order");
   admin.data.products = products || [];
+  const med = await sb.from("site_media").select("*");
+  admin.data.mediaOk = !med.error;
+  admin.data.media = {}; (med.data || []).forEach(m => { admin.data.media[m.key] = m.image_url; });
   renderProductsTable(main);
 }
 function renderProductsTable(main) {
@@ -653,6 +656,7 @@ function renderProductsTable(main) {
       <button class="btn ${tab === "delivery" ? "btn-pink" : "btn-outline"}" onclick="setProductTab('delivery')">Delivery</button>
     </div>
     ${tab === "delivery" ? `<p class="hint">Produtos de delivery são de uso interno por enquanto: o cliente ainda vê "Delivery em breve" no site. Eles alimentam o Estoque de Produtos.</p>` : ""}
+    ${tab === "encomendas" ? renderSiteMediaCard() : ""}
     <div id="productFormArea"></div>
     <div class="admin-card">
       ${products.length ? `
@@ -3910,3 +3914,50 @@ async function deleteSheet(id) {
 
 // só pede compra se há um mínimo definido (> 0): item com mínimo 0 e estoque 0 (ex.: margarina de casa) não conta
 function isLowStock(i) { return Number(i.min_stock) > 0 && Number(i.current_stock) <= Number(i.min_stock); }
+
+
+/* ---------------- Fotos do menu de encomendas ---------------- */
+const SITE_MEDIA_SLOTS = [["brigadeiro", "Brigadeiro Gourmet"], ["geladinho", "Geladinho Gourmet"], ["bolo", "Bolos Decorados"]];
+function renderSiteMediaCard() {
+  if (!admin.data.mediaOk) return `<div class="error-box">Para colocar as fotos do menu, rode o script <strong>add_site_media_bolos.sql</strong> no Supabase.</div>`;
+  return `
+    <div class="admin-card">
+      <h2>Fotos do menu de encomendas</h2>
+      <p class="hint">Uma foto para cada categoria. Ela aparece no site na tela “O que você deseja pedir?”, no lugar do ícone.</p>
+      <div class="media-slots">
+        ${SITE_MEDIA_SLOTS.map(([key, label]) => `
+          <div class="media-slot">
+            <div class="media-prev">${admin.data.media[key] ? `<img src="${admin.data.media[key]}" alt="${label}">` : "Sem foto"}</div>
+            <strong>${label}</strong>
+            <input type="file" accept="image/*" onchange="uploadSiteMedia('${key}', this)">
+            <p class="photo-status" id="media-st-${key}"></p>
+            ${admin.data.media[key] ? `<button class="btn btn-outline btn-sm" onclick="removeSiteMedia('${key}')">Remover foto</button>` : ""}
+          </div>`).join("")}
+      </div>
+    </div>`;
+}
+async function uploadSiteMedia(key, input) {
+  const file = input.files[0]; if (!file) return;
+  const st = document.getElementById("media-st-" + key);
+  try {
+    st.textContent = "Comprimindo...";
+    const compressed = await compressImage(file);
+    st.textContent = "Enviando...";
+    const fileName = `site/${key}-${Date.now()}.jpg`;
+    const { error } = await sb.storage.from("photos").upload(fileName, compressed, { contentType: "image/jpeg" });
+    if (error) throw error;
+    const url = sb.storage.from("photos").getPublicUrl(fileName).data.publicUrl;
+    const { error: e2 } = await sb.from("site_media").upsert({ key, image_url: url, updated_at: new Date().toISOString() });
+    if (e2) throw e2;
+    admin.data.media[key] = url;
+    renderProductsTable(document.getElementById("adminMain"));
+  } catch (e) { console.error(e); st.textContent = "Não foi possível enviar: " + (e.message || "tente novamente."); }
+  finally { input.value = ""; }
+}
+async function removeSiteMedia(key) {
+  if (!confirm("Remover a foto? O site volta a mostrar o ícone.")) return;
+  const { error } = await sb.from("site_media").delete().eq("key", key);
+  if (error) { console.error(error); alert("Não foi possível remover."); return; }
+  delete admin.data.media[key];
+  renderProductsTable(document.getElementById("adminMain"));
+}
