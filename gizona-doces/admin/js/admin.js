@@ -182,7 +182,7 @@ async function loadDashboard(main) {
   const totalRevenue = active.reduce((s, o) => s + Number(o.total || 0), 0);
   const avgTicket = active.length ? totalRevenue / active.length : 0;
   const countByStatus = s => all.filter(o => o.status === s).length;
-  const lowStock = (ingredients || []).filter(i => Number(i.current_stock) <= Number(i.min_stock));
+  const lowStock = (ingredients || []).filter(i => isLowStock(i));
 
   const sold = {};
   active.forEach(o => (Array.isArray(o.items) ? o.items : []).forEach(i => {
@@ -1647,7 +1647,7 @@ function renderEstoque(main) {
     <div class="stat-grid">
       <div class="stat-card"><div class="label">Valor em estoque</div><div class="value" style="font-size:24px">${fmt(valorTotalEstoque)}</div></div>
       <div class="stat-card"><div class="label">Itens cadastrados</div><div class="value">${ingredients.length}</div></div>
-      <div class="stat-card"><div class="label">Abaixo do mínimo</div><div class="value" style="color:#B23434">${ingredients.filter(i => Number(i.current_stock) <= Number(i.min_stock)).length}</div></div>
+      <div class="stat-card"><div class="label">Abaixo do mínimo</div><div class="value" style="color:#B23434">${ingredients.filter(i => isLowStock(i)).length}</div></div>
     </div>
 
     <div id="ingredientFormArea"></div>
@@ -1661,7 +1661,7 @@ function renderEstoque(main) {
           <thead><tr><th>Ingrediente</th><th>Qtd. comprada</th><th>Unidade</th><th>Valor pago</th><th>Custo/un.</th><th>Atual</th><th>Mínimo</th><th>Status</th><th></th></tr></thead>
           <tbody>
             ${ingredients.map(i => {
-              const low = Number(i.current_stock) <= Number(i.min_stock);
+              const low = isLowStock(i);
               return `
                 <tr>
                   <td><input value="${i.name}" id="ing_name_${i.id}" style="border:1px solid var(--border);border-radius:7px;padding:6px;width:150px"></td>
@@ -3906,3 +3906,7 @@ async function deleteSheet(id) {
   admin.data.sheetOpen = null;
   await loadFichas(document.getElementById("adminMain"));
 }
+
+
+// só pede compra se há um mínimo definido (> 0): item com mínimo 0 e estoque 0 (ex.: margarina de casa) não conta
+function isLowStock(i) { return Number(i.min_stock) > 0 && Number(i.current_stock) <= Number(i.min_stock); }

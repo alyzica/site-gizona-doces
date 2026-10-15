@@ -1364,21 +1364,37 @@ async function geocodeByCep(cep) {
   return null;
 }
 // endereço -> coordenadas: tenta CEP, depois busca por endereço, depois bairro/cidade
+const CITY_FALLBACK = { americana: { lat: -22.7392, lng: -47.3314 } };
+async function cityCentroid(city, st) {
+  const key = "city:" + `${city},${st}`.toLowerCase();
+  if (state.geoCache[key]) return state.geoCache[key];
+  const p = new URLSearchParams({ format: "json", limit: "1", countrycodes: "br", city, state: st || "", country: "Brasil" });
+  const d = await jget(`https://nominatim.openstreetmap.org/search?${p}`);
+  const c = d && d[0] ? { lat: Number(d[0].lat), lng: Number(d[0].lon) } : (CITY_FALLBACK[String(city).toLowerCase()] || null);
+  if (c) state.geoCache[key] = c;
+  return c;
+}
+// endereço -> coordenadas. Cada tentativa só vale se cair perto da própria cidade (evita ruas homônimas de outros lugares)
 async function geocodeAddr(o) {
   const key = JSON.stringify([o.cep, o.street, o.number, o.neighborhood, o.city, o.state]).toLowerCase();
   if (state.geoCache[key]) return state.geoCache[key];
-  let f = await geocodeByCep(o.cep);
-  if (!f && o.street) f = await nominatimStruct(o);
   const city = [o.city, o.state].filter(Boolean).join(" - ");
   const full = `${o.street} ${o.number}, ${o.neighborhood}, ${city}, Brasil`.replace(/\s+,/g, ",");
-  if (!f) f = await nominatim(full);
-  if (!f) f = await photon(full);
-  if (!f && o.neighborhood) f = await nominatim(`${o.neighborhood}, ${city}, Brasil`) || await photon(`${o.neighborhood}, ${city}, Brasil`);
-  if (!f && o.street) f = await nominatim(`${o.street}, ${city}, Brasil`);
-  if (!f && o.cep.length === 8) f = await nominatim(`${o.cep.slice(0, 5)}-${o.cep.slice(5)}, Brasil`);
-  if (!f && city) f = await nominatim(`${city}, Brasil`);
-  if (f) state.geoCache[key] = f;
-  return f;
+  const centroid = o.city ? await cityCentroid(o.city, o.state) : null;
+  const sane = f => f && (!centroid || haversineKm(f.lat, f.lng, centroid.lat, centroid.lng) <= 25);
+  const attempts = [
+    () => geocodeByCep(o.cep),
+    () => o.street && nominatimStruct(o),
+    () => nominatim(full),
+    () => photon(full),
+    () => o.neighborhood && (nominatim(`${o.neighborhood}, ${city}, Brasil`) ),
+    () => o.street && nominatim(`${o.street}, ${city}, Brasil`),
+  ];
+  let found = null;
+  for (const at of attempts) { const f = await at(); if (sane(f)) { found = f; break; } }
+  if (!found && centroid) found = { ...centroid, approx: true };
+  if (found) state.geoCache[key] = found;
+  return found;
 }
 async function geocodeText(address, cepHint) {
   const m = address.match(/\b(\d{5})-?(\d{3})\b/);
@@ -1399,13 +1415,21 @@ function parseOriginAddress(txt) {
   const nm = head.match(/^(.*?),?\s*(\d+\w*)\s*$/);
   const street = (nm ? nm[1] : head).replace(/,\s*$/, "").trim();
   const hood = (t.split(/\s+-\s+/)[1] || "").split(",")[0].trim();
-  return { cep: "", street, number: nm ? nm[2] : "", neighborhood: hood, city, state };
+  const cm = t.match(/\b(\d{5})-?(\d{3})\b/);
+  return { cep: cm ? cm[1] + cm[2] : "", street, number: nm ? nm[2] : "", neighborhood: hood, city: city.replace(/\b\d{5}-?\d{3}\b/, "").trim(), state };
 }
 async function resolveOrigin(cfg) {
-  if (cfg.origin_lat != null && cfg.origin_lng != null) return { lat: Number(cfg.origin_lat), lng: Number(cfg.origin_lng) };
   if (state.originCoords) return state.originCoords;
-  const g = await geocodeAddr(parseOriginAddress(cfg.origin_address || "Americana/SP"));
-  state.originCoords = g || { lat: -22.7392, lng: -47.3314 }; // centro de Americana/SP (último recurso)
+  const po = parseOriginAddress(cfg.origin_address || "Americana/SP");
+  const centroid = po.city ? await cityCentroid(po.city, po.state) : null;
+  let o = null;
+  if (cfg.origin_lat != null && cfg.origin_lng != null) {
+    o = { lat: Number(cfg.origin_lat), lng: Number(cfg.origin_lng) };
+    // coordenada salva que cai longe da própria cidade provavelmente é de outra rua homônima
+    if (centroid && haversineKm(o.lat, o.lng, centroid.lat, centroid.lng) > 25) o = null;
+  }
+  if (!o) o = await geocodeAddr(po);
+  state.originCoords = o || centroid || CITY_FALLBACK.americana;
   return state.originCoords;
 }
 let shippingToken = 0, shippingTimer = null;
@@ -1442,13 +1466,14 @@ async function estimateShipping(force) {
   // mesma cidade da saída nunca é "fora da área": se a distância deu absurda, a localização é que veio errada
   const oc = (currentAddrObj().city || "").trim().toLowerCase();
   const sameCity = !!oc && String(cfg.origin_address || "").toLowerCase().includes(oc);
-  if (sameCity && km > Math.min(Number(cfg.max_km), 15)) {
+  if (sameCity && km > Number(cfg.max_km)) {
     state.shipping = { status: "ok", km: 0, fee: Math.ceil(Number(cfg.min_fee) * 2) / 2, approx: true };
     paintBagTotals(); return;
   }
   if (km > Number(cfg.max_km)) { state.shipping = { status: "out", km }; paintBagTotals(); return; }
   const raw = Math.max(Number(cfg.min_fee), Number(cfg.base_fee) + Number(cfg.per_km) * km);
-  state.shipping = { status: "ok", km, fee: Math.ceil(raw * 2) / 2 };
+  state.shipping = { status: "ok", km, fee: Math.ceil(raw * 2) / 2, approx: !!dest.approx };
+  console.info("[frete]", { origem: origin, destino: dest, km: Number(km.toFixed(2)) });
   paintBagTotals();
 }
 

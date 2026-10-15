@@ -342,4 +342,3 @@ input,select,textarea{font-family:var(--font-body);}
 .addr-row label{flex:1;min-width:0;}
 
 .cover-screen + .site-footer{margin-top:0;}
-html,body{overflow-x:hidden;}
