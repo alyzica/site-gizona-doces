@@ -1006,7 +1006,7 @@ function paintBagTotals() {
     if (m.feeFree) val = `<s style="color:var(--muted)">${sh.status === "ok" ? fmt(sh.fee) : ""}</s> <strong class="free">Grátis</strong>`;
     else if (sh.status === "loading" || (sh.status === "idle" && hasAddr)) val = `<span class="muted">calculando...</span>`;
     else if (sh.status === "ok") val = (sh.approx ? "≈ " : "") + fmt(sh.fee);
-    else if (sh.status === "out") val = `<span class="muted">fora da área</span>`;
+    else if (sh.status === "out") val = `<span class="muted">fora da área${sh.km ? " (" + Math.round(sh.km) + " km)" : ""}</span>`;
     else if (sh.status === "error" || sh.status === "off") val = `<span class="muted">a combinar</span>`;
     else val = `<span class="muted">${bagAddress().trim() ? "complete o endereço" : "informe o endereço"}</span>`;
     if (sh.status === "out") note = "Esse endereço fica fora da nossa área padrão — combinamos a entrega pelo WhatsApp.";
@@ -1390,10 +1390,21 @@ async function geocodeText(address, cepHint) {
   return f;
 }
 // ponto de saída: usa as coordenadas do admin; se faltarem, descobre pelo endereço cadastrado
+// "Rua X, 74 - Bairro, Cidade/UF" -> { street, number, neighborhood, city, state }
+function parseOriginAddress(txt) {
+  const t = String(txt || "").trim();
+  const m = t.match(/([^,\/\-]+?)\s*\/\s*([A-Za-z]{2})\s*$/);
+  const city = m ? m[1].trim() : "", state = m ? m[2].toUpperCase() : "";
+  const head = t.split(/\s+-\s+/)[0];
+  const nm = head.match(/^(.*?),?\s*(\d+\w*)\s*$/);
+  const street = (nm ? nm[1] : head).replace(/,\s*$/, "").trim();
+  const hood = (t.split(/\s+-\s+/)[1] || "").split(",")[0].trim();
+  return { cep: "", street, number: nm ? nm[2] : "", neighborhood: hood, city, state };
+}
 async function resolveOrigin(cfg) {
   if (cfg.origin_lat != null && cfg.origin_lng != null) return { lat: Number(cfg.origin_lat), lng: Number(cfg.origin_lng) };
   if (state.originCoords) return state.originCoords;
-  const g = await geocodeText(cfg.origin_address || "Americana, SP", "");
+  const g = await geocodeAddr(parseOriginAddress(cfg.origin_address || "Americana/SP"));
   state.originCoords = g || { lat: -22.7392, lng: -47.3314 }; // centro de Americana/SP (último recurso)
   return state.originCoords;
 }
@@ -1428,6 +1439,13 @@ async function estimateShipping(force) {
     paintBagTotals(); return;
   }
   const km = haversineKm(origin.lat, origin.lng, dest.lat, dest.lng) * Number(cfg.circuity || 1.3);
+  // mesma cidade da saída nunca é "fora da área": se a distância deu absurda, a localização é que veio errada
+  const oc = (currentAddrObj().city || "").trim().toLowerCase();
+  const sameCity = !!oc && String(cfg.origin_address || "").toLowerCase().includes(oc);
+  if (sameCity && km > Math.min(Number(cfg.max_km), 15)) {
+    state.shipping = { status: "ok", km: 0, fee: Math.ceil(Number(cfg.min_fee) * 2) / 2, approx: true };
+    paintBagTotals(); return;
+  }
   if (km > Number(cfg.max_km)) { state.shipping = { status: "out", km }; paintBagTotals(); return; }
   const raw = Math.max(Number(cfg.min_fee), Number(cfg.base_fee) + Number(cfg.per_km) * km);
   state.shipping = { status: "ok", km, fee: Math.ceil(raw * 2) / 2 };

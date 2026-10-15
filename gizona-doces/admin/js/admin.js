@@ -3487,7 +3487,7 @@ function renderEntrega(main) {
         <label>Latitude<input id="seLat" type="number" step="any" value="${c.origin_lat ?? ""}"></label>
         <label>Longitude<input id="seLng" type="number" step="any" value="${c.origin_lng ?? ""}"></label>
       </div>
-      <p class="hint" id="seGeoStatus">${c.origin_lat == null ? "⚠️ Clique em “Buscar coordenadas” para o site conseguir calcular a distância." : "✓ Coordenadas salvas."}</p>
+      <p class="hint" id="seGeoStatus">${c.origin_lat == null ? "⚠️ Clique em “Buscar coordenadas” para o site conseguir calcular a distância." : `✓ Coordenadas salvas. <a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${c.origin_lat},${c.origin_lng}">Conferir no mapa</a> — se o ponto não for a casa/loja, apague latitude e longitude e salve (o site acha sozinho) ou corrija à mão.`}</p>
     </div>
     <div class="admin-card">
       <h2>Tabela de valores</h2>
@@ -3523,9 +3523,13 @@ async function geocodeOrigin() {
   const st = document.getElementById("seGeoStatus");
   st.textContent = "Buscando...";
   try {
-    const q = encodeURIComponent(document.getElementById("seAddress").value + ", Brasil");
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${q}`);
-    const d = await r.json();
+    const addr = document.getElementById("seAddress").value;
+    const cm = addr.match(/([^,\/\-]+?)\s*\/\s*([A-Za-z]{2})\s*$/);
+    const head = addr.split(/\s+-\s+/)[0];
+    const p = new URLSearchParams({ format: "json", limit: "1", countrycodes: "br", street: head.replace(/,\s*(\d+)/, " $1").replace(/^(.*?)\s(\d+)$/, "$2 $1"), city: cm ? cm[1].trim() : "", state: cm ? cm[2].toUpperCase() : "", country: "Brasil" });
+    let r = await fetch(`https://nominatim.openstreetmap.org/search?${p}`);
+    let d = await r.json();
+    if (!d[0]) { r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${encodeURIComponent(addr + ", Brasil")}`); d = await r.json(); }
     if (!d[0]) { st.textContent = "Endereço não encontrado. Tente incluir cidade e estado, ou digite latitude/longitude à mão."; return; }
     document.getElementById("seLat").value = d[0].lat;
     document.getElementById("seLng").value = d[0].lon;
