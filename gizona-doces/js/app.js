@@ -1664,7 +1664,8 @@ async function estimateShipping(force) {
     paintBagTotals(); return;
   }
   if (km > Number(cfg.max_km)) { state.shipping = { status: "out", km }; paintBagTotals(); return; }
-  const raw = Math.max(Number(cfg.min_fee), Number(cfg.base_fee) + Number(cfg.per_km) * km);
+  const mins = km / (Number(cfg.avg_speed_kmh) || 30) * 60; // tempo estimado de corrida
+  const raw = Math.max(Number(cfg.min_fee), Number(cfg.base_fee) + Number(cfg.per_km) * km + Number(cfg.per_minute || 0) * mins);
   state.shipping = { status: "ok", km, fee: Math.ceil(raw * 2) / 2, approx: !!dest.approx };
   console.info("[frete]", { origem: origin, destino: dest, km: Number(km.toFixed(2)) });
   paintBagTotals();

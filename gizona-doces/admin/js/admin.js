@@ -3739,7 +3739,8 @@ async function loadEntrega(main) {
 
 function shipFeeFor(km, cfg) {
   if (km > Number(cfg.max_km)) return null;
-  return Math.ceil(Math.max(Number(cfg.min_fee), Number(cfg.base_fee) + Number(cfg.per_km) * km) * 2) / 2;
+  const mins = km / (Number(cfg.avg_speed_kmh) || 30) * 60;
+  return Math.ceil(Math.max(Number(cfg.min_fee), Number(cfg.base_fee) + Number(cfg.per_km) * km + Number(cfg.per_minute || 0) * mins) * 2) / 2;
 }
 
 function renderEntrega(main) {
@@ -3765,6 +3766,8 @@ function renderEntrega(main) {
       <div class="form-grid">
         <label>Taxa base (R$)<input id="seBase" type="number" min="0" step="0.01" value="${c.base_fee}"></label>
         <label>Valor por km (R$)<input id="sePerKm" type="number" min="0" step="0.01" value="${c.per_km}"></label>
+        <label>Valor por minuto (R$)<input id="sePerMin" type="number" min="0" step="0.01" value="${c.per_minute ?? 0}"></label>
+        <label>Velocidade média (km/h) para estimar o tempo<input id="seSpeed" type="number" min="5" step="1" value="${c.avg_speed_kmh ?? 30}"></label>
         <label>Taxa mínima (R$)<input id="seMin" type="number" min="0" step="0.01" value="${c.min_fee}"></label>
         <label>Distância máxima (km)<input id="seMax" type="number" min="1" step="0.5" value="${c.max_km}"></label>
         <label>Fator de rota (distância real ≈ linha reta × fator)<input id="seCirc" type="number" min="1" max="2" step="0.05" value="${c.circuity}"></label>
@@ -3783,7 +3786,7 @@ function renderEntrega(main) {
 }
 function currentShipForm() {
   const n = id => Number(document.getElementById(id).value);
-  return { base_fee: n("seBase"), per_km: n("sePerKm"), min_fee: n("seMin"), max_km: n("seMax") };
+  return { base_fee: n("seBase"), per_km: n("sePerKm"), per_minute: n("sePerMin"), avg_speed_kmh: n("seSpeed"), min_fee: n("seMin"), max_km: n("seMax") };
 }
 function simulateShipping() {
   const km = Number(document.getElementById("seSimKm").value) || 0;
@@ -3813,7 +3816,7 @@ async function saveEntrega() {
     enabled: document.getElementById("seEnabled").checked,
     origin_address: document.getElementById("seAddress").value.trim(),
     origin_lat: n("seLat"), origin_lng: n("seLng"),
-    base_fee: n("seBase") ?? 0, per_km: n("sePerKm") ?? 0, min_fee: n("seMin") ?? 0, max_km: n("seMax") ?? 25,
+    base_fee: n("seBase") ?? 0, per_km: n("sePerKm") ?? 0, per_minute: n("sePerMin") ?? 0, avg_speed_kmh: n("seSpeed") ?? 30, min_fee: n("seMin") ?? 0, max_km: n("seMax") ?? 25,
     circuity: n("seCirc") ?? 1.3, free_above: n("seFree"),
     note: document.getElementById("seNote").value.trim(), updated_at: new Date().toISOString(),
   };
