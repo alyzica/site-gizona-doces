@@ -30,6 +30,7 @@ const state = {
   deliveryStatus: null,    // { open, message } (RPC delivery_status); null = ainda não carregou / script não rodado
   fulfillment: null,       // "delivery" | "pickup" (null = padrão conforme a sacola)
   originCoords: null, geoCache: {}, bagNotice: "",
+  gallery: [],             // galeria de inspirações (tabela gallery_photos)
   media: {},               // fotos do menu de encomendas (tabela site_media)
   cakes: [], cakeDraft: null,
   addrMode: null, otherAddr: { cep: "", street: "", number: "", complement: "", neighborhood: "", city: "", state: "" },
@@ -602,6 +603,7 @@ function renderCategory() {
           </span>
         </button>`).join("")}
       </div>
+      ${renderGallerySection()}
       `}
 
       ${state.orderTab === "encomendas" ? `
@@ -630,6 +632,26 @@ async function setOrderTab(tab) {
 }
 
 /* ---------------- Fotos do menu (admin sobe em Produtos) ---------------- */
+async function loadGallery() {
+  if (!sb) return;
+  try {
+    const { data, error } = await sb.from("gallery_photos").select("id, image_url, caption").eq("visible", true).order("sort_order").order("created_at");
+    if (!error && data) state.gallery = data;
+  } catch (e) { /* sem a tabela ainda: não mostra galeria */ }
+}
+function renderGallerySection() {
+  const g = state.gallery || [];
+  if (!g.length) return "";
+  const urls = escapeAttr(JSON.stringify(g.map(x => x.image_url)));
+  return `
+    <div class="gallery-block">
+      <p class="order-info-title">Inspirações — trabalhos da Gizona</p>
+      <p class="hint" style="margin:0 0 10px">Toque em uma foto para ampliar.</p>
+      <div class="gallery-grid">
+        ${g.map((x, i) => `<button type="button" class="gallery-item" onclick="openPhoto(${urls}, ${i})" aria-label="Ampliar foto ${i + 1}"><img src="${escapeAttr(x.image_url)}" alt="${escapeAttr(x.caption || "Trabalho da Gizona")}" loading="lazy" onerror="this.parentElement.remove()"></button>`).join("")}
+      </div>
+    </div>`;
+}
 async function loadSiteMedia() {
   if (!sb) return;
   try {
@@ -731,6 +753,84 @@ function addCakeToBag() {
 }
 function cartRemoveCake(i) { state.cakes.splice(i, 1); render(); }
 
+/* ---------------- CARD DE PRODUTO (Delivery + Geladinho) e FOTO AMPLIADA ---------------- */
+function productCard(o) {
+  const photos = (o.photos || []).filter(Boolean);
+  const thumb = `<span class="pc-thumb ${photos.length ? "" : "no-photo"}" ${photos.length ? `onclick="openPhoto(${escapeAttr(JSON.stringify(photos)).replace(/"/g, "&quot;")}, 0)"` : ""} role="${photos.length ? "button" : "img"}" aria-label="Ampliar foto de ${escapeAttr(o.name)}">
+      ${photos.length ? `<img src="${escapeAttr(photos[0])}" alt="${escapeAttr(o.name)}" style="--img-scale:${o.scale || 1};--img-x:${o.x || 50}%;--img-y:${o.y || 50}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()">` : ""}
+      ${photos.length ? `<i class="pc-zoom"><svg viewBox="0 0 24 24" width="13" height="13" fill="none"><circle cx="11" cy="11" r="6" stroke="#fff" stroke-width="2"/><path d="M16 16l4 4M11 8.5v5M8.5 11h5" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></i>` : ""}
+    </span>`;
+  return `
+  <div class="pcard ${o.out ? "disabled" : ""}">
+    <div class="pc-top">
+      ${thumb}
+      <div class="pc-info">
+        ${o.badge ? `<span class="best-badge">★ ${o.badge}</span>` : ""}
+        <strong class="pc-title">${o.name}</strong>
+        ${o.desc ? `<p class="pc-desc">${o.desc}</p>` : ""}
+        <span class="pc-price">${fmt(o.price)}</span>
+      </div>
+    </div>
+    <div class="pc-bottom">
+      <span class="stepper">
+        <button onclick="${o.minus}" ${o.minusOff ? "disabled" : ""}>–</button>
+        <span>${o.qty}</span>
+        <button onclick="${o.plus}" ${o.plusOff ? "disabled" : ""}>+</button>
+      </span>
+      ${o.note ? `<span class="pc-note ${o.noteClass || ""}">${o.note}</span>` : ""}
+    </div>
+  </div>`;
+}
+let photoViewer = { list: [], i: 0 };
+function openPhoto(list, i) {
+  photoViewer = { list: (list || []).filter(Boolean), i: i || 0 };
+  if (!photoViewer.list.length) return;
+  let el = document.getElementById("photoViewer");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "photoViewer"; el.className = "photo-viewer";
+    el.onclick = e => { if (e.target === el || e.target.dataset.close) closePhoto(); };
+    document.body.appendChild(el);
+    document.addEventListener("keydown", photoKey);
+  }
+  paintPhoto();
+}
+function paintPhoto() {
+  const el = document.getElementById("photoViewer"); if (!el) return;
+  const { list, i } = photoViewer, multi = list.length > 1;
+  el.innerHTML = `
+    <button class="pv-close" data-close="1" aria-label="Fechar">✕</button>
+    ${multi ? `<button class="pv-nav prev" onclick="photoStep(-1)" aria-label="Anterior">‹</button><button class="pv-nav next" onclick="photoStep(1)" aria-label="Próxima">›</button>` : ""}
+    <img src="${escapeAttr(list[i])}" alt="Foto ampliada">
+    ${multi ? `<span class="pv-count">${i + 1} / ${list.length}</span>` : ""}`;
+}
+function photoStep(d) { const n = photoViewer.list.length; photoViewer.i = (photoViewer.i + d + n) % n; paintPhoto(); }
+function photoKey(e) {
+  if (!document.getElementById("photoViewer")) return;
+  if (e.key === "Escape") closePhoto();
+  else if (e.key === "ArrowLeft" && photoViewer.list.length > 1) photoStep(-1);
+  else if (e.key === "ArrowRight" && photoViewer.list.length > 1) photoStep(1);
+}
+function closePhoto() { const el = document.getElementById("photoViewer"); if (el) el.remove(); }
+
+/* Delivery: agrupa por tipo (1ª palavra do nome), mais vendidos no topo de cada grupo, esgotados no fim */
+function deliveryGroupKey(name) {
+  const w = String(name || "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").split(/\s+/)[0] || "";
+  return w.replace(/(oes|aes)$/, m => (m === "oes" ? "ao" : "ao")).replace(/s$/, "");
+}
+function sortDeliveryCatalog(list) {
+  const groups = new Map(); // mantém a ordem de primeira aparição (sort_order do admin)
+  list.forEach(p => { const k = deliveryGroupKey(p.name); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(p); });
+  const rank = p => (p.stock > 0 ? 0 : 1);
+  const avail = [], gone = [];
+  groups.forEach(arr => {
+    const sorted = arr.map((p, i) => ({ p, i })).sort((a, b) =>
+      (rank(a.p) - rank(b.p)) || ((b.p.best_seller ? 1 : 0) - (a.p.best_seller ? 1 : 0)) || (a.i - b.i)).map(x => x.p);
+    sorted.forEach(p => (p.stock > 0 ? avail : gone).push(p));
+  });
+  return avail.concat(gone); // disponíveis agrupados primeiro; esgotados sempre depois de todos
+}
+
 /* ---------------- DELIVERY ---------------- */
 async function loadDeliveryStatus() {
   try {
@@ -781,24 +881,17 @@ function renderDeliveryList() {
   return `
     ${state.deliveryStatus && state.deliveryStatus.open ? `<p class="open-pill"><i></i>Delivery aberto</p>` : ""}
     <div class="flavor-list">
-      ${cat.map(p => {
+      ${sortDeliveryCatalog(cat).map(p => {
         const qty = state.delivery[p.id] || 0;
         const out = p.stock <= 0;
-        return `
-        <div class="flavor-row wide ${out ? "disabled" : ""}">
-          <span class="flavor-thumb"><img src="${p.image_url || ""}" alt="${p.name}" style="--img-scale:${Number(p.image_scale) || 1};--img-x:${Number(p.image_position_x) || 50}%;--img-y:${Number(p.image_position_y) || 50}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
-          <span class="flavor-info">
-            <strong>${p.name}</strong>
-            ${p.description ? `<small>${p.description}</small>` : ""}
-            <span class="badge small">${fmt(Number(p.price))}</span>
-            <small class="${out ? "error" : ""}">${out ? "Esgotado" : `Restam ${p.stock}`}</small>
-          </span>
-          <span class="stepper">
-            <button onclick="changeDelivery('${p.id}', -1)" ${qty ? "" : "disabled"}>–</button>
-            <span>${qty}</span>
-            <button onclick="changeDelivery('${p.id}', 1)" ${out || qty >= p.stock ? "disabled" : ""}>+</button>
-          </span>
-        </div>`;
+        return productCard({
+          name: p.name, desc: p.description, price: Number(p.price), photos: [p.image_url],
+          scale: Number(p.image_scale) || 1, x: Number(p.image_position_x) || 50, y: Number(p.image_position_y) || 50,
+          out, badge: p.best_seller && !out ? "Mais vendido" : "", qty,
+          minus: `changeDelivery('${p.id}', -1)`, minusOff: !qty,
+          plus: `changeDelivery('${p.id}', 1)`, plusOff: out || qty >= p.stock,
+          note: out ? "Esgotado" : `Restam ${p.stock} ${p.stock === 1 ? "unidade" : "unidades"}`, noteClass: out ? "error" : ""
+        });
       }).join("")}
     </div>
     <div class="sticky-subtotal">
@@ -993,22 +1086,12 @@ function renderGeladinhoFlavors() {
         ${GELADINHO_PRODUCTS.map(p => {
           const qty = state.geladinho[p.id] || 0;
           const err = qty > 0 && qty < GELADINHO_RULES.minPerFlavor;
-          return `
-            <div class="flavor-row wide">
-              <span class="flavor-thumb"><img src="${p.image}" alt="${p.name}" style="--img-scale:${p.imageScale};--img-x:${p.imageX}%;--img-y:${p.imageY}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()"></span>
-              <span class="flavor-info">
-                <strong>${p.name}</strong>
-                <small>${p.desc}</small>
-                <span class="badge small">${fmt(p.price)}</span>
-                ${err ? `<small class="error">Mínimo ${GELADINHO_RULES.minPerFlavor} por sabor</small>` : ""}
-              </span>
-              <span class="stepper">
-                <button onclick="changeGeladinho('${p.id}', -1)">–</button>
-                <span>${qty}</span>
-                <button onclick="changeGeladinho('${p.id}', 1)">+</button>
-              </span>
-            </div>
-          `;
+          return productCard({
+            name: p.name, desc: p.desc, price: p.price, photos: [p.image, p.image2],
+            scale: p.imageScale, x: p.imageX, y: p.imageY, qty,
+            minus: `changeGeladinho('${p.id}', -1)`, plus: `changeGeladinho('${p.id}', 1)`,
+            note: err ? `Mínimo ${GELADINHO_RULES.minPerFlavor} por sabor` : "", noteClass: err ? "error" : ""
+          });
         }).join("")}
       </div>
       ${stickySubtotal({ back: "geladinho-info", total: subtotal, enabled: isValid })}
@@ -1934,6 +2017,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
     console.error("Erro ao verificar login:", e);
   }
   await loadProductsFromDB();
+  loadGallery().then(() => { if (state.step === "category" && state.orderTab === "encomendas") { renderCategory(); decorateScreen(); } });
   loadSiteMedia().then(() => { if (state.step === "category" && state.orderTab === "encomendas") { renderCategory(); decorateScreen(); } });
   if (auth.session && auth.customer) {
     syncOrderCustomerFromProfile();

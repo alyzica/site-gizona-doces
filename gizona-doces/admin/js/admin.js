@@ -124,7 +124,6 @@ function renderShell() {
           <button class="${admin.tab === 'calendario' ? 'active' : ''}" onclick="setTab('calendario')">${navIcon("calendar")}Calendário</button>
           <button class="${admin.tab === 'cupons' ? 'active' : ''}" onclick="setTab('cupons')">${navIcon("ticket")}Cupons</button>
           <button class="${admin.tab === 'entrega' ? 'active' : ''}" onclick="setTab('entrega')">${navIcon("truck")}Entrega</button>
-          <button class="${admin.tab === 'loyalty' ? 'active' : ''}" onclick="setTab('loyalty')">${navIcon("crown")}Fidelidade</button>
           <button class="${admin.tab === 'rewards' ? 'active' : ''}" onclick="setTab('rewards')">${navIcon("gift")}Mimos</button>
         </nav>
         <a href="../index.html" target="_blank" style="margin:0 12px 8px;color:var(--muted);font-size:12.5px;text-align:center;text-decoration:underline;">Ver site</a>
@@ -135,7 +134,7 @@ function renderShell() {
   `;
   loadTab();
 }
-function setTab(tab) { admin.tab = tab; renderShell(); }
+function setTab(tab) { if (tab === "loyalty") tab = "customers"; if (tab !== "customers") admin.data.custView = null; admin.tab = tab; renderShell(); }
 
 async function loadTab() {
   const main = document.getElementById("adminMain");
@@ -163,6 +162,116 @@ async function loadTab() {
 }
 
 /* ---------------- DASHBOARD ---------------- */
+
+/* ============================================================
+   DATAS COMEMORATIVAS (fixas e móveis) + lembretes de 45 dias
+============================================================ */
+const HOLIDAY_ADVANCE_DAYS = 45;
+function easterDate(y) { // algoritmo de Meeus/Jones/Butcher
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(y, month - 1, day);
+}
+function nthWeekday(y, month, weekday, n) { // n-ésimo dia da semana do mês (month 0-11)
+  const first = new Date(y, month, 1).getDay();
+  return new Date(y, month, 1 + ((weekday - first + 7) % 7) + (n - 1) * 7);
+}
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function isoDate(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function commemorativeDates(y) {
+  const easter = easterDate(y);
+  const list = [
+    ["ano-novo", "Ano-Novo", new Date(y, 0, 1)],
+    ["carnaval", "Carnaval", addDays(easter, -47)],
+    ["dia-mulher", "Dia Internacional da Mulher", new Date(y, 2, 8)],
+    ["pascoa", "Páscoa", easter],
+    ["dia-maes", "Dia das Mães", nthWeekday(y, 4, 0, 2)],
+    ["dia-namorados", "Dia dos Namorados", new Date(y, 5, 12)],
+    ["festa-junina", "Festas Juninas (São João)", new Date(y, 5, 24)],
+    ["dia-amigo", "Dia do Amigo", new Date(y, 6, 20)],
+    ["dia-avos", "Dia dos Avós", new Date(y, 6, 26)],
+    ["dia-pais", "Dia dos Pais", nthWeekday(y, 7, 0, 2)],
+    ["dia-cliente", "Dia do Cliente", new Date(y, 8, 15)],
+    ["dia-criancas", "Dia das Crianças", new Date(y, 9, 12)],
+    ["dia-professores", "Dia dos Professores", new Date(y, 9, 15)],
+    ["halloween", "Halloween", new Date(y, 9, 31)],
+    ["black-friday", "Black Friday", addDays(nthWeekday(y, 10, 4, 4), 1)],
+    ["natal", "Natal", new Date(y, 11, 25)],
+    ["reveillon", "Réveillon (Ceia de Ano-Novo)", new Date(y, 11, 31)],
+  ];
+  return list.map(([key, name, date]) => ({ key, name, date, iso: isoDate(date), year: y }));
+}
+function holidayPlan(key, year) {
+  return (admin.data.holidayPlans || []).find(p => p.holiday_key === key && p.year === year) || { done: false, dismissed: false };
+}
+function holidaysByIso(year) {
+  const m = {};
+  commemorativeDates(year).forEach(h => (m[h.iso] = m[h.iso] || []).push(h));
+  return m;
+}
+function daysUntil(date) {
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  const d = new Date(date); d.setHours(0, 0, 0, 0);
+  return Math.round((d - t) / 86400000);
+}
+async function loadHolidayPlans() {
+  const r = await sb.from("holiday_plans").select("*");
+  admin.data.holidayPlansOk = !r.error;
+  admin.data.holidayPlans = r.error ? [] : (r.data || []);
+}
+function upcomingHolidays(limitDays) {
+  const y = new Date().getFullYear();
+  return [...commemorativeDates(y), ...commemorativeDates(y + 1)]
+    .map(h => ({ ...h, days: daysUntil(h.date) }))
+    .filter(h => h.days >= 0 && (limitDays == null || h.days <= limitDays))
+    .sort((a, b) => a.days - b.days);
+}
+async function setHolidayPlan(key, year, patch) {
+  const cur = holidayPlan(key, year);
+  const row = { holiday_key: key, year, done: cur.done, dismissed: cur.dismissed, ...patch, updated_at: new Date().toISOString() };
+  const { error } = await sb.from("holiday_plans").upsert(row, { onConflict: "holiday_key,year" });
+  if (error) { alert("Não foi possível salvar: " + (error.message || "") + "\n\nRode o script add_melhorias_v2.sql no Supabase."); return; }
+  const list = admin.data.holidayPlans || (admin.data.holidayPlans = []);
+  const i = list.findIndex(p => p.holiday_key === key && p.year === year);
+  if (i >= 0) list[i] = { ...list[i], ...row }; else list.push(row);
+  if (admin.tab === "dashboard") renderDashboardReminders(); else renderCalendario(document.getElementById("adminMain"));
+}
+function whenLabel(days) { return days === 0 ? "É hoje!" : days === 1 ? "Falta 1 dia" : `Faltam ${days} dias`; }
+function renderDashboardReminders() {
+  const box = document.getElementById("dashReminders"); if (!box) return;
+  const hol = upcomingHolidays(HOLIDAY_ADVANCE_DAYS).filter(h => { const p = holidayPlan(h.key, h.year); return !p.done && !p.dismissed; });
+  const own = (admin.data.productionEvents || []).filter(e => e.remind_days != null && !e.done).map(e => ({ e, days: daysUntil(e.event_date + "T00:00:00") }))
+    .filter(x => x.days >= 0 && x.days <= x.e.remind_days).sort((a, b) => a.days - b.days);
+  const next = upcomingHolidays(null).filter(h => !hol.some(x => x.key === h.key && x.year === h.year)).slice(0, 3);
+  const dFmt = d => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "long" });
+  box.innerHTML = `
+    <h2 class="dash-title"><svg ${SVG_ATTR} width="18" height="18"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9L12 3z"/></svg> Datas comemorativas e lembretes</h2>
+    ${!admin.data.holidayPlansOk ? `<p class="hint">Para marcar planejamentos como concluídos, rode o script <strong>add_melhorias_v2.sql</strong> no Supabase.</p>` : ""}
+    ${hol.length ? hol.map(h => `
+      <div class="holiday-alert">
+        <div style="flex:1">
+          <strong>${whenLabel(h.days)} para ${h.name}!</strong>
+          <div class="hint" style="margin:2px 0 0">${dFmt(h.date)} · Que tal começar a planejar sua campanha?</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-pink btn-sm" onclick="setHolidayPlan('${h.key}', ${h.year}, { done: true })">Planejamento concluído</button>
+          <button class="btn btn-outline btn-sm" onclick="setHolidayPlan('${h.key}', ${h.year}, { dismissed: true })">Dispensar</button>
+        </div>
+      </div>`).join("") : `<p class="hint">Nenhuma data comemorativa nos próximos ${HOLIDAY_ADVANCE_DAYS} dias precisando de planejamento.</p>`}
+    ${own.length ? own.map(x => `
+      <div class="holiday-alert own">
+        <div style="flex:1"><strong>${whenLabel(x.days)}: ${escapeHtml(x.e.title)}</strong>
+          <div class="hint" style="margin:2px 0 0">${new Date(x.e.event_date + "T00:00:00").toLocaleDateString("pt-BR")} · lembrete seu</div></div>
+        <button class="btn btn-outline btn-sm" onclick="toggleEventDone('${x.e.id}', true)">Concluir</button>
+      </div>`).join("") : ""}
+    ${next.length ? `<p class="hint" style="margin:12px 0 4px"><strong>Próximas datas:</strong></p>` + next.map(h => `
+      <div class="dash-row"><span style="flex:1">${h.name} · ${dFmt(h.date)}</span><span class="pill-count">${h.days} dias</span></div>`).join("") : ""}
+  `;
+}
+
 async function loadDashboard(main) {
   const [{ data: orders }, { data: customers }, { data: loyalty }, { data: ingredients }, { data: products }] = await Promise.all([
     sb.from("orders").select("*").order("created_at", { ascending: false }),
@@ -172,6 +281,9 @@ async function loadDashboard(main) {
     sb.from("products").select("id, active"),
   ]);
 
+  await loadHolidayPlans();
+  const evr = await sb.from("production_events").select("id,title,event_date,done,remind_days");
+  admin.data.productionEvents = evr.error ? (await sb.from("production_events").select("id,title,event_date,done")).data || [] : (evr.data || []);
   const all = orders || [];
   const active = all.filter(o => o.status !== "cancelled");
   const now = new Date();
@@ -219,6 +331,8 @@ async function loadDashboard(main) {
       ${stats.map(([label, value]) => `<div class="stat-card"><div class="label">${label}</div><div class="value">${value}</div></div>`).join("")}
     </div>
 
+    <div class="admin-card" id="dashReminders"></div>
+
     ${lowStock.length ? `
       <div class="attention-box">
         <h2><svg ${SVG_ATTR} width="18" height="18"><path d="M12 3.5L2 20h20L12 3.5z"/><path d="M12 10v4M12 17.5v.01"/></svg> Itens de Estoque em Atenção</h2>
@@ -252,6 +366,7 @@ async function loadDashboard(main) {
       </div>
     </div>
   `;
+  renderDashboardReminders();
 }
 
 /* ---------------- PEDIDOS ---------------- */
@@ -644,6 +759,9 @@ async function loadProducts(main) {
   const med = await sb.from("site_media").select("*");
   admin.data.mediaOk = !med.error;
   admin.data.media = {}; (med.data || []).forEach(m => { admin.data.media[m.key] = m.image_url; });
+  const gal = await sb.from("gallery_photos").select("*").order("sort_order").order("created_at");
+  admin.data.galleryOk = !gal.error;
+  admin.data.gallery = gal.data || [];
   renderProductsTable(main);
 }
 function renderProductsTable(main) {
@@ -656,7 +774,7 @@ function renderProductsTable(main) {
       <button class="btn ${tab === "delivery" ? "btn-pink" : "btn-outline"}" onclick="setProductTab('delivery')">Delivery</button>
     </div>
     ${tab === "delivery" ? `<p class="hint">Produtos de delivery são de uso interno por enquanto: o cliente ainda vê "Delivery em breve" no site. Eles alimentam o Estoque de Produtos.</p>` : ""}
-    ${tab === "encomendas" ? renderSiteMediaCard() : ""}
+    ${tab === "encomendas" ? renderSiteMediaCard() + renderGalleryCard() : ""}
     <div id="productFormArea"></div>
     <div class="admin-card">
       ${products.length ? `
@@ -1095,60 +1213,92 @@ async function deleteProduct(id) {
   renderProductsTable(document.getElementById("adminMain"));
 }
 
-/* ---------------- CLIENTES ---------------- */
+/* ---------------- CLIENTES (cadastro + fidelidade unificados) ---------------- */
 
 async function loadCustomers(main) {
-  const [{ data: customers, error: cErr }, { data: cards, error: lErr }] = await Promise.all([
+  const [c, l, r, m] = await Promise.all([
     sb.from("customers").select("*").order("full_name", { ascending: true }),
     sb.from("loyalty_cards").select("*"),
+    sb.from("rewards").select("*").order("points_required", { ascending: true }),
+    sb.from("loyalty_movements").select("*").order("created_at", { ascending: false }),
   ]);
-  if (cErr) throw cErr;
-  if (lErr) throw lErr;
-  admin.data.allCustomers = customers || [];
-  admin.data.loyalty = cards || [];
+  if (c.error) throw c.error;
+  if (l.error) throw l.error;
+  admin.data.allCustomers = c.data || [];
+  admin.data.customers = admin.data.allCustomers;
+  admin.data.loyalty = l.data || [];
+  admin.data.rewards = r.data || [];
+  admin.data.movesOk = !m.error;      // false até rodar add_melhorias_v2.sql
+  admin.data.moves = m.data || [];
+  if (admin.data.custView) {
+    if (admin.data.custView === "new" || admin.data.allCustomers.some(x => x.id === admin.data.custView)) return renderCustomerDetail(main);
+    admin.data.custView = null;
+  }
   renderCustomersTable(main);
 }
+const custCard = id => admin.data.loyalty.find(l => l.customer_id === id);
+const custPoints = id => { const k = custCard(id); return k ? Number(k.points || 0) : 0; };
+const fmtDT = d => new Date(d).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 
 function renderCustomersTable(main) {
-  const list = admin.data.allCustomers;
+  const q = (admin.data.custSearch || "").toLowerCase().trim();
+  const all = admin.data.allCustomers;
+  const list = !q ? all : all.filter(c => [c.full_name, c.email, c.phone, c.cpf].some(v => String(v || "").toLowerCase().includes(q)));
   main.innerHTML = `
-    <div class="admin-topbar"><h1>Clientes</h1></div>
-    <div id="customerFormArea"></div>
+    <div class="admin-topbar"><h1>Clientes</h1>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-outline" onclick="setTab('rewards')">Benefícios (Mimos)</button>
+        <button class="btn btn-pink" onclick="openCustomerDetail('new')">+ Novo cliente</button>
+      </div>
+    </div>
+    <div class="admin-card" style="padding:14px 18px;margin-bottom:12px">
+      <strong>Regra do Clube Fidelidade</strong>
+      <div style="margin-top:4px;color:var(--muted);font-size:13px">Cada R$ 1,00 em pedido entregue = 1 ponto. Clique em um cliente para ver dados, compras, pontos e resgates.</div>
+    </div>
+    ${!admin.data.movesOk ? `<div class="error-box">Para ver o histórico de pontos, rode o script <strong>add_melhorias_v2.sql</strong> no Supabase.</div>` : ""}
     <div class="admin-card">
+      <input id="custSearch" placeholder="Buscar por nome, e-mail, telefone ou CPF" value="${escapeHtml(admin.data.custSearch || "")}" oninput="custSearchInput(this.value)" style="width:100%;border:1.5px solid var(--border);border-radius:12px;padding:10px 14px;margin-bottom:14px;font:inherit">
       ${list.length ? `
-        <table>
-          <thead><tr><th>Nome</th><th>E-mail</th><th>Telefone</th><th>Pontos</th><th></th></tr></thead>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>Nome</th><th>E-mail</th><th>Telefone</th><th>Pontos</th><th>Pedidos</th><th></th></tr></thead>
           <tbody>
             ${list.map(c => {
-              const card = admin.data.loyalty.find(l => l.customer_id === c.id);
-              const points = card ? Number(card.points || 0) : 0;
-              return `
-                <tr>
-                  <td><strong>${c.full_name || "—"}</strong></td>
-                  <td>${c.email || "—"}</td>
-                  <td>${c.phone || "—"}</td>
-                  <td><strong>${points}</strong> <small>pontos</small></td>
-                  <td><button class="btn btn-outline btn-sm" onclick="openCustomerForm('${c.id}')">Gerenciar</button></td>
-                </tr>
-              `;
+              const k = custCard(c.id);
+              return `<tr>
+                <td><strong>${escapeHtml(c.full_name || "—")}</strong>${c.manual ? ` <small style="color:var(--muted)">(cadastro manual)</small>` : ""}</td>
+                <td>${escapeHtml(c.email || "—")}</td>
+                <td>${escapeHtml(c.phone || "—")}</td>
+                <td><strong>${custPoints(c.id)}</strong> <small>pontos</small></td>
+                <td>${k ? Number(k.completed_orders || 0) : 0}</td>
+                <td><button class="btn btn-outline btn-sm" onclick="openCustomerDetail('${c.id}')">Abrir</button></td>
+              </tr>`;
             }).join("")}
-          </tbody>
-        </table>
-      ` : `<p class="center-msg">Nenhum cliente cadastrado.</p>`}
-    </div>
-  `;
+          </tbody></table></div>
+      ` : `<p class="center-msg">${all.length ? "Nenhum cliente encontrado." : "Nenhum cliente cadastrado."}</p>`}
+    </div>`;
+  const el = document.getElementById("custSearch");
+  if (el && q) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
 }
+function custSearchInput(v) { admin.data.custSearch = v; renderCustomersTable(document.getElementById("adminMain")); }
+function openCustomerDetail(id) { admin.data.custView = id; renderCustomerDetail(document.getElementById("adminMain")); window.scrollTo(0, 0); }
+function closeCustomerDetail() { admin.data.custView = null; renderCustomersTable(document.getElementById("adminMain")); }
+// compatibilidade com chamadas antigas
+function openCustomerForm(id) { openCustomerDetail(id); }
 
-function openCustomerForm(id) {
-  const c = admin.data.allCustomers.find(c => c.id === id);
-  if (!c) return;
-  const card = admin.data.loyalty.find(l => l.customer_id === c.id);
-  const points = card ? Number(card.points || 0) : 0;
-  document.getElementById("customerFormArea").innerHTML = `
+async function renderCustomerDetail(main) {
+  const id = admin.data.custView;
+  const isNew = id === "new";
+  const c = isNew ? {} : admin.data.allCustomers.find(x => x.id === id);
+  if (!c) return closeCustomerDetail();
+  const field = (lbl, fid, val, extra = "") => `<label>${lbl}<input id="${fid}" value="${escapeHtml(val || "")}" ${extra}></label>`;
+  const head = `
+    <div class="admin-topbar"><h1>${isNew ? "Novo cliente" : escapeHtml(c.full_name || "Cliente")}</h1>
+      <button class="btn btn-outline" onclick="closeCustomerDetail()">← Voltar para a lista</button></div>`;
+  const form = `
     <div class="admin-card">
-      <h2>Gerenciar cliente</h2>
+      <h2>Dados cadastrais</h2>
       <div class="form-grid">
-        <label>Nome completo<input id="cfName" value="${c.full_name || ""}"></label>
+        ${field("Nome completo", "cfName", c.full_name)}
         <label>Gênero
           <select id="cfGender">
             <option value="" ${!c.gender ? "selected" : ""}>Prefiro não informar</option>
@@ -1156,96 +1306,195 @@ function openCustomerForm(id) {
             <option value="masculino" ${c.gender === "masculino" ? "selected" : ""}>Masculino</option>
           </select>
         </label>
-        <label>E-mail (não editável aqui)<input value="${c.email || ""}" disabled></label>
-        <label>Telefone<input id="cfPhone" value="${c.phone || ""}"></label>
-        <label>CEP<input id="cfCep" value="${c.cep || ""}"></label>
-        <label>Rua<input id="cfStreet" value="${c.street || ""}"></label>
-        <label>Número<input id="cfNumber" value="${c.number || ""}"></label>
-        <label>Complemento<input id="cfComplement" value="${c.complement || ""}"></label>
-        <label>Bairro<input id="cfNeighborhood" value="${c.neighborhood || ""}"></label>
-        <label>Cidade<input id="cfCity" value="${c.city || ""}"></label>
-        <label>Estado<input id="cfState" value="${c.state || ""}" maxlength="2"></label>
+        ${isNew || c.manual ? field("E-mail", "cfEmail", c.email) : `<label>E-mail (não editável aqui)<input value="${escapeHtml(c.email || "")}" disabled></label>`}
+        ${isNew || c.manual ? field("CPF", "cfCpf", (c.cpf || "").replace(/#m$/, "")) : `<label>CPF (não editável)<input value="${escapeHtml(c.cpf || "")}" disabled></label>`}
+        ${field("Telefone", "cfPhone", c.phone)}
+        ${field("CEP", "cfCep", c.cep)}
+        ${field("Rua", "cfStreet", c.street)}
+        ${field("Número", "cfNumber", c.number)}
+        ${field("Complemento", "cfComplement", c.complement)}
+        ${field("Bairro", "cfNeighborhood", c.neighborhood)}
+        ${field("Cidade", "cfCity", c.city)}
+        ${field("Estado", "cfState", c.state, 'maxlength="2"')}
       </div>
-      <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn btn-pink" onclick="saveCustomerProfile('${c.id}')">Salvar alterações</button>
-        <button class="btn btn-outline" onclick="document.getElementById('customerFormArea').innerHTML=''">Cancelar</button>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn btn-pink" onclick="saveCustomerProfile('${isNew ? "new" : c.id}')">${isNew ? "Cadastrar cliente" : "Salvar alterações"}</button>
+        ${isNew ? "" : `<button class="btn btn-danger" onclick="deleteCustomer('${c.id}')">Excluir cadastro</button>`}
       </div>
+    </div>`;
+  if (isNew) { main.innerHTML = head + `<p class="hint">Cadastro manual: o cliente ainda não tem login no site. Se ele criar uma conta depois com o mesmo CPF, os pedidos e pontos serão unidos automaticamente.</p>` + form; return; }
 
-      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--border)">
-        <strong>Pontos de fidelidade — saldo atual: ${points}</strong>
-        <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
-          <input id="cfPointsDelta" type="number" placeholder="Quantidade" style="width:120px;border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;">
-          <button class="btn btn-pink btn-sm" onclick="adjustCustomerPoints('${c.id}', 1)">+ Adicionar</button>
-          <button class="btn btn-outline btn-sm" onclick="adjustCustomerPoints('${c.id}', -1)">− Remover</button>
-          <button class="btn btn-outline btn-sm" onclick="resetLoyaltyPoints('${c.id}')">Zerar pontos</button>
-        </div>
-      </div>
+  // dados do cliente
+  // pedidos vinculados ao cadastro + pedidos manuais feitos com o mesmo telefone
+  const [byId, byPhone] = await Promise.all([
+    sb.from("orders").select("*").eq("customer_id", c.id),
+    c.phone ? sb.from("orders").select("*").eq("customer_phone", c.phone) : Promise.resolve({ data: [] }),
+  ]);
+  if (admin.data.custView !== id) return; // usuário mudou de tela enquanto carregava
+  const seen = new Set();
+  const ords = [...(byId.data || []), ...(byPhone.data || [])].filter(o => !seen.has(o.id) && seen.add(o.id))
+    .sort((x, y) => String(y.created_at).localeCompare(String(x.created_at)));
+  const done = ords.filter(o => o.status === "delivered" || o.status === "completed");
+  const spent = done.reduce((s, o) => s + Number(o.total || 0), 0);
+  const card = custCard(c.id);
+  const points = custPoints(c.id);
+  const moves = admin.data.moves.filter(m => m.customer_id === c.id);
+  const redeems = moves.filter(m => m.kind === "resgate");
+  const claimed = card ? Number(card.rewards_claimed || 0) : 0;
+  const older = Math.max(0, claimed - redeems.length);
+  const loggedSum = moves.reduce((s, m) => s + m.delta, 0);
+  const before = points - loggedSum; // saldo anterior ao início do registro de movimentações
+  const rewardOpts = admin.data.rewards.filter(r => r.active);
 
-      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--border)">
-        <strong>Senha de acesso</strong>
-        <div style="margin-top:8px;color:var(--muted);font-size:13px">
-          Por segurança, não é possível definir a senha diretamente por aqui. Você pode enviar um e-mail pro cliente com um link pra ele criar uma nova senha.
-        </div>
-        <button class="btn btn-outline btn-sm" style="margin-top:10px" onclick="sendCustomerPasswordReset('${c.email}')">Enviar link de redefinição de senha</button>
-      </div>
+  main.innerHTML = head + `
+    <div class="stat-grid">
+      <div class="stat-card"><div class="label">Saldo de pontos</div><div class="value">${points}</div></div>
+      <div class="stat-card"><div class="label">Pedidos concluídos</div><div class="value">${card ? Number(card.completed_orders || 0) : done.length}</div></div>
+      <div class="stat-card"><div class="label">Total comprado</div><div class="value">${fmt(spent)}</div></div>
+      <div class="stat-card"><div class="label">Resgates</div><div class="value">${claimed}</div></div>
     </div>
-  `;
+    ${form}
+
+    <div class="admin-card">
+      <h2>Pontos de fidelidade</h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="cfPointsDelta" type="number" min="1" placeholder="Quantidade" style="width:120px;border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;">
+        <input id="cfPointsReason" placeholder="Motivo (opcional)" style="flex:1;min-width:160px;border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;">
+        <button class="btn btn-pink btn-sm" onclick="adjustCustomerPoints('${c.id}', 1)">+ Adicionar</button>
+        <button class="btn btn-outline btn-sm" onclick="adjustCustomerPoints('${c.id}', -1)">− Remover</button>
+        <button class="btn btn-outline btn-sm" onclick="resetLoyaltyPoints('${c.id}')">Zerar pontos</button>
+      </div>
+      <h3 style="font-size:14px;margin:18px 0 8px">Histórico de movimentações</h3>
+      ${!admin.data.movesOk ? `<p class="hint">Rode o <strong>add_melhorias_v2.sql</strong> para registrar o histórico.</p>` : `
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>Data</th><th>Motivo</th><th>Pontos</th><th>Saldo</th></tr></thead>
+        <tbody>
+          ${moves.map(m => `<tr><td>${fmtDT(m.created_at)}</td><td>${escapeHtml(m.reason || "")}</td>
+            <td style="font-weight:700;color:${m.delta >= 0 ? "#2E7D46" : "#B23434"}">${m.delta > 0 ? "+" : ""}${m.delta}</td><td>${m.balance}</td></tr>`).join("")}
+          ${before !== 0 ? `<tr><td>—</td><td><em>Saldo anterior ao registro de movimentações</em></td><td>${before > 0 ? "+" : ""}${before}</td><td>${before}</td></tr>` : ""}
+          ${!moves.length && before === 0 ? `<tr><td colspan="4" class="center-msg">Nenhuma movimentação.</td></tr>` : ""}
+        </tbody></table></div>`}
+    </div>
+
+    <div class="admin-card">
+      <h2>Resgates de mimos</h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <select id="cfRedeemReward" style="border:1.5px solid var(--border);border-radius:10px;padding:9px 11px;min-width:220px">
+          ${rewardOpts.length ? rewardOpts.map(r => `<option value="${r.id}">${escapeHtml(r.name)} — ${Number(r.points_required)} pts</option>`).join("") : `<option value="">Nenhum mimo ativo</option>`}
+        </select>
+        <button class="btn btn-pink btn-sm" ${rewardOpts.length ? "" : "disabled"} onclick="adminRedeemReward('${c.id}')">Registrar resgate</button>
+        <button class="btn btn-outline btn-sm" onclick="setTab('rewards')">Gerenciar benefícios</button>
+      </div>
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>Data</th><th>Mimo</th><th>Pontos usados</th></tr></thead>
+        <tbody>
+          ${redeems.map(m => `<tr><td>${fmtDT(m.created_at)}</td><td>${escapeHtml((m.reason || "").replace(/^Resgate:\s*/, ""))}</td><td>${Math.abs(m.delta)}</td></tr>`).join("")}
+          ${older ? `<tr><td>—</td><td><em>${older} resgate${older > 1 ? "s" : ""} anterior${older > 1 ? "es" : ""} ao registro</em></td><td>—</td></tr>` : ""}
+          ${!redeems.length && !older ? `<tr><td colspan="3" class="center-msg">Nenhum resgate realizado.</td></tr>` : ""}
+        </tbody></table></div>
+    </div>
+
+    <div class="admin-card">
+      <h2>Histórico de compras</h2>
+      ${ords.length ? `<div style="overflow-x:auto"><table>
+        <thead><tr><th>Pedido</th><th>Data</th><th>Tipo</th><th>Itens</th><th>Total</th><th>Status</th></tr></thead>
+        <tbody>
+          ${ords.map(o => {
+            const items = (Array.isArray(o.items) ? o.items : []).map(i => `${i.quantity || i.qty || 1}x ${escapeHtml(i.name || i.title || "")}`).join(", ");
+            return `<tr><td><strong>${escapeHtml(o.order_number || "")}</strong></td><td>${fmtDT(o.created_at)}</td>
+              <td>${o.order_type === "delivery" ? "Delivery" : "Encomenda"}</td>
+              <td style="max-width:320px">${items || "—"}</td><td>${fmt(Number(o.total || 0))}</td>
+              <td><span class="badge ${o.status}">${STATUS_LABEL[o.status] || o.status}</span></td></tr>`;
+          }).join("")}
+        </tbody></table></div>` : `<p class="center-msg">Nenhuma compra registrada.</p>`}
+    </div>
+
+    <div class="admin-card">
+      <h2>Senha de acesso</h2>
+      ${c.manual ? `<p class="hint">Cadastro manual: este cliente ainda não tem login no site.</p>` : `
+      <div style="color:var(--muted);font-size:13px">Por segurança, não é possível definir a senha por aqui. Você pode enviar ao cliente um link para criar uma nova senha.</div>
+      <button class="btn btn-outline btn-sm" style="margin-top:10px" onclick="sendCustomerPasswordReset('${escapeHtml(c.email || "")}')">Enviar link de redefinição de senha</button>`}
+    </div>`;
 }
 
 async function saveCustomerProfile(id) {
+  const v = k => { const el = document.getElementById(k); return el ? el.value.trim() : undefined; };
   const payload = {
-    full_name: document.getElementById("cfName").value.trim(),
-    gender: document.getElementById("cfGender").value || null,
-    phone: document.getElementById("cfPhone").value.trim(),
-    cep: document.getElementById("cfCep").value.trim(),
-    street: document.getElementById("cfStreet").value.trim(),
-    number: document.getElementById("cfNumber").value.trim(),
-    complement: document.getElementById("cfComplement").value.trim(),
-    neighborhood: document.getElementById("cfNeighborhood").value.trim(),
-    city: document.getElementById("cfCity").value.trim(),
-    state: document.getElementById("cfState").value.trim(),
+    full_name: v("cfName"), gender: document.getElementById("cfGender").value || null,
+    phone: v("cfPhone"), cep: v("cfCep"), street: v("cfStreet"), number: v("cfNumber"),
+    complement: v("cfComplement"), neighborhood: v("cfNeighborhood"), city: v("cfCity"),
+    state: (v("cfState") || "").toUpperCase(),
   };
-  const { error } = await sb.from("customers").update(payload).eq("id", id);
-  if (error) {
-    console.error(error);
-    alert("Não foi possível salvar as alterações.");
+  if (!payload.full_name) { alert("Informe o nome do cliente."); return; }
+  if (v("cfEmail") !== undefined) payload.email = v("cfEmail") || null;
+  if (v("cfCpf") !== undefined) payload.cpf = (v("cfCpf") || "").replace(/\D/g, "") || null;
+  let res;
+  if (id === "new") {
+    res = await sb.from("customers").insert({ ...payload, manual: true }).select().single();
+  } else {
+    res = await sb.from("customers").update(payload).eq("id", id).select().single();
+  }
+  if (res.error) {
+    console.error(res.error);
+    alert(/duplicate|unique/i.test(res.error.message || "") ? "Já existe um cliente com esse CPF." :
+      /null value|not-null/i.test(res.error.message || "") ? "Rode o script add_melhorias_v2.sql no Supabase para permitir cadastro manual." :
+      "Não foi possível salvar: " + (res.error.message || ""));
     return;
   }
-  alert("Dados do cliente atualizados.");
+  alert(id === "new" ? "Cliente cadastrado." : "Dados do cliente atualizados.");
+  admin.data.custView = id === "new" ? res.data.id : id;
+  await loadCustomers(document.getElementById("adminMain"));
+}
+
+async function deleteCustomer(id) {
+  const c = admin.data.allCustomers.find(x => x.id === id); if (!c) return;
+  if (!confirm(`Excluir o cadastro de "${c.full_name}"?\n\nOs pontos e o histórico de pontos dele serão apagados. Os pedidos continuam salvos, apenas sem vínculo com o cadastro. Esta ação não pode ser desfeita.`)) return;
+  if (!confirm("Confirma a exclusão definitiva deste cliente?")) return;
+  const { error } = await sb.from("customers").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível excluir: " + (error.message || "")); return; }
+  admin.data.custView = null;
   await loadCustomers(document.getElementById("adminMain"));
 }
 
 async function adjustCustomerPoints(customerId, sign) {
-  const raw = Number(document.getElementById("cfPointsDelta").value);
-  if (!raw || raw <= 0) {
-    alert("Informe uma quantidade de pontos maior que zero.");
-    return;
+  const raw = Math.floor(Number(document.getElementById("cfPointsDelta").value));
+  if (!raw || raw <= 0) { alert("Informe uma quantidade de pontos maior que zero."); return; }
+  const reason = document.getElementById("cfPointsReason").value.trim();
+  let { error } = await sb.rpc("admin_adjust_points", { p_customer: customerId, p_delta: sign * raw, p_reason: reason });
+  if (error && /admin_adjust_points/.test(error.message || "")) {
+    // script v2 ainda não rodado: mantém o comportamento antigo (sem histórico)
+    const next = Math.max(0, custPoints(customerId) + sign * raw);
+    const card = custCard(customerId);
+    ({ error } = card ? await sb.from("loyalty_cards").update({ points: next }).eq("customer_id", customerId)
+                      : await sb.from("loyalty_cards").insert({ customer_id: customerId, points: next }));
   }
-  const card = admin.data.loyalty.find(l => l.customer_id === customerId);
-  const current = card ? Number(card.points || 0) : 0;
-  const next = Math.max(0, current + sign * raw);
-
-  if (card) {
-    const { error } = await sb.from("loyalty_cards").update({ points: next }).eq("customer_id", customerId);
-    if (error) { console.error(error); alert("Não foi possível atualizar os pontos."); return; }
-  } else {
-    const { error } = await sb.from("loyalty_cards").insert({ customer_id: customerId, points: next });
-    if (error) { console.error(error); alert("Não foi possível criar a carteira de pontos."); return; }
-  }
+  if (error) { console.error(error); alert("Não foi possível atualizar os pontos."); return; }
   await loadCustomers(document.getElementById("adminMain"));
-  openCustomerForm(customerId);
+}
+
+async function resetLoyaltyPoints(customerId) {
+  if (!confirm("Zerar os pontos desse cliente?")) return;
+  const cur = custPoints(customerId);
+  if (!cur) return;
+  let { error } = await sb.rpc("admin_adjust_points", { p_customer: customerId, p_delta: -cur, p_reason: "Pontos zerados pelo admin" });
+  if (error && /admin_adjust_points/.test(error.message || "")) ({ error } = await sb.from("loyalty_cards").update({ points: 0 }).eq("customer_id", customerId));
+  if (error) { console.error(error); alert("Não foi possível zerar os pontos."); return; }
+  await loadCustomers(document.getElementById("adminMain"));
+}
+
+async function adminRedeemReward(customerId) {
+  const rid = document.getElementById("cfRedeemReward").value;
+  const r = admin.data.rewards.find(x => x.id === rid); if (!r) return;
+  if (!confirm(`Registrar o resgate de "${r.name}" (${r.points_required} pontos)?`)) return;
+  const { error } = await sb.rpc("admin_redeem_reward", { p_customer: customerId, p_reward: rid });
+  if (error) { console.error(error); alert(/insuficientes/i.test(error.message || "") ? "O cliente não tem pontos suficientes." : "Não foi possível registrar o resgate (rode o add_melhorias_v2.sql). " + (error.message || "")); return; }
+  await loadCustomers(document.getElementById("adminMain"));
 }
 
 async function sendCustomerPasswordReset(email) {
   if (!email) { alert("Cliente sem e-mail cadastrado."); return; }
-  const { error } = await sb.auth.resetPasswordForEmail(email, {
-    redirectTo: window.location.origin + "/",
-  });
-  if (error) {
-    console.error(error);
-    alert("Não foi possível enviar o e-mail de redefinição.");
-    return;
-  }
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + "/" });
+  if (error) { console.error(error); alert("Não foi possível enviar o e-mail de redefinição."); return; }
   alert("E-mail de redefinição de senha enviado para " + email + ".");
 }
 
@@ -2581,6 +2830,7 @@ async function loadCalendario(main) {
   admin.data.calCatsOk = !cc.error;
   admin.data.calCats = cc.error ? [] : (cc.data || []);
   if (admin.data.calCats.length) applyCalCats(admin.data.calCats);
+  await loadHolidayPlans();
   const now = new Date();
   admin.data.calYear = admin.data.calYear || now.getFullYear();
   admin.data.calMonth = admin.data.calMonth ?? now.getMonth(); // 0-11
@@ -2645,6 +2895,8 @@ function renderCalendario(main) {
 
   const today = new Date();
   const isCurrentMonth = today.getFullYear() === year && today.getMonth() === month;
+  const hmap = holidaysByIso(year);
+  const monthHolidays = Object.values(hmap).flat().filter(h => h.date.getMonth() === month).sort((a, b) => a.date - b.date);
 
   const cells = [];
   for (let i = 0; i < firstWeekday; i++) cells.push("");
@@ -2652,7 +2904,7 @@ function renderCalendario(main) {
 
   main.innerHTML = `
     <div class="admin-topbar"><h1>Calendário de Produção</h1><button class="btn btn-pink" onclick="openEventForm()">+ Novo evento</button></div>
-    <p class="hint">Planner 100% manual — nada aqui é preenchido automaticamente pelos pedidos.</p>
+    <p class="hint">Seus eventos são manuais — nada é preenchido pelos pedidos. As datas comemorativas (★) aparecem sozinhas todo ano.</p>
 
     <div class="admin-card">
       <div class="admin-topbar" style="margin-bottom:14px">
@@ -2684,6 +2936,7 @@ function renderCalendario(main) {
           return `
             <div class="cal-cell ${isToday ? "cal-cell-today" : ""}">
               <span class="cal-day-num">${d}</span>
+              ${(hmap[`${monthKey}-${String(d).padStart(2, "0")}`] || []).map(h => `<div class="cal-event cal-holiday" title="Data comemorativa">★ ${h.name}</div>`).join("")}
               ${dayEvents.map(e => `
                 <div class="cal-event" style="background:${calColor(e.category)};${e.done ? "opacity:.45;text-decoration:line-through" : ""}" onclick="openEventForm('${e.id}')" title="${e.title}">
                   ${eventTimeLabel(e)}${e.title}
@@ -2696,6 +2949,16 @@ function renderCalendario(main) {
     </div>
 
     <div id="eventFormArea"></div>
+
+    <div class="admin-card">
+      <h2>Datas comemorativas de ${MONTH_NAMES_CAL[month]}</h2>
+      ${monthHolidays.length ? monthHolidays.map(h => { const p = holidayPlan(h.key, h.year); const dd = daysUntil(h.date);
+        return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);flex-wrap:wrap">
+          <span><span class="cal-holiday-dot"></span><strong>${h.date.getDate()}/${String(month + 1).padStart(2, "0")} · ${h.name}</strong>
+            <span class="hint" style="margin-left:6px">${dd > 0 ? `faltam ${dd} dias` : dd === 0 ? "hoje" : "já passou"}</span></span>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" ${p.done ? "checked" : ""} onchange="setHolidayPlan('${h.key}', ${h.year}, { done: this.checked, dismissed: false })" style="width:18px;height:18px"> Planejamento concluído</label>
+        </div>`; }).join("") : `<p class="hint">Nenhuma data comemorativa neste mês.</p>`}
+    </div>
 
     <div class="admin-card">
       <h2>Eventos de ${MONTH_NAMES_CAL[month]}</h2>
@@ -2748,6 +3011,7 @@ function openEventForm(eventId, duplicateFrom) {
         <label class="span-2">Título<input type="text" id="evTitle" value="${e ? e.title : ""}" placeholder="Ex: Fazer massa do bolo da Ana"></label>
         <label class="span-2">Descrição (opcional)<textarea id="evDescription" rows="4" placeholder="Pode usar Enter pra separar em tópicos/parágrafos">${e ? escapeHtml(e.description || "") : ""}</textarea></label>
         <label class="span-2">Observação (opcional)<input type="text" id="evNote" value="${e ? e.note || "" : ""}"></label>
+        <label class="span-2">Avisar no Dashboard com quantos dias de antecedência? (opcional)<input type="number" min="0" id="evRemind" value="${e && e.remind_days != null ? e.remind_days : ""}" placeholder="Ex: 15 (deixe vazio para não avisar)"></label>
         ${!eventId ? `<label class="span-2">Repetir também nestes dias (opcional)<input type="text" id="evRepeatDates" placeholder="Ex: 2026-09-20, 2026-09-27, 2026-10-04"></label>` : ""}
       </div>
       ${!eventId ? `<p class="hint">Coloque outras datas separadas por vírgula, no formato AAAA-MM-DD, se quiser criar o mesmo evento em vários dias de uma vez.</p>` : ""}
@@ -2770,6 +3034,9 @@ async function saveEvent(eventId) {
     description: document.getElementById("evDescription").value.trim() || null,
     note: document.getElementById("evNote").value.trim() || null,
   };
+  const remindVal = document.getElementById("evRemind").value;
+  if (remindVal !== "") basePayload.remind_days = Math.max(0, parseInt(remindVal, 10) || 0);
+  else if (eventId) basePayload.remind_days = null;
   const mainDate = document.getElementById("evDate").value;
   if (!mainDate || !basePayload.title) { alert("Preencha data e título."); return; }
 
@@ -3960,4 +4227,75 @@ async function removeSiteMedia(key) {
   if (error) { console.error(error); alert("Não foi possível remover."); return; }
   delete admin.data.media[key];
   renderProductsTable(document.getElementById("adminMain"));
+}
+
+
+/* ---------------- Galeria de inspirações (aba Encomendas do site) ---------------- */
+function renderGalleryCard() {
+  if (!admin.data.galleryOk) return `<div class="error-box">Para usar a galeria de inspirações, rode o script <strong>add_melhorias_v2.sql</strong> no Supabase.</div>`;
+  const g = admin.data.gallery;
+  return `
+    <div class="admin-card">
+      <h2>Galeria de inspirações</h2>
+      <p class="hint">Fotos dos seus trabalhos, mostradas na aba Encomendas do site (o cliente pode ampliar). Não interferem no pedido. Use as setas para mudar a ordem e o botão “Visível” para esconder sem excluir.</p>
+      <label class="btn btn-pink" style="display:inline-block;cursor:pointer">+ Adicionar fotos
+        <input type="file" accept="image/*" multiple style="display:none" onchange="uploadGalleryPhotos(this)">
+      </label>
+      <p class="photo-status" id="gallery-st"></p>
+      ${g.length ? `<div class="gal-admin-grid">
+        ${g.map((x, i) => `
+          <div class="gal-admin-item ${x.visible ? "" : "off"}">
+            <img src="${x.image_url}" alt="">
+            <div class="gal-admin-actions">
+              <button class="btn btn-outline btn-sm" onclick="moveGalleryPhoto('${x.id}', -1)" ${i === 0 ? "disabled" : ""} title="Mover para antes">←</button>
+              <button class="btn btn-outline btn-sm" onclick="moveGalleryPhoto('${x.id}', 1)" ${i === g.length - 1 ? "disabled" : ""} title="Mover para depois">→</button>
+              <button class="btn ${x.visible ? "btn-pink" : "btn-outline"} btn-sm" onclick="toggleGalleryPhoto('${x.id}')">${x.visible ? "Visível" : "Oculta"}</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteGalleryPhoto('${x.id}')">Excluir</button>
+            </div>
+          </div>`).join("")}
+      </div>` : `<p class="hint">Nenhuma foto ainda.</p>`}
+    </div>`;
+}
+async function uploadGalleryPhotos(input) {
+  const files = [...input.files]; if (!files.length) return;
+  const st = document.getElementById("gallery-st");
+  let next = admin.data.gallery.reduce((m, x) => Math.max(m, x.sort_order || 0), 0);
+  let ok = 0;
+  try {
+    for (const file of files) {
+      st.textContent = `Enviando ${ok + 1} de ${files.length}...`;
+      const compressed = await compressImage(file, 1600, 0.85);
+      const fileName = `gallery/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.jpg`;
+      const up = await sb.storage.from("photos").upload(fileName, compressed, { contentType: "image/jpeg" });
+      if (up.error) throw up.error;
+      const url = sb.storage.from("photos").getPublicUrl(fileName).data.publicUrl;
+      const ins = await sb.from("gallery_photos").insert({ image_url: url, sort_order: ++next, visible: true });
+      if (ins.error) throw ins.error;
+      ok++;
+    }
+  } catch (e) { console.error(e); alert("Não foi possível enviar todas as fotos: " + (e.message || "tente novamente.") + (ok ? ` (${ok} enviadas)` : "")); }
+  input.value = "";
+  await loadProducts(document.getElementById("adminMain"));
+}
+async function moveGalleryPhoto(id, dir) {
+  const g = admin.data.gallery, i = g.findIndex(x => x.id === id), j = i + dir;
+  if (i < 0 || j < 0 || j >= g.length) return;
+  const a = g[i], b = g[j];
+  // regrava a ordem inteira (0..n) para não depender de valores repetidos
+  [g[i], g[j]] = [b, a];
+  const results = await Promise.all(g.map((x, k) => sb.from("gallery_photos").update({ sort_order: k + 1 }).eq("id", x.id)));
+  if (results.some(r => r.error)) alert("Não foi possível salvar a nova ordem.");
+  await loadProducts(document.getElementById("adminMain"));
+}
+async function toggleGalleryPhoto(id) {
+  const x = admin.data.gallery.find(g => g.id === id); if (!x) return;
+  const { error } = await sb.from("gallery_photos").update({ visible: !x.visible }).eq("id", id);
+  if (error) { alert("Não foi possível alterar."); return; }
+  await loadProducts(document.getElementById("adminMain"));
+}
+async function deleteGalleryPhoto(id) {
+  if (!confirm("Excluir esta foto da galeria?")) return;
+  const { error } = await sb.from("gallery_photos").delete().eq("id", id);
+  if (error) { alert("Não foi possível excluir."); return; }
+  await loadProducts(document.getElementById("adminMain"));
 }

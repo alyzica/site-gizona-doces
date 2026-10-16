@@ -1,6 +1,9 @@
 /* GIZONA DOCES — visão administrativa do Clube Fidelidade por pontos */
 
-async function loadLoyalty(main) {
+/* A aba Fidelidade foi unificada em Clientes: loadCustomers (admin.js) mostra tudo.
+   As funções abaixo ficam apenas por compatibilidade. */
+async function loadLoyalty(main) { return loadCustomers(main); }
+async function loadLoyaltyLegacy(main) {
   const [{ data: customers, error: customersError }, { data: cards, error: cardsError }] = await Promise.all([
     sb.from("customers").select("id, full_name, email, phone"),
     sb.from("loyalty_cards").select("*")
@@ -99,7 +102,7 @@ async function saveLoyaltyEdit(customerId) {
   });
 }
 
-async function resetLoyaltyPoints(customerId) {
+async function resetLoyaltyPointsLegacy(customerId) {
   if (!confirm("Zerar os pontos e os pedidos concluídos desse cliente?")) return;
   await saveLoyaltyFields(customerId, { points: 0, completed_orders: 0 });
 }
