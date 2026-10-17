@@ -1667,6 +1667,16 @@ async function loadFinanceiro(main) {
   if (eErr) throw eErr;
   admin.data.revenueEntries = revenue || [];
   admin.data.expenseEntries = expenses || [];
+  const [pu, ins, pay] = await Promise.all([
+    sb.from("card_purchases").select("*").order("purchase_date", { ascending: false }),
+    sb.from("card_installments").select("*").order("ref_month"),
+    sb.from("card_statement_payments").select("*"),
+  ]);
+  admin.data.cardsOk = !(pu.error || ins.error || pay.error);
+  admin.data.cardPurchases = admin.data.cardsOk ? (pu.data || []) : [];
+  admin.data.cardInst = admin.data.cardsOk ? (ins.data || []) : [];
+  admin.data.cardPaid = admin.data.cardsOk ? (pay.data || []) : [];
+  if (!admin.data.finMonth) admin.data.finMonth = new Date().toISOString().slice(0, 7);
   renderFinanceiro(main);
 }
 
@@ -1687,90 +1697,147 @@ function groupByMonth(list, dateField) {
   return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a)); // mais recente primeiro
 }
 
+
+/* ---- helpers de mês / cartão ---- */
+function monthIndex(key) { const [y, m] = key.split("-").map(Number); return y * 12 + (m - 1); }
+function monthFromIndex(i) { return `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`; }
+function shiftMonth(key, n) { return monthFromIndex(monthIndex(key) + n); }
+function splitInstallments(total, n) { // em centavos; última parcela absorve a diferença
+  const cents = Math.round(total * 100), base = Math.floor(cents / n);
+  return Array.from({ length: n }, (_, i) => (i === n - 1 ? cents - base * (n - 1) : base) / 100);
+}
+function buildInstallments(purchaseId, card, dateStr, total, n, closed) {
+  const start = shiftMonth(dateStr.slice(0, 7), closed ? 1 : 0);
+  return splitInstallments(total, n).map((amount, i) => ({
+    purchase_id: purchaseId, card_name: card, number: i + 1, total_installments: n, amount, ref_month: shiftMonth(start, i) + "-01",
+  }));
+}
+// fatura de um cartão num mês: parcelas + compras de crédito antigas lançadas como despesa
+function statementItems(card, key) {
+  const items = [];
+  admin.data.cardInst.filter(i => i.card_name === card && i.ref_month.slice(0, 7) === key).forEach(i => {
+    const pu = admin.data.cardPurchases.find(p => p.id === i.purchase_id) || {};
+    items.push({ kind: "inst", id: i.id, purchaseId: i.purchase_id, desc: pu.description || "Compra", amount: Number(i.amount), n: i.number, total: i.total_installments, date: pu.purchase_date || "" });
+  });
+  admin.data.expenseEntries.filter(e => e.payment_method === "credito" && e.card_name === card && (e.entry_date || "").slice(0, 7) === key).forEach(e => {
+    items.push({ kind: "legacy", id: e.id, desc: e.description, amount: Number(e.amount), n: 1, total: 1, date: e.entry_date });
+  });
+  return items;
+}
+function statementTotal(card, key) { return statementItems(card, key).reduce((t, i) => t + i.amount, 0); }
+function statementPaid(card, key) { return admin.data.cardPaid.some(p => p.card_name === card && p.ref_month.slice(0, 7) === key && p.paid); }
+// saídas de um mês = despesas lançadas (inclui crédito antigo) + parcelas de cartão do mês. Pagar fatura NÃO soma de novo.
+function monthOut(key) {
+  return admin.data.expenseEntries.filter(e => (e.entry_date || "").slice(0, 7) === key).reduce((t, e) => t + Number(e.amount), 0)
+    + admin.data.cardInst.filter(i => i.ref_month.slice(0, 7) === key).reduce((t, i) => t + Number(i.amount), 0);
+}
+function monthIn(key) { return admin.data.revenueEntries.filter(r => (r.entry_date || "").slice(0, 7) === key).reduce((t, r) => t + Number(r.amount), 0); }
+function setFinMonth(key) { if (key) { admin.data.finMonth = key; admin.data.openStatement = null; renderFinanceiro(document.getElementById("adminMain")); } }
+function setFinYearMonth() {
+  const y = document.getElementById("finYear").value, m = document.getElementById("finMon").value;
+  setFinMonth(`${y}-${m}`);
+}
+function openStatement(card) { admin.data.openStatement = admin.data.openStatement === card ? null : card; renderFinanceiro(document.getElementById("adminMain")); }
+
 function renderFinanceiro(main) {
-  const revenue = admin.data.revenueEntries;
-  const expenses = admin.data.expenseEntries;
-  const totalFaturamento = revenue.reduce((s, r) => s + Number(r.amount), 0);
-  const totalDespesas = expenses.reduce((s, e) => s + Number(e.amount), 0);
-  const resultado = totalFaturamento - totalDespesas;
+  const key = admin.data.finMonth;
+  const [yy, mm] = key.split("-");
+  const year = Number(yy);
+  const revenueM = admin.data.revenueEntries.filter(r => (r.entry_date || "").slice(0, 7) === key);
+  const expensesM = admin.data.expenseEntries.filter(e => (e.entry_date || "").slice(0, 7) === key);
+  const totalIn = monthIn(key), totalOut = monthOut(key), resultado = totalIn - totalOut;
+  const nowYear = new Date().getFullYear();
+  const years = []; for (let y = Math.min(nowYear - 3, year); y <= Math.max(nowYear + 3, year); y++) years.push(y);
+  const open = admin.data.openStatement;
+  const lbl = monthGroupLabel(key);
 
-  // resumo anual por mês (entrada/saída/resultado)
-  const monthly = {};
-  function ensureMonth(key) { return (monthly[key] = monthly[key] || { in: 0, out: 0 }); }
-  revenue.forEach(r => { if (r.entry_date) ensureMonth(r.entry_date.slice(0, 7)).in += Number(r.amount); });
-  expenses.forEach(e => { if (e.entry_date) ensureMonth(e.entry_date.slice(0, 7)).out += Number(e.amount); });
-  const monthKeys = Object.keys(monthly).sort((a, b) => b.localeCompare(a));
+  // resumo anual do ano selecionado
+  const annual = MONTH_NAMES_CAL.map((name, i) => { const k = `${year}-${String(i + 1).padStart(2, "0")}`; const inn = monthIn(k), out = monthOut(k); return { k, name, inn, out, res: inn - out }; });
+  const sum = annual.reduce((t, m) => ({ inn: t.inn + m.inn, out: t.out + m.out }), { inn: 0, out: 0 });
 
-  // fatura por cartão de crédito
-  const cardTotals = {};
-  CARD_NAMES.forEach(c => cardTotals[c] = 0);
-  expenses.forEach(e => { if (e.payment_method === "credito" && e.card_name) cardTotals[e.card_name] = (cardTotals[e.card_name] || 0) + Number(e.amount); });
+  // parcelas futuras por cartão (a partir do mês atual)
+  const curKey = new Date().toISOString().slice(0, 7);
+  const futureKeys = [...new Set(admin.data.cardInst.map(i => i.ref_month.slice(0, 7)).filter(k => k >= curKey))].sort();
+
+  const stmtCard = c => {
+    const items = statementItems(c, key), tot = items.reduce((t, i) => t + i.amount, 0), paid = statementPaid(c, key);
+    return `<div class="stat-card" style="cursor:pointer;${open === c ? "outline:2px solid #6A2CC4" : ""}" onclick="openStatement('${c}')" title="Ver compras desta fatura">
+      <div class="label">Fatura ${c} — ${lbl}</div><div class="value" style="color:#6A2CC4">${fmt(tot)}</div>
+      <div class="hint" style="margin:4px 0 0">${items.length} item(ns) · ${tot === 0 ? "sem fatura" : paid ? "✓ paga" : "pendente"} · clique para detalhar</div></div>`;
+  };
 
   main.innerHTML = `
-    <div class="admin-topbar"><h1>Financeiro</h1><button class="btn btn-pink" onclick="openFinanceForm()">+ Lançamento manual</button></div>
+    <div class="admin-topbar"><h1>Financeiro</h1><div style="display:flex;gap:8px"><button class="btn btn-outline" onclick="openCardPurchaseForm()">+ Compra no cartão</button><button class="btn btn-pink" onclick="openFinanceForm()">+ Lançamento manual</button></div></div>
     <p class="hint">Quando um pedido do site é marcado como "Entregue", a receita entra aqui sozinha — sem duplicar. Pedidos de fora do site e despesas são lançados manualmente.</p>
+    ${!admin.data.cardsOk ? `<div class="error-box">Para usar compras parceladas no cartão, rode o script <strong>add_cartoes_parcelas.sql</strong> no Supabase.</div>` : ""}
+
+    <div class="admin-card" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-outline btn-sm" onclick="setFinMonth(shiftMonth('${key}', -1))">‹</button>
+      <select id="finMon" onchange="setFinYearMonth()">${MONTH_NAMES_CAL.map((n, i) => `<option value="${String(i + 1).padStart(2, "0")}" ${String(i + 1).padStart(2, "0") === mm ? "selected" : ""}>${n}</option>`).join("")}</select>
+      <select id="finYear" onchange="setFinYearMonth()">${years.map(y => `<option ${y === year ? "selected" : ""}>${y}</option>`).join("")}</select>
+      <button class="btn btn-outline btn-sm" onclick="setFinMonth(shiftMonth('${key}', 1))">›</button>
+      <button class="btn btn-outline btn-sm" onclick="setFinMonth(new Date().toISOString().slice(0,7))">Mês atual</button>
+      <strong style="margin-left:6px">Painel de ${lbl}</strong>
+    </div>
 
     <div class="stat-grid">
-      <div class="stat-card"><div class="label">Faturamento</div><div class="value" style="color:#2E7D46">${fmt(totalFaturamento)}</div></div>
-      <div class="stat-card"><div class="label">Despesas</div><div class="value" style="color:#B23434">${fmt(totalDespesas)}</div></div>
-      <div class="stat-card"><div class="label">Resultado</div><div class="value">${fmt(resultado)}</div></div>
-      ${CARD_NAMES.map(c => `<div class="stat-card"><div class="label">Fatura ${c}</div><div class="value" style="color:#6A2CC4">${fmt(cardTotals[c])}</div></div>`).join("")}
+      <div class="stat-card"><div class="label">Faturamento de ${lbl}</div><div class="value" style="color:#2E7D46">${fmt(totalIn)}</div></div>
+      <div class="stat-card"><div class="label">Despesas de ${lbl}</div><div class="value" style="color:#B23434">${fmt(totalOut)}</div></div>
+      <div class="stat-card"><div class="label">Resultado de ${lbl}</div><div class="value" style="color:${resultado < 0 ? "#B23434" : "#2E7D46"}">${fmt(resultado)}</div></div>
+      ${CARD_NAMES.map(stmtCard).join("")}
     </div>
+    <p class="hint">As despesas do mês já incluem as parcelas de cartão que vencem neste mês. Pagar a fatura apenas marca como paga — não soma de novo.</p>
+
+    ${open ? renderStatementDetail(open, key) : ""}
 
     <div id="financeFormArea"></div>
 
     <div class="admin-card">
-      <h2>Resumo anual por mês</h2>
-      ${monthKeys.length ? `
-        <table>
-          <thead><tr><th>Mês</th><th>Entrada</th><th>Saída</th><th>Resultado</th></tr></thead>
-          <tbody>
-            ${monthKeys.map(key => {
-              const m = monthly[key];
-              const res = m.in - m.out;
-              return `
-                <tr>
-                  <td>${key === "sem-data" ? "Sem data" : monthGroupLabel(key)}</td>
-                  <td style="color:#2E7D46">${fmt(m.in)}</td>
-                  <td style="color:#B23434">${fmt(m.out)}</td>
-                  <td><strong style="color:${res < 0 ? "#B23434" : "#2E7D46"}">${fmt(res)}</strong></td>
-                </tr>
-              `;
-            }).join("")}
-          </tbody>
-        </table>
-      ` : `<p class="center-msg">Sem lançamentos suficientes ainda.</p>`}
+      <h2>Resumo anual — ${year}</h2>
+      <table>
+        <thead><tr><th>Mês</th><th>Entradas</th><th>Saídas</th><th>Resultado</th></tr></thead>
+        <tbody>
+          ${annual.map(m => `<tr style="${m.k === key ? "background:#FDEEF3;cursor:pointer" : "cursor:pointer"}" onclick="setFinMonth('${m.k}')">
+            <td>${m.name}</td><td style="color:#2E7D46">${fmt(m.inn)}</td><td style="color:#B23434">${fmt(m.out)}</td>
+            <td><strong style="color:${m.res < 0 ? "#B23434" : "#2E7D46"}">${fmt(m.res)}</strong></td></tr>`).join("")}
+          <tr style="font-weight:800;border-top:2px solid var(--border)"><td>Total anual</td><td style="color:#2E7D46">${fmt(sum.inn)}</td><td style="color:#B23434">${fmt(sum.out)}</td>
+            <td style="color:${sum.inn - sum.out < 0 ? "#B23434" : "#2E7D46"}">${fmt(sum.inn - sum.out)}</td></tr>
+        </tbody>
+      </table>
+      <p class="hint" style="margin-top:8px">Clique em um mês para abrir o painel dele.</p>
     </div>
 
+    ${futureKeys.length ? `<div class="admin-card">
+      <h2>Faturas futuras (parcelas já lançadas)</h2>
+      <table><thead><tr><th>Mês</th>${CARD_NAMES.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>
+        ${futureKeys.map(k => `<tr style="cursor:pointer" onclick="setFinMonth('${k}')"><td>${monthGroupLabel(k)}</td>${CARD_NAMES.map(c => `<td>${fmt(statementTotal(c, k))}</td>`).join("")}</tr>`).join("")}
+      </tbody></table></div>` : ""}
+
     <div class="admin-card">
-      <h2>Faturamento</h2>
-      ${revenue.length ? groupByMonth(revenue, "entry_date").map(([key, items]) => `
-        <p class="cart-section-title" style="margin:14px 0 6px">${monthGroupLabel(key)}</p>
+      <h2>Faturamento — ${lbl}</h2>
+      ${revenueM.length ? `
         <table>
           <thead><tr><th>Data</th><th>Descrição</th><th>Origem</th><th>Valor</th><th></th></tr></thead>
           <tbody>
-            ${items.map(r => `
+            ${revenueM.map(r => `
               <tr>
                 <td>${new Date(r.entry_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
                 <td>${r.description}</td>
                 <td><span class="badge-status ${r.source === "site" ? "confirmed" : "pending"}">${r.source === "site" ? "Automático (site)" : "Manual"}</span></td>
                 <td><strong style="color:#2E7D46">${fmt(r.amount)}</strong></td>
                 <td><button class="btn btn-outline btn-sm" onclick="deleteRevenueEntry('${r.id}')">Excluir</button></td>
-              </tr>
-            `).join("")}
+              </tr>`).join("")}
           </tbody>
-        </table>
-      `).join("") : `<p class="center-msg">Nenhuma receita ainda.</p>`}
+        </table>` : `<p class="center-msg">Nenhuma receita em ${lbl}.</p>`}
     </div>
 
     <div class="admin-card">
-      <h2>Despesas</h2>
-      ${expenses.length ? groupByMonth(expenses, "entry_date").map(([key, items]) => `
-        <p class="cart-section-title" style="margin:14px 0 6px">${monthGroupLabel(key)}</p>
+      <h2>Despesas — ${lbl}</h2>
+      ${expensesM.length ? `
         <table>
           <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Pagamento</th><th>Valor</th><th></th></tr></thead>
           <tbody>
-            ${items.map(e => `
+            ${expensesM.map(e => `
               <tr>
                 <td>${new Date(e.entry_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
                 <td>${e.description}</td>
@@ -1778,14 +1845,100 @@ function renderFinanceiro(main) {
                 <td>${e.payment_method ? PAYMENT_METHOD_LABEL[e.payment_method] + (e.card_name ? ` (${e.card_name})` : "") : "—"}</td>
                 <td><strong style="color:#B23434">${fmt(e.amount)}</strong></td>
                 <td><button class="btn btn-outline btn-sm" onclick="deleteExpenseEntry('${e.id}')">Excluir</button></td>
-              </tr>
-            `).join("")}
+              </tr>`).join("")}
           </tbody>
-        </table>
-      `).join("") : `<p class="center-msg">Nenhuma despesa ainda.</p>`}
+        </table>` : `<p class="center-msg">Nenhuma despesa direta em ${lbl}.</p>`}
+      <p class="hint" style="margin-top:8px">Compras no cartão aparecem nas faturas acima, por mês de competência da parcela.</p>
     </div>
-
   `;
+}
+
+function renderStatementDetail(card, key) {
+  const items = statementItems(card, key).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const tot = items.reduce((t, i) => t + i.amount, 0), paid = statementPaid(card, key);
+  return `<div class="admin-card" style="border-left:4px solid #6A2CC4">
+    <div class="admin-topbar" style="margin-bottom:8px"><h2 style="margin:0">Fatura ${card} — ${monthGroupLabel(key)}</h2>
+      <div style="display:flex;gap:8px;align-items:center"><strong style="color:#6A2CC4;font-size:18px">${fmt(tot)}</strong>
+      ${tot > 0 ? `<button class="btn ${paid ? "btn-outline" : "btn-pink"} btn-sm" onclick="toggleStatementPaid('${card}', '${key}', ${!paid})">${paid ? "✓ Paga — desfazer" : "Marcar como paga"}</button>` : ""}</div></div>
+    ${items.length ? `<table><thead><tr><th>Compra</th><th>Data da compra</th><th>Parcela</th><th>Valor da parcela</th><th>Referência</th><th></th></tr></thead><tbody>
+      ${items.map(i => `<tr><td>${i.desc}</td><td>${i.date ? new Date(i.date + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+        <td>${i.kind === "legacy" ? "à vista" : `${i.n}/${i.total}`}</td><td><strong>${fmt(i.amount)}</strong></td><td>${monthGroupLabel(key)}</td>
+        <td style="white-space:nowrap">${i.kind === "inst" ? `<button class="btn btn-outline btn-sm" onclick="openCardPurchaseForm('${i.purchaseId}')">Editar compra</button> <button class="btn btn-outline btn-sm" onclick="deleteCardPurchase('${i.purchaseId}')">Excluir compra</button>` : `<button class="btn btn-outline btn-sm" onclick="deleteExpenseEntry('${i.id}')">Excluir</button>`}</td></tr>`).join("")}
+    </tbody></table>` : `<p class="center-msg">Nenhuma compra nesta fatura.</p>`}
+    <p class="hint" style="margin-top:8px">Editar ou excluir uma compra parcelada atualiza/remove todas as parcelas dela.</p></div>`;
+}
+
+async function toggleStatementPaid(card, key, paid) {
+  const { error } = await sb.from("card_statement_payments").upsert({ card_name: card, ref_month: key + "-01", paid, paid_at: paid ? new Date().toISOString().slice(0, 10) : null }, { onConflict: "card_name,ref_month" });
+  if (error) { alert("Não foi possível salvar: " + (error.message || "")); return; }
+  await loadFinanceiro(document.getElementById("adminMain"));
+}
+async function deleteCardPurchase(id) {
+  if (!confirm("Excluir esta compra e TODAS as parcelas dela (em todos os meses)?")) return;
+  const { error } = await sb.from("card_purchases").delete().eq("id", id);
+  if (error) { alert("Não foi possível excluir: " + (error.message || "")); return; }
+  await loadFinanceiro(document.getElementById("adminMain"));
+}
+function cardPreview() {
+  const total = Number(document.getElementById("cpTotal").value), n = document.getElementById("cpInst").value === "sim" ? Math.max(2, parseInt(document.getElementById("cpN").value, 10) || 2) : 1;
+  const date = document.getElementById("cpDate").value, closed = document.getElementById("cpClosed").value === "sim";
+  const box = document.getElementById("cpPreview"); if (!box) return;
+  document.getElementById("cpNWrap").style.display = n > 1 || document.getElementById("cpInst").value === "sim" ? "flex" : "none";
+  if (!total || !date) { box.innerHTML = ""; return; }
+  const rows = buildInstallments("x", "x", date, total, n, closed);
+  box.innerHTML = `<p class="hint" style="margin:8px 0 4px"><strong>Distribuição automática:</strong></p>` +
+    rows.map(r => `<div class="dash-row"><span style="flex:1">${monthGroupLabel(r.ref_month.slice(0, 7))} — parcela ${r.number}/${r.total_installments}</span><strong>${fmt(r.amount)}</strong></div>`).join("");
+}
+function openCardPurchaseForm(purchaseId) {
+  const p = purchaseId ? admin.data.cardPurchases.find(x => x.id === purchaseId) : null;
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById("financeFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>${p ? "Editar compra no cartão" : "Compra no cartão de crédito"}</h2>
+      <div class="form-grid">
+        <label class="span-2">Descrição da compra<input id="cpDesc" value="${p ? escapeHtml(p.description) : ""}" placeholder="Ex: Embalagens"></label>
+        <label>Data da compra<input type="date" id="cpDate" value="${p ? p.purchase_date : today}" onchange="cardPreview()"></label>
+        <label>Cartão<select id="cpCard">${CARD_NAMES.map(c => `<option ${p && p.card_name === c ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+        <label>Valor total da compra (R$)<input type="number" step="0.01" min="0" id="cpTotal" value="${p ? p.total_amount : ""}" oninput="cardPreview()"></label>
+        <label>Categoria (opcional)<input id="cpCat" value="${p && p.category ? escapeHtml(p.category) : ""}"></label>
+        <label>Compra parcelada?<select id="cpInst" onchange="cardPreview()"><option value="nao">Não</option><option value="sim" ${p && p.installments > 1 ? "selected" : ""}>Sim</option></select></label>
+        <label id="cpNWrap" style="display:none">Quantidade de parcelas<input type="number" min="2" max="60" id="cpN" value="${p && p.installments > 1 ? p.installments : 2}" oninput="cardPreview()"></label>
+        <label>Fatura fechada?<select id="cpClosed" onchange="cardPreview()"><option value="nao">Não (cobra no mês da compra)</option><option value="sim" ${p && p.statement_closed ? "selected" : ""}>Sim (cobra no mês seguinte)</option></select></label>
+      </div>
+      <div id="cpPreview"></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveCardPurchase(${p ? `'${p.id}'` : "null"})">Salvar</button>
+        <button class="btn btn-outline" onclick="document.getElementById('financeFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>`;
+  cardPreview();
+  document.getElementById("financeFormArea").scrollIntoView({ behavior: "smooth" });
+}
+async function saveCardPurchase(id) {
+  const description = document.getElementById("cpDesc").value.trim();
+  const purchase_date = document.getElementById("cpDate").value;
+  const card_name = document.getElementById("cpCard").value;
+  const total_amount = Math.round(Number(document.getElementById("cpTotal").value) * 100) / 100;
+  const installments = document.getElementById("cpInst").value === "sim" ? Math.max(2, parseInt(document.getElementById("cpN").value, 10) || 2) : 1;
+  const statement_closed = document.getElementById("cpClosed").value === "sim";
+  const category = document.getElementById("cpCat").value.trim() || null;
+  if (!description || !purchase_date || !total_amount) { alert("Preencha descrição, data e valor."); return; }
+  const row = { description, purchase_date, card_name, total_amount, installments, statement_closed, category };
+  let pid = id;
+  if (id) {
+    const { error } = await sb.from("card_purchases").update(row).eq("id", id);
+    if (error) { alert("Não foi possível salvar: " + (error.message || "")); return; }
+    const del = await sb.from("card_installments").delete().eq("purchase_id", id);
+    if (del.error) { alert("Não foi possível atualizar as parcelas: " + (del.error.message || "")); return; }
+  } else {
+    const { data, error } = await sb.from("card_purchases").insert(row).select().single();
+    if (error || !data) { alert("Não foi possível salvar: " + ((error && error.message) || "") + "\n\nRode o script add_cartoes_parcelas.sql no Supabase."); return; }
+    pid = data.id;
+  }
+  const { error: iErr } = await sb.from("card_installments").insert(buildInstallments(pid, card_name, purchase_date, total_amount, installments, statement_closed));
+  if (iErr) { alert("A compra foi salva mas as parcelas falharam: " + (iErr.message || "")); }
+  document.getElementById("financeFormArea").innerHTML = "";
+  await loadFinanceiro(document.getElementById("adminMain"));
 }
 
 function updateFinanceFormFields() {
@@ -1840,6 +1993,13 @@ async function saveFinanceEntry() {
   const description = document.getElementById("feDescription").value.trim();
   const amount = Number(document.getElementById("feAmount").value);
   if (!entry_date || !description || !amount) { alert("Preencha data, descrição e valor."); return; }
+  if (type === "despesa" && document.getElementById("fePayment").value === "credito") {
+    openCardPurchaseForm(); // compra no cartão tem fluxo próprio (parcelas)
+    document.getElementById("cpDesc").value = description; document.getElementById("cpDate").value = entry_date;
+    document.getElementById("cpTotal").value = amount; document.getElementById("cpCard").value = document.getElementById("feCard").value;
+    document.getElementById("cpCat").value = document.getElementById("feCategory").value.trim(); cardPreview();
+    return;
+  }
 
   if (type === "receita") {
     const { error } = await sb.from("revenue_entries").insert({ entry_date, description, amount, source: "manual" });

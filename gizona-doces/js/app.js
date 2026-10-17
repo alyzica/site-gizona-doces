@@ -589,6 +589,7 @@ function renderCategory() {
       </div>
 
       ${state.orderTab === "delivery" ? renderDeliveryList() : `
+      ${renderGallerySection()}
       <div class="cat-choices">
         ${[
           { key: "brigadeiro", title: "Brigadeiro Gourmet", sub: "18 a 20g cada - caixas com 50 ou 100 unidades", icon: `<img src="images/icons/icon-brigadeiro.png" alt="Brigadeiro">` },
@@ -603,7 +604,6 @@ function renderCategory() {
           </span>
         </button>`).join("")}
       </div>
-      ${renderGallerySection()}
       `}
 
       ${state.orderTab === "encomendas" ? `
@@ -756,10 +756,15 @@ function cartRemoveCake(i) { state.cakes.splice(i, 1); render(); }
 /* ---------------- CARD DE PRODUTO (Delivery + Geladinho) e FOTO AMPLIADA ---------------- */
 function productCard(o) {
   const photos = (o.photos || []).filter(Boolean);
-  const thumb = `<span class="pc-thumb ${photos.length ? "" : "no-photo"}" ${photos.length ? `onclick="openPhoto(${escapeAttr(JSON.stringify(photos)).replace(/"/g, "&quot;")}, 0)"` : ""} role="${photos.length ? "button" : "img"}" aria-label="Ampliar foto de ${escapeAttr(o.name)}">
-      ${photos.length ? `<img src="${escapeAttr(photos[0])}" alt="${escapeAttr(o.name)}" style="--img-scale:${o.scale || 1};--img-x:${o.x || 50}%;--img-y:${o.y || 50}%" onerror="this.parentElement.classList.add('no-photo'); this.remove()">` : ""}
-      ${photos.length ? `<i class="pc-zoom"><svg viewBox="0 0 24 24" width="13" height="13" fill="none"><circle cx="11" cy="11" r="6" stroke="#fff" stroke-width="2"/><path d="M16 16l4 4M11 8.5v5M8.5 11h5" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></i>` : ""}
+  const listAttr = escapeAttr(JSON.stringify(photos)).replace(/"/g, "&quot;");
+  const one = (src, idx) => `<span class="pc-thumb" onclick="openPhoto(${listAttr}, ${idx})" role="button" aria-label="Ampliar foto ${idx + 1} de ${escapeAttr(o.name)}">
+      <img src="${escapeAttr(src)}" alt="${escapeAttr(o.name)}" style="--img-scale:${idx === 0 ? (o.scale || 1) : (o.scale2 || 1)};--img-x:${idx === 0 ? (o.x || 50) : (o.x2 || 50)}%;--img-y:${idx === 0 ? (o.y || 50) : (o.y2 || 50)}%" onerror="this.parentElement.remove()">
+      <i class="pc-zoom"><svg viewBox="0 0 24 24" width="13" height="13" fill="none"><circle cx="11" cy="11" r="6" stroke="#fff" stroke-width="2"/><path d="M16 16l4 4M11 8.5v5M8.5 11h5" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></i>
     </span>`;
+  // 2 fotos do mesmo produto ficam uma embaixo da outra
+  const thumb = photos.length
+    ? `<span class="pc-photos">${photos.map(one).join("")}</span>`
+    : `<span class="pc-photos"><span class="pc-thumb no-photo" role="img" aria-label="${escapeAttr(o.name)}"></span></span>`;
   return `
   <div class="pcard ${o.out ? "disabled" : ""}">
     <div class="pc-top">
@@ -1088,7 +1093,7 @@ function renderGeladinhoFlavors() {
           const err = qty > 0 && qty < GELADINHO_RULES.minPerFlavor;
           return productCard({
             name: p.name, desc: p.desc, price: p.price, photos: [p.image, p.image2],
-            scale: p.imageScale, x: p.imageX, y: p.imageY, qty,
+            scale: p.imageScale, x: p.imageX, y: p.imageY, scale2: p.image2Scale, x2: p.image2X, y2: p.image2Y, qty,
             minus: `changeGeladinho('${p.id}', -1)`, plus: `changeGeladinho('${p.id}', 1)`,
             note: err ? `Mínimo ${GELADINHO_RULES.minPerFlavor} por sabor` : "", noteClass: err ? "error" : ""
           });
