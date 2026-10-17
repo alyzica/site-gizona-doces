@@ -704,7 +704,7 @@ async function saveManualOrder() {
   const { data: created, error } = await sb.from("orders").insert(payload).select().single();
   if (error) {
     console.error(error);
-    alert(/Estoque insuficiente/i.test(error.message || "") ? "Estoque insuficiente para um dos produtos. Registre uma nova leva no Estoque de Produtos." : "Não foi possível salvar o pedido: " + (error.message || ""));
+    alert(/Estoque insuficiente/i.test(error.message || "") ? "Estoque insuficiente para um dos produtos. Registre uma nova leva no Estoque de Produtos." : "Não foi possível salvar o pedido: " + (error.message || "") + (/indispon|batch_item|request_id/i.test(error.message || "") ? "\n\nRode o script fix_delivery_venda_manual.sql no Supabase." : ""));
     return;
   }
   if (created && payload.status === "delivered") await ensureRevenueForOrderQuiet(created);
@@ -1784,6 +1784,8 @@ function renderFinanceiro(main) {
       <div class="stat-card"><div class="label">Faturamento de ${lbl}</div><div class="value" style="color:#2E7D46">${fmt(totalIn)}</div></div>
       <div class="stat-card"><div class="label">Despesas de ${lbl}</div><div class="value" style="color:#B23434">${fmt(totalOut)}</div></div>
       <div class="stat-card"><div class="label">Resultado de ${lbl}</div><div class="value" style="color:${resultado < 0 ? "#B23434" : "#2E7D46"}">${fmt(resultado)}</div></div>
+      <div class="stat-card"><div class="label">Lucro de ${lbl} (% sobre as entradas)</div><div class="value" style="color:${totalIn > 0 ? (resultado < 0 ? "#B23434" : "#2E7D46") : "var(--muted)"}">${totalIn > 0 ? fmtPct((resultado / totalIn) * 100) : "N/D"}</div>
+        <div class="hint" style="margin:4px 0 0">${totalIn > 0 ? (resultado < 0 ? "prejuízo no mês" : "resultado ÷ entradas × 100") : "sem entradas no mês"}</div></div>
       ${CARD_NAMES.map(stmtCard).join("")}
     </div>
     <p class="hint">As despesas do mês já incluem as parcelas de cartão que vencem neste mês. Pagar a fatura apenas marca como paga — não soma de novo.</p>
@@ -2787,6 +2789,32 @@ function pricingBaseCost(pricing) {
   return (pricing.pricing_items || []).reduce((s, it) => s + pricingItemCost(it), 0);
 }
 
+/* Margem de lucro = lucro ÷ preço de venda × 100 (nunca sobre o custo) */
+function pricingMetrics(base, producedQty, variablePct, markupPct, manual) {
+  const adjusted = base * (1 + (Number(variablePct) || 0) / 100);
+  const unitCost = Number(producedQty) > 0 ? adjusted / Number(producedQty) : 0;
+  const markupSale = unitCost * (1 + (Number(markupPct) || 0) / 100);
+  const sale = manual != null && manual !== "" && Number(manual) > 0 ? Number(manual) : markupSale;
+  const profit = sale - unitCost;
+  return { adjusted, unitCost, sale, profit, margin: sale > 0 ? (profit / sale) * 100 : null, usesManual: sale !== markupSale || (manual != null && manual !== "" && Number(manual) > 0) };
+}
+function fmtPct(v) { return v == null ? "—" : v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%"; }
+function marginColor(v) { return v == null ? "var(--muted)" : v < 0 ? "#B23434" : "#2E7D46"; }
+function pricingLiveUpdate(pricingId) {
+  const p = admin.data.pricings.find(x => x.id === pricingId); const box = document.getElementById("pcLive"); if (!p || !box) return;
+  const m = pricingMetrics(pricingBaseCost(p), document.getElementById("pcProducedQty").value, document.getElementById("pcVariablePct").value, document.getElementById("pcMarkupPct").value, document.getElementById("pcManualPrice").value);
+  box.innerHTML = pricingResultHtml(m);
+}
+function pricingResultHtml(m) {
+  return `<div class="stat-grid" style="margin:0">
+    <div class="stat-card"><div class="label">Custo unitário</div><div class="value">${fmt(m.unitCost)}</div></div>
+    <div class="stat-card"><div class="label">Preço de venda${m.usesManual ? " (definido por você)" : " (pelo markup)"}</div><div class="value" style="color:var(--pink)">${fmt(m.sale)}</div></div>
+    <div class="stat-card"><div class="label">Lucro por unidade</div><div class="value" style="color:${marginColor(m.margin)}">${fmt(m.profit)}</div></div>
+    <div class="stat-card"><div class="label">Margem de lucro (sobre o preço)</div><div class="value" style="color:${marginColor(m.margin)}">${fmtPct(m.margin)}</div></div>
+  </div>${m.margin != null && m.margin < 0 ? `<p style="color:#B23434;margin:8px 0 0">⚠️ Preço abaixo do custo — venda no prejuízo.</p>` : ""}
+  <p class="hint" style="margin:8px 0 0">Margem = lucro ÷ preço de venda × 100. Atualiza ao digitar.</p>`;
+}
+
 function renderPrecificacaoList(main) {
   const pricings = admin.data.pricings;
   main.innerHTML = `
@@ -2796,19 +2824,17 @@ function renderPrecificacaoList(main) {
     <div class="admin-card">
       ${pricings.length ? `
         <table>
-          <thead><tr><th>Produto</th><th>Custo base</th><th>Markup</th><th>Preço de venda</th><th></th></tr></thead>
+          <thead><tr><th>Produto</th><th>Custo</th><th>Preço de venda</th><th>Lucro (R$)</th><th>Margem</th><th></th></tr></thead>
           <tbody>
             ${pricings.map(p => {
-              const base = pricingBaseCost(p);
-              const adjusted = base * (1 + Number(p.variable_pct) / 100);
-              const unitCost = p.produced_qty > 0 ? adjusted / p.produced_qty : 0;
-              const sale = unitCost * (1 + Number(p.markup_pct) / 100);
+              const m = pricingMetrics(pricingBaseCost(p), p.produced_qty, p.variable_pct, p.markup_pct, p.manual_sale_price);
               return `
                 <tr>
                   <td><strong>${p.name}</strong></td>
-                  <td>${fmt(unitCost)}/un.</td>
-                  <td>${p.markup_pct}%</td>
-                  <td><strong>${fmt(sale)}</strong></td>
+                  <td>${fmt(m.unitCost)}/un.</td>
+                  <td><strong>${fmt(m.sale)}</strong></td>
+                  <td style="color:${marginColor(m.margin)}">${fmt(m.profit)}</td>
+                  <td><strong style="color:${marginColor(m.margin)}">${fmtPct(m.margin)}</strong></td>
                   <td><button class="btn btn-outline btn-sm" onclick="openPricingDetail('${p.id}')">Abrir</button></td>
                 </tr>
               `;
@@ -2905,13 +2931,14 @@ function openPricingDetail(pricingId) {
 
       <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
         <div class="form-grid">
-          <label>Quantidade produzida<input type="number" step="0.01" id="pcProducedQty" value="${p.produced_qty}"></label>
-          <label>Custos variáveis (%)<input type="number" step="1" id="pcVariablePct" value="${p.variable_pct}"></label>
-          <label>Markup sobre o custo (%)<input type="number" step="1" id="pcMarkupPct" value="${p.markup_pct}"></label>
-          <label>Preço de venda manual (R$, opcional)<input type="number" step="0.01" id="pcManualPrice" value="${p.manual_sale_price ?? ""}" placeholder="Deixe em branco pra usar o markup"></label>
+          <label>Quantidade produzida<input type="number" step="0.01" id="pcProducedQty" oninput="pricingLiveUpdate('${pricingId}')" value="${p.produced_qty}"></label>
+          <label>Custos variáveis (%)<input type="number" step="1" id="pcVariablePct" oninput="pricingLiveUpdate('${pricingId}')" value="${p.variable_pct}"></label>
+          <label>Markup sobre o custo (%)<input type="number" step="1" id="pcMarkupPct" oninput="pricingLiveUpdate('${pricingId}')" value="${p.markup_pct}"></label>
+          <label>Preço de venda manual (R$, opcional)<input type="number" step="0.01" id="pcManualPrice" oninput="pricingLiveUpdate('${pricingId}')" value="${p.manual_sale_price ?? ""}" placeholder="Deixe em branco pra usar o markup"></label>
         </div>
         <button class="btn btn-outline btn-sm" style="margin-top:10px" onclick="savePricingCalc('${pricingId}')">Recalcular e salvar</button>
 
+        <div id="pcLive" style="margin-top:16px">${pricingResultHtml(pricingMetrics(base, p.produced_qty, p.variable_pct, p.markup_pct, p.manual_sale_price))}</div>
         <div class="callout" style="margin-top:16px">
           Custo dos ingredientes/receitas: <strong>${fmt(base)}</strong><br>
           Custos variáveis (${variablePct}%): <strong>${fmt(base * variablePct / 100)}</strong><br>
@@ -4145,7 +4172,7 @@ async function saveQuickSale() {
     items: [{ id: pid, product_name: prod.name, category: "delivery", quantity: qty, unit_price: price, subtotal: total }],
     total, subtotal: total, payment_method_1: pay, payment_amount_1: total, observations: "Baixa rápida (venda por fora do site)",
   }).select().single();
-  if (error) { console.error(error); alert(/Estoque insuficiente/i.test(error.message || "") ? "Estoque insuficiente." : "Não foi possível registrar: " + (error.message || "")); return; }
+  if (error) { console.error(error); alert(/Estoque insuficiente/i.test(error.message || "") ? "Estoque insuficiente." : "Não foi possível registrar: " + (error.message || "") + (/indispon|batch_item|request_id/i.test(error.message || "") ? "\n\nRode o script fix_delivery_venda_manual.sql no Supabase." : "")); return; }
   await ensureRevenueForOrderQuiet(data);
   await loadEstoqueProdutos(document.getElementById("adminMain"));
 }
