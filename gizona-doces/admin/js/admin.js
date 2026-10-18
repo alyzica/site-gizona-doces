@@ -427,11 +427,12 @@ function renderOrdersTable(main) {
       const valid = list.filter(o => o.status !== "cancelled");
       const tot = valid.reduce((t, o) => t + Number(o.total || 0), 0);
       const frete = valid.reduce((t, o) => t + Number(o.delivery_fee || 0), 0);
+      const descontos = valid.reduce((t, o) => t + Number(o.discount_amount || 0), 0);
       return `
     <div class="admin-card">
       <div class="admin-topbar" style="margin-bottom:8px">
         <h2 style="margin:0">${key === "sem-data" ? "Sem data" : monthGroupLabel(key)}</h2>
-        <span class="hint" style="margin:0">${valid.length} pedido(s) | total das vendas: <strong style="color:#2E7D46">${fmt(tot)}</strong> | total de frete: <strong>${fmt(frete)}</strong> | total: <strong style="color:#2E7D46">${fmt(tot + frete)}</strong></span>
+        <span class="hint" style="margin:0">${valid.length} pedido(s) | total das vendas: <strong style="color:#2E7D46">${fmt(tot)}</strong> | total de frete: <strong>${fmt(frete)}</strong>${descontos > 0 ? ` | descontos concedidos (já abatidos): <strong>${fmt(descontos)}</strong>` : ""} | total: <strong style="color:#2E7D46">${fmt(tot + frete)}</strong></span>
       </div>
         <table>
           <thead><tr><th>Data</th><th>Nº</th><th>Cliente</th><th>Tipo</th><th>Origem</th><th>Total</th><th>Pagamento</th><th>Status</th><th></th></tr></thead>
@@ -444,12 +445,12 @@ function renderOrdersTable(main) {
                   ${o.customer_name}<br><small style="color:var(--muted)">${o.customer_phone}</small>
                   ${(o.order_type || "encomenda") === "encomenda" && o.event_date ? `<br><small style="color:var(--pink)">Evento: ${new Date(o.event_date + "T00:00:00").toLocaleDateString("pt-BR")}</small>` : ""}
                   ${o.coupon_code ? `<br><small style="color:#1F8A4C">Cupom ${o.coupon_code}: -${fmt(Number(o.discount_amount || 0))}</small>` : ""}
-                  ${Number(o.delivery_fee) > 0 ? `<br><small style="color:var(--muted)">Entrega (estimada): ${fmt(Number(o.delivery_fee))}</small>` : ""}
+                  ${Number(o.delivery_fee) > 0 ? `<br><small style="color:var(--muted)">Frete: ${fmt(Number(o.delivery_fee))}</small>` : ""}
                   ${(o.order_type === "delivery" && Array.isArray(o.items)) ? `<br><small style="color:var(--muted)">${o.items.map(i => `${i.quantity}x ${i.product_name}`).join(", ")}</small>` : ""}
                 </td>
                 <td><span class="badge-status ${(o.order_type || "encomenda") === "delivery" ? "production" : "confirmed"}">${(o.order_type || "encomenda") === "delivery" ? "Delivery" : "Encomenda"}</span></td>
                 <td><span class="badge-status ${o.origin === "manual" ? "pending" : "confirmed"}">${o.origin === "manual" ? "Manual" : "Site"}</span></td>
-                <td>${fmt(o.total)}</td>
+                <td>${fmt(Number(o.total || 0) + Number(o.delivery_fee || 0))}${Number(o.delivery_fee) > 0 || Number(o.discount_amount) > 0 ? `<br><small style="color:var(--muted)">vendas ${fmt(o.total)}${Number(o.delivery_fee) > 0 ? ` + frete ${fmt(o.delivery_fee)}` : ""}</small>` : ""}${o.subtotal == null && Number(o.adjustment_amount) !== 0 ? `<br><small style="color:#B77B00">⚠ conferir ajuste antigo</small>` : ""}</td>
                 <td>${paymentSummary(o)}</td>
                 <td>
                   <select onchange="updateOrderStatus('${o.id}', this.value)">
@@ -525,13 +526,27 @@ const PAYMENT_OPTIONS = ["Pix", "Cartão", "Dinheiro", "Outro", "Pendente"];
 // parte ainda não paga do pedido (pagamento marcado como "Pendente")
 function pendingAmount(o) {
   let t = 0;
-  if (o.payment_method_1 === "Pendente") t += Number(o.payment_amount_1) || Number(o.total) || 0;
+  if (o.payment_method_1 === "Pendente") t += Number(o.payment_amount_1) || (Number(o.total) + Number(o.delivery_fee || 0)) || 0;
   if (o.payment_method_2 === "Pendente") t += Number(o.payment_amount_2) || 0;
   return t;
 }
 
+/* valores do pedido para o formulário: produtos, frete e desconto separados */
+function orderMoneyParts(o) {
+  const adj = Number(o.adjustment_amount || 0);
+  const legacy = !!o.id && o.subtotal == null && adj !== 0;
+  let base = 0, desconto = Number(o.discount_amount || 0), frete = Number(o.delivery_fee || 0);
+  if (o.id) {
+    if (o.subtotal != null) base = Number(o.subtotal);
+    else { base = Number(o.total || 0) - adj; if (adj < 0) desconto += -adj; }
+  }
+  if (legacy && adj > 0) base = Number(o.total || 0); // ajuste positivo antigo: não classifica sozinho
+  return { base: Number(base.toFixed(2)), desconto, frete, legacyWarn: legacy && adj > 0 && !frete && !desconto, legacyAdj: adj };
+}
+
 function orderFormFields(o) {
   o = o || {};
+  const ob = orderMoneyParts(o);
   return `
     <div class="form-grid">
       <label>Cliente<input type="text" id="ofName" value="${o.customer_name || ""}"></label>
@@ -546,12 +561,13 @@ function orderFormFields(o) {
       <label id="ofEventWrap">Data do evento (encomenda)<input type="date" id="ofEventDate" value="${o.event_date || ""}"></label>
       <label id="ofProductWrap">Produto / descrição<input type="text" id="ofProduct" value="${o.product_desc || (o.items && o.items[0] ? o.items[0].product_name : "") || ""}" placeholder="Ex: 2 caixas de brigadeiro"></label>
       <div id="ofDeliveryWrap" class="span-2" style="display:none"></div>
-      <input type="hidden" id="ofBaseTotal" value="${o.total || 0}">
-      <label>Valor total do pedido (R$)<input type="number" step="0.01" id="ofTotal" value="${o.total || ""}" oninput="document.getElementById('ofBaseTotal').value = (Number(this.value)||0) - (Number(document.getElementById('ofAdjustment').value)||0)"></label>
-      <label>Ajuste (frete/desconto) R$ <small style="font-weight:400">— positivo soma, negativo desconta</small>
-        <input type="number" step="0.01" id="ofAdjustment" value="${o.adjustment_amount || ""}" placeholder="Ex: 10 ou -15" oninput="recalcOrderTotal()">
-      </label>
-      <label class="span-2">Observação do ajuste (opcional)<input type="text" id="ofAdjustmentNote" value="${o.adjustment_note || ""}" placeholder="Ex: Frete combinado por fora"></label>
+      <label>Valor dos produtos (R$)<input type="number" step="0.01" min="0" id="ofBaseTotal" value="${ob.base || ""}" placeholder="0,00" oninput="recalcOrderTotal()"></label>
+      <label>Frete (R$)<input type="number" step="0.01" min="0" id="ofFrete" value="${ob.frete || ""}" placeholder="0,00" oninput="recalcOrderTotal()"></label>
+      <label>Desconto sobre os produtos (R$)<input type="number" step="0.01" min="0" id="ofDesconto" value="${ob.desconto || ""}" placeholder="0,00" oninput="recalcOrderTotal()"></label>
+      <label>Observação do frete/desconto (opcional)<input type="text" id="ofAdjustmentNote" value="${o.adjustment_note || ""}" placeholder="Ex: Frete combinado por fora"></label>
+      ${ob.legacyWarn ? `<p class="hint span-2" style="color:#B77B00">⚠️ Este pedido tem um ajuste antigo de ${fmt(ob.legacyAdj)} (campo “ajuste frete/desconto” que não existe mais) e o valor foi mantido nos produtos. Confira: se foi frete, informe no campo Frete e reduza o valor dos produtos em ${fmt(ob.legacyAdj)}; se foi desconto, o valor dos produtos deve ser o preço cheio.</p>` : ""}
+      <div class="span-2" id="ofSummary"></div>
+      <input type="hidden" id="ofTotal" value="">
       <label>Status
         <select id="ofStatus">
           ${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}" ${o.status === k ? "selected" : ""}>${v}</option>`).join("")}
@@ -585,6 +601,7 @@ function deliveryStockMap() {
 
 function onOrderTypeChange(existing) {
   const isDel = document.getElementById("ofOrderType").value === "delivery";
+  document.getElementById("ofBaseTotal").readOnly = isDel; // delivery: valor vem dos produtos escolhidos
   document.getElementById("ofEventWrap").style.display = isDel ? "none" : "";
   document.getElementById("ofProductWrap").style.display = isDel ? "none" : "";
   const box = document.getElementById("ofDeliveryWrap");
@@ -634,20 +651,34 @@ function collectDeliveryItems() {
 function recalcDeliveryTotal() {
   const sum = collectDeliveryItems().reduce((t, i) => t + i.subtotal, 0);
   const base = document.getElementById("ofBaseTotal");
-  if (base) base.value = sum;
-  const adj = Number(document.getElementById("ofAdjustment").value) || 0;
-  document.getElementById("ofTotal").value = (sum + adj).toFixed(2);
+  if (base) base.value = sum ? sum.toFixed(2) : "";
+  recalcOrderTotal();
+}
+
+// Total de vendas = produtos − desconto; Total do pedido = vendas + frete (frete nunca entra nas vendas)
+function orderTotalsFromForm() {
+  const n = id => { const el = document.getElementById(id); return Math.max(Number(el && el.value) || 0, 0); };
+  const base = n("ofBaseTotal"), frete = n("ofFrete");
+  const desconto = Math.min(n("ofDesconto"), base);
+  const vendas = Number((base - desconto).toFixed(2));
+  return { base, desconto, frete, vendas, grand: Number((vendas + frete).toFixed(2)) };
+}
+function recalcOrderTotal() {
+  const t = orderTotalsFromForm();
+  const tot = document.getElementById("ofTotal"); if (tot) tot.value = t.grand.toFixed(2);
+  const box = document.getElementById("ofSummary");
+  if (box) box.innerHTML = `<div class="callout" style="margin:0">
+    Produtos: <strong>${fmt(t.base)}</strong><br>
+    Desconto: <strong>− ${fmt(t.desconto)}</strong><br>
+    Total de vendas: <strong>${fmt(t.vendas)}</strong><br>
+    Total de frete: <strong>${fmt(t.frete)}</strong><br>
+    <span style="font-size:15px">Total do pedido: <strong style="color:var(--pink)">${fmt(t.grand)}</strong></span></div>`;
   checkPaymentSum();
 }
 
-function recalcOrderTotal() {
-  const base = Number(document.getElementById("ofBaseTotal").value) || 0;
-  const adj = Number(document.getElementById("ofAdjustment").value) || 0;
-  document.getElementById("ofTotal").value = (base + adj).toFixed(2);
-}
-
 function checkPaymentSum() {
-  const total = Number(document.getElementById("ofTotal").value) || 0;
+  const totalEl = document.getElementById("ofTotal"); if (!totalEl) return;
+  const total = Number(totalEl.value) || 0;
   const p1 = Number(document.getElementById("ofPay1Amount").value) || 0;
   const p2 = Number(document.getElementById("ofPay2Amount").value) || 0;
   const hint = document.getElementById("ofPaySumHint");
@@ -671,16 +702,18 @@ function openManualOrderForm() {
       </div>
     </div>
   `;
-  ["ofTotal", "ofPay1Amount", "ofPay2Amount"].forEach(id => document.getElementById(id).addEventListener("input", checkPaymentSum));
+  ["ofPay1Amount", "ofPay2Amount"].forEach(id => document.getElementById(id).addEventListener("input", checkPaymentSum));
   onOrderTypeChange();
+  recalcOrderTotal();
 }
 
 async function saveManualOrder() {
   const name = document.getElementById("ofName").value.trim();
   const phone = document.getElementById("ofPhone").value.trim();
   const product = document.getElementById("ofProduct").value.trim();
-  const total = Number(document.getElementById("ofTotal").value);
-  if (!name || !phone || !total) { alert("Preencha ao menos cliente, telefone e valor total."); return; }
+  const mt = orderTotalsFromForm();
+  if (!name || !phone || !(mt.base > 0)) { alert("Preencha ao menos cliente, telefone e o valor dos produtos."); return; }
+  if (Number(document.getElementById("ofDesconto").value) > mt.base) { alert("O desconto não pode ser maior que o valor dos produtos."); return; }
   const isDelivery = document.getElementById("ofOrderType").value === "delivery";
   const dItems = isDelivery ? collectDeliveryItems() : [];
   if (isDelivery && !dItems.length) { alert("Adicione ao menos um produto do delivery."); return; }
@@ -692,9 +725,10 @@ async function saveManualOrder() {
     customer_phone: phone,
     order_type: document.getElementById("ofOrderType").value,
     event_date: document.getElementById("ofEventDate").value || null,
-    items: isDelivery ? dItems : [{ product_name: product || "Pedido manual", category: "manual", quantity: 1, unit_price: total, subtotal: total }],
-    total,
-    adjustment_amount: Number(document.getElementById("ofAdjustment").value) || 0,
+    items: isDelivery ? dItems : [{ product_name: product || "Pedido manual", category: "manual", quantity: 1, unit_price: mt.base, subtotal: mt.base }],
+    subtotal: mt.base, discount_amount: mt.desconto, delivery_fee: mt.frete,
+    total: mt.vendas, // total de vendas (produtos − desconto), sem frete
+    adjustment_amount: 0,
     adjustment_note: document.getElementById("ofAdjustmentNote").value.trim() || null,
     status: document.getElementById("ofStatus").value,
     payment_method_1: document.getElementById("ofPay1").value || null,
@@ -727,19 +761,26 @@ function openOrderEditForm(id) {
       </div>
     </div>
   `;
-  ["ofTotal", "ofPay1Amount", "ofPay2Amount"].forEach(idAttr => document.getElementById(idAttr).addEventListener("input", checkPaymentSum));
+  ["ofPay1Amount", "ofPay2Amount"].forEach(idAttr => document.getElementById(idAttr).addEventListener("input", checkPaymentSum));
   onOrderTypeChange(o);
+  recalcOrderTotal();
 }
 
 async function saveOrderEdit(id) {
+  const mt = orderTotalsFromForm();
+  const old = admin.data.orders.find(x => x.id === id) || {};
+  if (Number(document.getElementById("ofDesconto").value) > mt.base) { alert("O desconto não pode ser maior que o valor dos produtos."); return; }
+  const ob = orderMoneyParts(old);
+  if (ob.legacyWarn && !mt.frete && !mt.desconto && !confirm(`Este pedido tinha um ajuste antigo de ${fmt(ob.legacyAdj)}. Salvar sem informar frete nem desconto mantém o valor atual dos produtos (${fmt(mt.base)}). Continuar?`)) return;
   const payload = {
     customer_name: document.getElementById("ofName").value.trim(),
     customer_phone: document.getElementById("ofPhone").value.trim(),
     order_type: document.getElementById("ofOrderType").value,
     order_date: document.getElementById("ofOrderDate").value || null,
     event_date: document.getElementById("ofEventDate").value || null,
-    total: Number(document.getElementById("ofTotal").value),
-    adjustment_amount: Number(document.getElementById("ofAdjustment").value) || 0,
+    subtotal: mt.base, discount_amount: mt.desconto, delivery_fee: mt.frete,
+    total: mt.vendas, // total de vendas (produtos − desconto), sem frete
+    adjustment_amount: 0,
     adjustment_note: document.getElementById("ofAdjustmentNote").value.trim() || null,
     status: document.getElementById("ofStatus").value,
     payment_method_1: document.getElementById("ofPay1").value || null,
@@ -1678,6 +1719,19 @@ async function loadFinanceiro(main) {
   admin.data.cardPurchases = admin.data.cardsOk ? (pu.data || []) : [];
   admin.data.cardInst = admin.data.cardsOk ? (ins.data || []) : [];
   admin.data.cardPaid = admin.data.cardsOk ? (pay.data || []) : [];
+  // identificação dos pedidos (número + cliente) e valor de venda do estoque restante
+  const [ord, dp, db, ds] = await Promise.all([
+    sb.from("orders").select("id,order_number,customer_name"),
+    sb.from("products").select("id,price,active").eq("category", "delivery"),
+    sb.from("delivery_stock_batches").select("product_id,quantity"),
+    sb.from("delivery_sales").select("product_id,quantity,reversed"),
+  ]);
+  admin.data.finOrders = {}; (ord.data || []).forEach(o => { admin.data.finOrders[o.id] = o; });
+  const lv = {};
+  (db.data || []).forEach(x => { lv[x.product_id] = (lv[x.product_id] || 0) + Number(x.quantity); });
+  (ds.data || []).forEach(x => { if (!x.reversed) lv[x.product_id] = (lv[x.product_id] || 0) - Number(x.quantity); });
+  admin.data.finStockValue = (dp.data || []).filter(p => p.active).reduce((t, p) => t + Math.max(lv[p.id] || 0, 0) * Number(p.price || 0), 0);
+  admin.data.finStockUnits = (dp.data || []).filter(p => p.active).reduce((t, p) => t + Math.max(lv[p.id] || 0, 0), 0);
   if (!admin.data.finMonth) admin.data.finMonth = new Date().toISOString().slice(0, 7);
   renderFinanceiro(main);
 }
@@ -1701,6 +1755,10 @@ function groupByMonth(list, dateField) {
 
 
 /* ---- helpers de mês / cartão ---- */
+// padrão de identificação: número do pedido na 1ª linha, nome do cliente abaixo
+function orderIdentHtml(orderNumber, customerName) {
+  return `<strong>Pedido ${escapeHtml(String(orderNumber || ""))}</strong>${customerName ? `<br><span style="color:var(--muted)">${escapeHtml(customerName)}</span>` : ""}`;
+}
 function monthIndex(key) { const [y, m] = key.split("-").map(Number); return y * 12 + (m - 1); }
 function monthFromIndex(i) { return `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`; }
 function shiftMonth(key, n) { return monthFromIndex(monthIndex(key) + n); }
@@ -1788,6 +1846,8 @@ function renderFinanceiro(main) {
       <div class="stat-card"><div class="label">Resultado de ${lbl}</div><div class="value" style="color:${resultado < 0 ? "#B23434" : "#2E7D46"}">${fmt(resultado)}</div></div>
       <div class="stat-card"><div class="label">Lucro de ${lbl} (% sobre as entradas)</div><div class="value" style="color:${totalIn > 0 ? (resultado < 0 ? "#B23434" : "#2E7D46") : "var(--muted)"}">${totalIn > 0 ? fmtPct((resultado / totalIn) * 100) : "N/D"}</div>
         <div class="hint" style="margin:4px 0 0">${totalIn > 0 ? (resultado < 0 ? "prejuízo no mês" : "resultado ÷ entradas × 100") : "sem entradas no mês"}</div></div>
+      <div class="stat-card"><div class="label">Resultado projetado</div><div class="value" style="color:${resultado + admin.data.finStockValue < 0 ? "#B23434" : "#2E7D46"}">${fmt(resultado + admin.data.finStockValue)}</div>
+        <div class="hint" style="margin:4px 0 0">Resultado de ${lbl} (${fmt(resultado)}) + estoque restante vendido (${admin.data.finStockUnits} un. = ${fmt(admin.data.finStockValue)})</div></div>
       ${CARD_NAMES.map(stmtCard).join("")}
     </div>
     <p class="hint">As despesas do mês já incluem as parcelas de cartão que vencem neste mês. Pagar a fatura apenas marca como paga — não soma de novo.</p>
@@ -1799,13 +1859,15 @@ function renderFinanceiro(main) {
     <div class="admin-card">
       <h2>Resumo anual — ${year}</h2>
       <table>
-        <thead><tr><th>Mês</th><th>Entradas</th><th>Saídas</th><th>Resultado</th></tr></thead>
+        <thead><tr><th>Mês</th><th>Entradas</th><th>Saídas</th><th>Resultado</th><th>Lucro (%)</th></tr></thead>
         <tbody>
           ${annual.map(m => `<tr style="${m.k === key ? "background:#FDEEF3;cursor:pointer" : "cursor:pointer"}" onclick="setFinMonth('${m.k}')">
             <td>${m.name}</td><td style="color:#2E7D46">${fmt(m.inn)}</td><td style="color:#B23434">${fmt(m.out)}</td>
-            <td><strong style="color:${m.res < 0 ? "#B23434" : "#2E7D46"}">${fmt(m.res)}</strong></td></tr>`).join("")}
+            <td><strong style="color:${m.res < 0 ? "#B23434" : "#2E7D46"}">${fmt(m.res)}</strong></td>
+            <td>${m.inn > 0 ? `<strong style="color:${m.res < 0 ? "#B23434" : "#2E7D46"}">${fmtPct((m.res / m.inn) * 100)}</strong>` : `<span style="color:var(--muted)">N/D</span>`}</td></tr>`).join("")}
           <tr style="font-weight:800;border-top:2px solid var(--border)"><td>Total anual</td><td style="color:#2E7D46">${fmt(sum.inn)}</td><td style="color:#B23434">${fmt(sum.out)}</td>
-            <td style="color:${sum.inn - sum.out < 0 ? "#B23434" : "#2E7D46"}">${fmt(sum.inn - sum.out)}</td></tr>
+            <td style="color:${sum.inn - sum.out < 0 ? "#B23434" : "#2E7D46"}">${fmt(sum.inn - sum.out)}</td>
+            <td>${sum.inn > 0 ? `<span style="color:${sum.inn - sum.out < 0 ? "#B23434" : "#2E7D46"}">${fmtPct(((sum.inn - sum.out) / sum.inn) * 100)}</span>` : `<span style="color:var(--muted)">N/D</span>`}</td></tr>
         </tbody>
       </table>
       <p class="hint" style="margin-top:8px">Clique em um mês para abrir o painel dele.</p>
@@ -1826,7 +1888,7 @@ function renderFinanceiro(main) {
             ${revenueM.map(r => `
               <tr>
                 <td>${new Date(r.entry_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
-                <td>${r.description}</td>
+                <td>${r.order_id && admin.data.finOrders[r.order_id] ? orderIdentHtml(admin.data.finOrders[r.order_id].order_number, admin.data.finOrders[r.order_id].customer_name) : r.description}</td>
                 <td><span class="badge-status ${r.source === "site" ? "confirmed" : "pending"}">${r.source === "site" ? "Automático (site)" : "Manual"}</span></td>
                 <td><strong style="color:#2E7D46">${fmt(r.amount)}</strong></td>
                 <td><button class="btn btn-outline btn-sm" onclick="deleteRevenueEntry('${r.id}')">Excluir</button></td>
@@ -2376,7 +2438,15 @@ function renderResultados(main) {
 
 /* ---------------- ESTOQUE DE PRODUTOS (delivery, movido por vendas) ---------------- */
 
+function spToday() { return new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }); }
 async function loadEstoqueProdutos(main) {
+  // vira o mês: transfere automaticamente as sobras do(s) mês(es) anterior(es) — uma única vez por período
+  const ro = await sb.rpc("rollover_delivery_stock");
+  admin.data.rolloverOk = !ro.error;
+  admin.data.rolloverCount = ro.error ? 0 : Number(ro.data || 0);
+  const tr = await sb.from("delivery_stock_transfers").select("*").order("transferred_at", { ascending: false });
+  admin.data.dTransfers = tr.error ? [] : (tr.data || []);
+  if (!admin.data.stockMonth) admin.data.stockMonth = spToday().slice(0, 7);
   const [pr, ba, sa, st, cu] = await Promise.all([
     sb.from("products").select("*").eq("category", "delivery").order("sort_order").order("name"),
     sb.from("delivery_stock_batches").select("*").order("produced_at", { ascending: false }),
@@ -2407,11 +2477,46 @@ function deliveryStockRows() {
   });
 }
 
+/* Estoque por mês: saldo anterior (transferido) + produzido − vendido (líquido de estornos) − transferido = saldo do mês */
+function stockMonthRows(key) {
+  const inM = d => String(d || "").slice(0, 7) === key;
+  const spDate = ts => ts ? new Date(ts).toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }) : "";
+  return admin.data.dProducts.map(p => {
+    const tIn = admin.data.dTransfers.filter(t => t.product_id === p.id && inM(t.to_month)).reduce((t, x) => t + Number(x.quantity), 0);
+    const tOut = admin.data.dTransfers.filter(t => t.product_id === p.id && inM(t.from_month)).reduce((t, x) => t + Number(x.quantity), 0);
+    const produced = admin.data.dBatches.filter(b => b.product_id === p.id && inM(b.produced_at)).reduce((t, b) => t + Number(b.quantity), 0);
+    const sales = admin.data.dSales.filter(x => x.product_id === p.id);
+    const sold = sales.filter(x => inM(x.sold_at)).reduce((t, x) => t + Number(x.quantity), 0);
+    const estornos = sales.filter(x => x.reversed && inM(spDate(x.reversed_at) || x.sold_at)).reduce((t, x) => t + Number(x.quantity), 0);
+    const invoiced = sales.filter(x => !x.reversed && inM(x.sold_at)).reduce((t, x) => t + Number(x.quantity) * Number(x.unit_price), 0);
+    const stock = tIn + produced - sold + estornos - tOut;
+    return { p, opening: tIn, produced, sold: sold - estornos, out: tOut, stock, invoiced, potential: Math.max(stock, 0) * Number(p.price) };
+  });
+}
+function setStockMonth(key) { if (key) { admin.data.stockMonth = key; renderEstoqueProdutos(document.getElementById("adminMain")); } }
+function setStockYearMonth() { setStockMonth(`${document.getElementById("skYear").value}-${document.getElementById("skMon").value}`); }
+function renderStockTransfers(key) {
+  const list = admin.data.dTransfers.filter(t => String(t.to_month).slice(0, 7) === key || String(t.from_month).slice(0, 7) === key);
+  const nameOf = id => (admin.data.dProducts.find(p => p.id === id) || {}).name || "—";
+  const mlabel = d => monthGroupLabel(String(d).slice(0, 7));
+  return `<div class="admin-card"><h2>Transferências de saldo — ${monthGroupLabel(key)}</h2>
+    ${!admin.data.rolloverOk ? `<div class="error-box">Para a transferência automática entre meses, rode o script <strong>add_melhorias_v3.sql</strong> no Supabase.</div>` : ""}
+    ${admin.data.rolloverCount > 0 ? `<p class="hint" style="color:#2E7D46"><strong>${admin.data.rolloverCount} saldo(s) foram transferidos automaticamente agora (virada de mês).</strong></p>` : ""}
+    ${list.length ? `<table><thead><tr><th>Produto</th><th>Quantidade</th><th>Mês de origem</th><th>Mês de destino</th><th>Data da transferência</th></tr></thead><tbody>
+      ${list.map(t => `<tr><td>${nameOf(t.product_id)}</td><td><strong>${t.quantity}</strong></td><td>${mlabel(t.from_month)}</td><td>${mlabel(t.to_month)}</td><td>${new Date(t.transferred_at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}</td></tr>`).join("")}
+    </tbody></table>` : `<p class="hint">Nenhuma transferência envolvendo ${monthGroupLabel(key)}.</p>`}
+    <p class="hint" style="margin-top:8px">Ao virar o mês, as sobras passam para o mês novo e o saldo do mês anterior fica zerado. O histórico de vendas e levas não é alterado.</p></div>`;
+}
+
 function renderEstoqueProdutos(main) {
-  const rows = deliveryStockRows();
+  const skey = admin.data.stockMonth;
+  const rows = stockMonthRows(skey);
   const totInv = rows.reduce((t, r) => t + r.invoiced, 0);
   const totPot = rows.reduce((t, r) => t + r.potential, 0);
-  const recent = admin.data.dSales.slice(0, 15);
+  const recent = admin.data.dSales.filter(x => String(x.sold_at || "").slice(0, 7) === skey);
+  const monthBatches = admin.data.dBatches.filter(b => String(b.produced_at || "").slice(0, 7) === skey);
+  const [sy, sm] = skey.split("-");
+  const sNow = new Date().getFullYear(); const sYears = []; for (let y = Math.min(sNow - 2, Number(sy)); y <= Math.max(sNow + 1, Number(sy)); y++) sYears.push(y);
   const nameOf = id => (admin.data.dProducts.find(p => p.id === id) || {}).name || "—";
   main.innerHTML = `
     <div class="admin-topbar"><h1>Estoque de Produtos</h1>
@@ -2424,34 +2529,43 @@ function renderEstoqueProdutos(main) {
     <div id="notifyArea">${admin.data.showNotify ? renderNotifyPanel() : ""}</div>
     <p class="hint">Produtos cadastrados em Produtos → Delivery. Toda venda dá baixa no estoque: pedidos do site e vendas feitas por fora (use <strong>Dar baixa rápida</strong>) — cancelar ou excluir o pedido devolve o produto.</p>
     <div id="stockFormArea"></div>
+    <div class="admin-card" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-outline btn-sm" onclick="setStockMonth(shiftMonth('${skey}', -1))">‹</button>
+      <select id="skMon" onchange="setStockYearMonth()">${MONTH_NAMES_CAL.map((n, i) => `<option value="${String(i + 1).padStart(2, "0")}" ${String(i + 1).padStart(2, "0") === sm ? "selected" : ""}>${n}</option>`).join("")}</select>
+      <select id="skYear" onchange="setStockYearMonth()">${sYears.map(y => `<option ${y === Number(sy) ? "selected" : ""}>${y}</option>`).join("")}</select>
+      <button class="btn btn-outline btn-sm" onclick="setStockMonth(shiftMonth('${skey}', 1))">›</button>
+      <button class="btn btn-outline btn-sm" onclick="setStockMonth(spToday().slice(0,7))">Mês atual</button>
+      <strong style="margin-left:6px">Estoque de ${monthGroupLabel(skey)}</strong>
+    </div>
     <div class="admin-card">
       <p class="hint" style="margin:0">Faturado: <strong style="color:#2E7D46">${fmt(totInv)}</strong> · Ainda a faturar (estoque × preço): <strong>${fmt(totPot)}</strong></p>
     </div>
     <div class="admin-card">
       ${rows.length ? `<table>
-        <thead><tr><th>Produto</th><th>Produzido</th><th>Vendido</th><th>Estoque</th><th>Preço</th><th>Faturado</th><th>A faturar</th></tr></thead>
+        <thead><tr><th>Produto</th><th>Saldo anterior</th><th>Produzido</th><th>Vendido</th><th>Transferido</th><th>Estoque</th><th>Preço</th><th>Faturado</th><th>A faturar</th></tr></thead>
         <tbody>${rows.map(r => `<tr>
-          <td><strong>${r.p.name}</strong></td><td>${r.produced}</td><td>${r.sold}</td>
+          <td><strong>${r.p.name}</strong></td><td>${r.opening}</td><td>${r.produced}</td><td>${r.sold}</td><td>${r.out ? `−${r.out}` : 0}</td>
           <td style="color:${r.stock <= 0 ? "#B23434" : "var(--ink)"}"><strong>${r.stock}</strong></td>
           <td>${fmt(r.p.price)}</td><td style="color:#2E7D46">${fmt(r.invoiced)}</td><td>${fmt(r.potential)}</td></tr>`).join("")}
         </tbody></table>` : `<p class="center-msg">Cadastre primeiro os produtos na aba Produtos → Delivery.</p>`}
     </div>
+    ${renderStockTransfers(skey)}
     <div class="admin-card">
-      <h2>Últimas movimentações</h2>
+      <h2>Movimentações — ${monthGroupLabel(skey)}</h2>
       ${recent.length ? `<table><thead><tr><th>Data</th><th>Produto</th><th>Qtd</th><th>Valor</th><th>Origem</th><th></th></tr></thead><tbody>
         ${recent.map(x => `<tr style="${x.reversed ? "background:#FDECEC;color:#8A3A3A" : ""}"><td>${new Date(x.sold_at + "T00:00:00").toLocaleDateString("pt-BR")}</td><td>${nameOf(x.product_id)}</td>
           <td>${x.reversed ? `+${x.quantity} <small>(voltou ao estoque)</small>` : x.quantity}</td>
           <td>${x.reversed ? `<s>${fmt(Number(x.quantity) * Number(x.unit_price))}</s>` : fmt(Number(x.quantity) * Number(x.unit_price))}</td>
-          <td>${x.orders ? `Pedido ${x.orders.order_number}` : "Venda avulsa (antiga)"}${x.reversed ? ` <span class="badge cancelled">ESTORNO · Cancelado</span>` : ""}</td>
+          <td>${x.orders ? orderIdentHtml(x.orders.order_number, x.orders.customer_name) : "Venda avulsa (antiga)"}${x.reversed ? ` <span class="badge cancelled">ESTORNO · Cancelado</span>` : ""}</td>
           <td>${!x.order_id ? `<button class="btn btn-outline btn-sm" onclick="deleteStockSale('${x.id}')">Excluir</button>` : ""}</td></tr>`).join("")}
-      </tbody></table>` : `<p class="center-msg">Nenhuma venda ainda.</p>`}
+      </tbody></table>` : `<p class="center-msg">Nenhuma venda em ${monthGroupLabel(skey)}.</p>`}
     </div>
     <div class="admin-card">
-      <h2>Levas produzidas</h2>
-      ${admin.data.dBatches.length ? `<table><thead><tr><th>Data</th><th>Produto</th><th>Qtd</th><th>Valor un.</th><th></th></tr></thead><tbody>
-        ${admin.data.dBatches.map(b => `<tr><td>${new Date(b.produced_at + "T00:00:00").toLocaleDateString("pt-BR")}</td><td>${nameOf(b.product_id)}</td><td>${b.quantity}</td><td>${fmt(b.unit_price)}</td>
+      <h2>Levas produzidas — ${monthGroupLabel(skey)}</h2>
+      ${monthBatches.length ? `<table><thead><tr><th>Data</th><th>Produto</th><th>Qtd</th><th>Valor un.</th><th></th></tr></thead><tbody>
+        ${monthBatches.map(b => `<tr><td>${new Date(b.produced_at + "T00:00:00").toLocaleDateString("pt-BR")}</td><td>${nameOf(b.product_id)}</td><td>${b.quantity}</td><td>${fmt(b.unit_price)}</td>
           <td style="display:flex;gap:6px"><button class="btn btn-outline btn-sm" onclick="openStockBatchForm('${b.id}');window.scrollTo(0,0)">Editar</button><button class="btn btn-danger btn-sm" onclick="deleteStockBatch('${b.id}')">Excluir</button></td></tr>`).join("")}
-      </tbody></table>` : `<p class="center-msg">Nenhuma leva registrada.</p>`}
+      </tbody></table>` : `<p class="center-msg">Nenhuma leva em ${monthGroupLabel(skey)}.</p>`}
     </div>
   `;
 }
@@ -4453,21 +4567,28 @@ async function uploadGalleryPhotos(input) {
   const files = [...input.files]; if (!files.length) return;
   const st = document.getElementById("gallery-st");
   let next = admin.data.gallery.reduce((m, x) => Math.max(m, x.sort_order || 0), 0);
-  let ok = 0;
-  try {
-    for (const file of files) {
-      st.textContent = `Enviando ${ok + 1} de ${files.length}...`;
-      const compressed = await compressImage(file, 1600, 0.85);
-      const fileName = `gallery/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.jpg`;
-      const up = await sb.storage.from("photos").upload(fileName, compressed, { contentType: "image/jpeg" });
+  let ok = 0; const failed = [];
+  // cada foto é independente: se uma falhar (ex.: formato que o navegador não converte), as outras continuam
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    st.textContent = `Enviando ${i + 1} de ${files.length}...`;
+    try {
+      let blob, ext = "jpg", type = "image/jpeg";
+      try { blob = await compressImage(file, 1600, 0.85); }
+      catch (e) { // não conseguiu redimensionar: envia o arquivo original
+        blob = file; type = file.type || "image/jpeg"; ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+      }
+      const fileName = `gallery/${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const up = await sb.storage.from("photos").upload(fileName, blob, { contentType: type });
       if (up.error) throw up.error;
       const url = sb.storage.from("photos").getPublicUrl(fileName).data.publicUrl;
       const ins = await sb.from("gallery_photos").insert({ image_url: url, sort_order: ++next, visible: true });
       if (ins.error) throw ins.error;
       ok++;
-    }
-  } catch (e) { console.error(e); alert("Não foi possível enviar todas as fotos: " + (e.message || "tente novamente.") + (ok ? ` (${ok} enviadas)` : "")); }
+    } catch (e) { console.error(e); failed.push(`${file.name}: ${(e && e.message) || "falhou"}`); }
+  }
   input.value = "";
+  if (failed.length) alert(`${ok} de ${files.length} foto(s) enviada(s).\n\nNão enviadas:\n- ${failed.join("\n- ")}`);
   await loadProducts(document.getElementById("adminMain"));
 }
 async function moveGalleryPhoto(id, dir) {

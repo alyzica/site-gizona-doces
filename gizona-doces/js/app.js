@@ -4,6 +4,10 @@
 ============================================================ */
 const WHATSAPP_NUMBER = "5519997489773";
 const INSTAGRAM_URL = "https://www.instagram.com/gizonadoces/"; // confirme o @ do Instagram
+/* FRETE NO SITE: false = o cliente NÃO vê valor de entrega (só o aviso abaixo).
+   Para reativar o cálculo/exibição, troque para true — nada foi removido. */
+const SHOW_SHIPPING = false;
+const SHIPPING_NOTICE = "A entrega é realizada por motoboys parceiros. O valor será calculado de acordo com o endereço informado e confirmado pelo WhatsApp.";
 const ADDRESS = "Rua das Oliveiras, 74 – Vale das Nogueiras, Americana/SP";
 
 const state = {
@@ -635,7 +639,7 @@ async function setOrderTab(tab) {
 async function loadGallery() {
   if (!sb) return;
   try {
-    const { data, error } = await sb.from("gallery_photos").select("id, image_url, caption").eq("visible", true).order("sort_order").order("created_at");
+    const { data, error } = await sb.from("gallery_photos").select("id, image_url, caption").eq("visible", true).order("sort_order").order("created_at").range(0, 999);
     if (!error && data) state.gallery = data;
   } catch (e) { /* sem a tabela ainda: não mostra galeria */ }
 }
@@ -1169,7 +1173,7 @@ function bagMoney(b) {
   const cfg = state.shipCfg;
   const sh = state.shipping;
   let fee = null, feeFree = false, feeNote = "";
-  if (wantsShip(b)) {
+  if (SHOW_SHIPPING && wantsShip(b)) {
     if (coupon && coupon.free_shipping) { feeFree = true; fee = 0; }
     else if (cfg && cfg.free_above != null && itemsTotal - discount >= Number(cfg.free_above)) { feeFree = true; fee = 0; feeNote = "acima de " + fmt(Number(cfg.free_above)); }
     else if (sh.status === "ok") fee = sh.fee;
@@ -1190,6 +1194,8 @@ function paintBagTotals() {
   const mode = fulfillMode(b);
   if ((b.hasDel || b.hasEnc) && mode === "pickup") {
     feeRow = `<div class="sum-row"><span>Retirada</span><span><strong class="free">Grátis</strong></span></div>`;
+  } else if (wantsShip(b) && !SHOW_SHIPPING) {
+    feeRow = `<p class="sum-note">${SHIPPING_NOTICE}</p>`;
   } else if (wantsShip(b)) {
     const hasAddr = addrReady();
     let val, note;
@@ -1382,7 +1388,7 @@ function renderCart() {
         </div>
         ${fm === "pickup" ? `
           <div class="pickup-card"><strong>Retirar em</strong><span>${pickupAddress() ? escapeAttr(pickupAddress()) : "Endereço combinado pelo WhatsApp"}</span><small>Sem taxa de entrega. Avisamos pelo WhatsApp quando estiver pronto.</small></div>`
-        : (b.hasDel ? `<p class="hint" style="margin:10px 0 0">Entrega com taxa estimada pela distância até o endereço abaixo.</p>` : "")}
+        : (wantsShip(b) ? `<p class="hint" style="margin:10px 0 0">${SHOW_SHIPPING ? "Entrega com taxa estimada pela distância até o endereço abaixo." : SHIPPING_NOTICE}</p>` : "")}
       </div>
       <div class="cart-form-block">
         <p class="cart-section-title">${isGuestOrder ? "Seus dados para contato" : "Dados do pedido"}</p>
@@ -1633,6 +1639,7 @@ async function resolveOrigin(cfg) {
 let shippingToken = 0, shippingTimer = null;
 function scheduleShipping() {
   clearTimeout(shippingTimer);
+  if (!SHOW_SHIPPING) { state.shipping = { status: "idle" }; return; }
   shippingToken++;
   if (!addrReady()) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
   state.shipping = { status: "loading" };
@@ -1641,6 +1648,7 @@ function scheduleShipping() {
 }
 async function estimateShipping(force) {
   clearTimeout(shippingTimer);
+  if (!SHOW_SHIPPING) { state.shipping = { status: "idle" }; return; }
   const b = bagData();
   const address = bagAddress().trim();
   if (!wantsShip(b) || !addrReady()) { state.shipping = { status: "idle" }; paintBagTotals(); return; }
@@ -1799,8 +1807,9 @@ async function submitBag() {
   orders.forEach(o => { o.total = Number((o.subtotal - o.discount_amount).toFixed(2)); });
 
   if (coupon && m.discount > 0) msg += `Cupom ${coupon.code}: - ${fmt(m.discount)}\n`;
-  if (wantsShip(b)) msg += m.feeFree ? `Entrega: Grátis\n` : (state.shipping.status === "ok" ? `Entrega (estimativa): ${fmt(m.fee)} — pode haver reajuste\n` : `Entrega: a combinar\n`);
-  msg += `\nTotal estimado: ${fmt(m.grand)}${b.hasEnc && !b.hasDel ? "" : ""}\n\nAguardo confirmação.`;
+  if (wantsShip(b) && !SHOW_SHIPPING) msg += `Entrega: valor a confirmar pelo WhatsApp, de acordo com o endereço informado\n`;
+  else if (wantsShip(b)) msg += m.feeFree ? `Entrega: Grátis\n` : (state.shipping.status === "ok" ? `Entrega (estimativa): ${fmt(m.fee)} — pode haver reajuste\n` : `Entrega: a combinar\n`);
+  msg += `\n${SHOW_SHIPPING || !wantsShip(b) ? "Total estimado" : "Total dos produtos (entrega à parte)"}: ${fmt(m.grand)}${b.hasEnc && !b.hasDel ? "" : ""}\n\nAguardo confirmação.`;
 
   // grava os pedidos (delivery primeiro: é ele que confere o estoque)
   for (const o of orders) {
@@ -1823,7 +1832,7 @@ async function submitBag() {
         abort("Esse cupom não está mais disponível. Remova-o e envie novamente.");
         return render();
       }
-      abort("Não foi possível enviar o pedido. Tente novamente.");
+      abort("Não foi possível enviar o pedido. Tente novamente em instantes ou chame a Gizona pelo WhatsApp.");
       return;
     }
   }
