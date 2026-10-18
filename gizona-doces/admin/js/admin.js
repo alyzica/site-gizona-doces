@@ -426,17 +426,18 @@ function renderOrdersTable(main) {
       const list = [...listRaw].sort((a, b) => (pendingAmount(b) > 0 && b.status !== "cancelled" ? 1 : 0) - (pendingAmount(a) > 0 && a.status !== "cancelled" ? 1 : 0));
       const valid = list.filter(o => o.status !== "cancelled");
       const tot = valid.reduce((t, o) => t + Number(o.total || 0), 0);
+      const frete = valid.reduce((t, o) => t + Number(o.delivery_fee || 0), 0);
       return `
     <div class="admin-card">
       <div class="admin-topbar" style="margin-bottom:8px">
         <h2 style="margin:0">${key === "sem-data" ? "Sem data" : monthGroupLabel(key)}</h2>
-        <span class="hint" style="margin:0">${valid.length} pedido(s) · <strong style="color:#2E7D46">${fmt(tot)}</strong></span>
+        <span class="hint" style="margin:0">${valid.length} pedido(s) | total das vendas: <strong style="color:#2E7D46">${fmt(tot)}</strong> | total de frete: <strong>${fmt(frete)}</strong> | total: <strong style="color:#2E7D46">${fmt(tot + frete)}</strong></span>
       </div>
         <table>
           <thead><tr><th>Data</th><th>Nº</th><th>Cliente</th><th>Tipo</th><th>Origem</th><th>Total</th><th>Pagamento</th><th>Status</th><th></th></tr></thead>
           <tbody>
             ${list.map(o => `
-              <tr style="${pendingAmount(o) > 0 && o.status !== "cancelled" ? "background:#FFF6DD" : ""}">
+              <tr style="${o.status === "delivered" ? "background:#E6F6EA" : pendingAmount(o) > 0 && o.status !== "cancelled" ? "background:#FFF6DD" : ""}">
                 <td>${o.order_date_key ? new Date(o.order_date_key + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                 <td>${o.order_number}</td>
                 <td>
@@ -478,10 +479,11 @@ async function updateOrderStatus(id, status) {
   if (error) { console.error(error); alert("Não foi possível atualizar o status: " + (error.message || JSON.stringify(error))); return; }
   const o = admin.data.orders.find(o => o.id === id);
   if (o) o.status = status;
-  if (status === "delivered" && o) {
+  renderOrdersTable(document.getElementById("adminMain"));
+  if (["confirmed", "production", "delivered"].includes(status) && o) {
     await ensureRevenueForOrder(o);
   }
-  if (status === "cancelled" && o) {
+  if ((status === "cancelled" || status === "pending") && o) {
     // o gatilho do banco já remove, mas garantimos aqui também (sem risco: DELETE em linha que já não existe não dá erro)
     await sb.from("revenue_entries").delete().eq("order_id", o.id);
   }
@@ -506,7 +508,7 @@ async function ensureRevenueForOrder(order) {
     alert("O status foi salvo, mas não consegui lançar a receita automaticamente no Financeiro: " + (insertError.message || JSON.stringify(insertError)) + ". Você pode lançar manualmente por enquanto.");
     return;
   }
-  setTimeout(() => alert("Pedido marcado como entregue — a receita entrou no Financeiro."), 50);
+  setTimeout(() => alert("Pedido confirmado — a receita entrou no Financeiro."), 50);
 }
 
 async function deleteOrder(id) {
@@ -598,10 +600,10 @@ function onOrderTypeChange(existing) {
   box.innerHTML = `<p class="hint"><strong>Produtos do pedido</strong> (lista do Estoque de Produtos)</p><div id="ofLines"></div>
     <button type="button" class="btn btn-outline btn-sm" onclick="addDeliveryLine()">+ Adicionar produto</button>`;
   sb.from("delivery_stock_batches").select("product_id,quantity").then(async ({ data: b }) => {
-    const { data: sl } = await sb.from("delivery_sales").select("product_id,quantity");
+    const { data: sl } = await sb.from("delivery_sales").select("product_id,quantity,reversed");
     const lv = {};
     (b || []).forEach(x => { lv[x.product_id] = (lv[x.product_id] || 0) + Number(x.quantity); });
-    (sl || []).forEach(x => { lv[x.product_id] = (lv[x.product_id] || 0) - Number(x.quantity); });
+    (sl || []).forEach(x => { if (!x.reversed) lv[x.product_id] = (lv[x.product_id] || 0) - Number(x.quantity); });
     admin.data.dStockLevels = Object.entries(lv).map(([product_id, stock]) => ({ product_id, stock }));
     addDeliveryLine();
   });
@@ -707,7 +709,7 @@ async function saveManualOrder() {
     alert(/Estoque insuficiente/i.test(error.message || "") ? "Estoque insuficiente para um dos produtos. Registre uma nova leva no Estoque de Produtos." : "Não foi possível salvar o pedido: " + (error.message || "") + (/indispon|batch_item|request_id/i.test(error.message || "") ? "\n\nRode o script fix_delivery_venda_manual.sql no Supabase." : ""));
     return;
   }
-  if (created && payload.status === "delivered") await ensureRevenueForOrderQuiet(created);
+  if (created && ["confirmed", "production", "delivered"].includes(payload.status)) await ensureRevenueForOrderQuiet(created);
   document.getElementById("orderFormArea").innerHTML = "";
   await loadOrders(document.getElementById("adminMain"));
 }
@@ -1768,7 +1770,7 @@ function renderFinanceiro(main) {
 
   main.innerHTML = `
     <div class="admin-topbar"><h1>Financeiro</h1><div style="display:flex;gap:8px"><button class="btn btn-outline" onclick="openCardPurchaseForm()">+ Compra no cartão</button><button class="btn btn-pink" onclick="openFinanceForm()">+ Lançamento manual</button></div></div>
-    <p class="hint">Quando um pedido do site é marcado como "Entregue", a receita entra aqui sozinha — sem duplicar. Pedidos de fora do site e despesas são lançados manualmente.</p>
+    <p class="hint">Quando um pedido do site é marcado como "Confirmado", a receita entra aqui sozinha — sem duplicar. Pedidos de fora do site e despesas são lançados manualmente.</p>
     ${!admin.data.cardsOk ? `<div class="error-box">Para usar compras parceladas no cartão, rode o script <strong>add_cartoes_parcelas.sql</strong> no Supabase.</div>` : ""}
 
     <div class="admin-card" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -2396,7 +2398,7 @@ async function loadEstoqueProdutos(main) {
 function deliveryStockRows() {
   return admin.data.dProducts.map(p => {
     const bs = admin.data.dBatches.filter(b => b.product_id === p.id);
-    const ss = admin.data.dSales.filter(x => x.product_id === p.id);
+    const ss = admin.data.dSales.filter(x => x.product_id === p.id && !x.reversed);
     const produced = bs.reduce((t, b) => t + Number(b.quantity), 0);
     const sold = ss.reduce((t, x) => t + Number(x.quantity), 0);
     const invoiced = ss.reduce((t, x) => t + Number(x.quantity) * Number(x.unit_price), 0);
@@ -2437,9 +2439,10 @@ function renderEstoqueProdutos(main) {
     <div class="admin-card">
       <h2>Últimas movimentações</h2>
       ${recent.length ? `<table><thead><tr><th>Data</th><th>Produto</th><th>Qtd</th><th>Valor</th><th>Origem</th><th></th></tr></thead><tbody>
-        ${recent.map(x => `<tr><td>${new Date(x.sold_at + "T00:00:00").toLocaleDateString("pt-BR")}</td><td>${nameOf(x.product_id)}</td><td>${x.quantity}</td>
-          <td>${fmt(Number(x.quantity) * Number(x.unit_price))}</td>
-          <td>${x.orders ? `Pedido ${x.orders.order_number}` : "Venda avulsa (antiga)"}</td>
+        ${recent.map(x => `<tr style="${x.reversed ? "background:#FDECEC;color:#8A3A3A" : ""}"><td>${new Date(x.sold_at + "T00:00:00").toLocaleDateString("pt-BR")}</td><td>${nameOf(x.product_id)}</td>
+          <td>${x.reversed ? `+${x.quantity} <small>(voltou ao estoque)</small>` : x.quantity}</td>
+          <td>${x.reversed ? `<s>${fmt(Number(x.quantity) * Number(x.unit_price))}</s>` : fmt(Number(x.quantity) * Number(x.unit_price))}</td>
+          <td>${x.orders ? `Pedido ${x.orders.order_number}` : "Venda avulsa (antiga)"}${x.reversed ? ` <span class="badge cancelled">ESTORNO · Cancelado</span>` : ""}</td>
           <td>${!x.order_id ? `<button class="btn btn-outline btn-sm" onclick="deleteStockSale('${x.id}')">Excluir</button>` : ""}</td></tr>`).join("")}
       </tbody></table>` : `<p class="center-msg">Nenhuma venda ainda.</p>`}
     </div>
