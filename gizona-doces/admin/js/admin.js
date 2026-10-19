@@ -27,6 +27,7 @@ const STATUS_LABEL = { pending: "Pendente", confirmed: "Confirmado", production:
 function render() {
   if (!admin.session) return renderLogin();
   if (!admin.isAdmin) return renderNoAccess();
+  restoreNav();
   renderShell();
 }
 
@@ -134,7 +135,31 @@ function renderShell() {
   `;
   loadTab();
 }
-function setTab(tab) { if (tab === "loyalty") tab = "customers"; if (tab !== "customers") admin.data.custView = null; admin.tab = tab; renderShell(); }
+const ADMIN_TABS = ["dashboard","orders","products","customers","caixa","financeiro","estoque","estoque_produtos","receitas","fichas","precificacao","calendario","cupons","entrega","rewards"];
+function saveNav() {
+  try { localStorage.setItem("gz_admin_nav", JSON.stringify({ tab: admin.tab, finMonth: admin.data.finMonth || null, stockMonth: admin.data.stockMonth || null })); } catch (e) {}
+}
+function restoreNav() {
+  let nav = {};
+  try { nav = JSON.parse(localStorage.getItem("gz_admin_nav") || "{}"); } catch (e) {}
+  const h = decodeURIComponent((location.hash || "").replace(/^#\/?/, ""));
+  const tab = ADMIN_TABS.includes(h) ? h : (ADMIN_TABS.includes(nav.tab) ? nav.tab : null);
+  if (tab) admin.tab = tab;
+  if (/^\d{4}-\d{2}$/.test(nav.finMonth || "")) admin.data.finMonth = nav.finMonth;
+  if (/^\d{4}-\d{2}$/.test(nav.stockMonth || "")) admin.data.stockMonth = nav.stockMonth;
+}
+window.addEventListener("hashchange", () => {
+  const h = decodeURIComponent((location.hash || "").replace(/^#\/?/, ""));
+  if (ADMIN_TABS.includes(h) && h !== admin.tab && admin.session && admin.isAdmin) { admin.tab = h; saveNav(); renderShell(); }
+});
+function setTab(tab) {
+  if (tab === "loyalty") tab = "customers";
+  if (tab !== "customers") admin.data.custView = null;
+  admin.tab = tab;
+  try { history.replaceState(null, "", "#/" + tab); } catch (e) {}
+  saveNav();
+  renderShell();
+}
 
 async function loadTab() {
   const main = document.getElementById("adminMain");
@@ -517,8 +542,8 @@ async function deleteOrder(id) {
   await sb.from("revenue_entries").delete().eq("order_id", id);
   const { error: delErr } = await sb.from("orders").delete().eq("id", id);
   if (delErr) { console.error(delErr); alert("Não foi possível excluir o pedido: " + (delErr.message || "")); return; }
-  admin.data.orders = admin.data.orders.filter(o => o.id !== id);
-  renderOrdersTable(document.getElementById("adminMain"));
+  // recarrega do banco: os pedidos seguintes são renumerados e o estoque/financeiro já foram atualizados
+  await loadOrders(document.getElementById("adminMain"));
 }
 
 const PAYMENT_OPTIONS = ["Pix", "Cartão", "Dinheiro", "Outro", "Pendente"];
@@ -559,7 +584,11 @@ function orderFormFields(o) {
       </label>
       <label>Data do pedido<input type="date" id="ofOrderDate" value="${o.order_date || (o.created_at ? o.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10))}"></label>
       <label id="ofEventWrap">Data do evento (encomenda)<input type="date" id="ofEventDate" value="${o.event_date || ""}"></label>
-      <label id="ofProductWrap">Produto / descrição<input type="text" id="ofProduct" value="${o.product_desc || (o.items && o.items[0] ? o.items[0].product_name : "") || ""}" placeholder="Ex: 2 caixas de brigadeiro"></label>
+      <div id="ofProductWrap" class="span-2" data-lines="${o.id && o.origin === "site" ? "0" : "1"}">
+        <p class="hint"><strong>Itens do pedido</strong> — o valor dos produtos é somado automaticamente (quantidade × valor unitário)</p>
+        <div id="ofEncLines"></div>
+        <button type="button" class="btn btn-outline btn-sm" onclick="addEncLine()">+ Adicionar item</button>
+      </div>
       <div id="ofDeliveryWrap" class="span-2" style="display:none"></div>
       <label>Valor dos produtos (R$)<input type="number" step="0.01" min="0" id="ofBaseTotal" value="${ob.base || ""}" placeholder="0,00" oninput="recalcOrderTotal()"></label>
       <label>Frete (R$)<input type="number" step="0.01" min="0" id="ofFrete" value="${ob.frete || ""}" placeholder="0,00" oninput="recalcOrderTotal()"></label>
@@ -601,9 +630,19 @@ function deliveryStockMap() {
 
 function onOrderTypeChange(existing) {
   const isDel = document.getElementById("ofOrderType").value === "delivery";
-  document.getElementById("ofBaseTotal").readOnly = isDel; // delivery: valor vem dos produtos escolhidos
+  const pw = document.getElementById("ofProductWrap");
+  const linesMode = pw.dataset.lines === "1";
+  document.getElementById("ofBaseTotal").readOnly = isDel || linesMode; // valor vem dos itens escolhidos
   document.getElementById("ofEventWrap").style.display = isDel ? "none" : "";
-  document.getElementById("ofProductWrap").style.display = isDel ? "none" : "";
+  pw.style.display = (isDel || !linesMode) ? "none" : "";
+  if (!isDel && linesMode) {
+    const box = document.getElementById("ofEncLines");
+    if (!box.children.length) {
+      const its = existing && Array.isArray(existing.items) ? existing.items.filter(i => i.unit_price != null && Number(i.quantity) > 0) : [];
+      if (its.length) its.forEach(i => addEncLine(i.product_name, i.quantity, i.unit_price)); else addEncLine(existing && existing.id ? "Pedido" : "", 1, existing && existing.id ? orderMoneyParts(existing).base : "");
+    }
+    recalcEncTotal();
+  }
   const box = document.getElementById("ofDeliveryWrap");
   box.style.display = isDel ? "" : "none";
   if (!isDel || box.dataset.ready) return;
@@ -636,6 +675,33 @@ function addDeliveryLine() {
     <button type="button" class="btn btn-outline btn-sm" onclick="this.parentElement.remove();recalcDeliveryTotal()">✕</button>`;
   document.getElementById("ofLines").appendChild(div);
   recalcDeliveryTotal();
+}
+
+function addEncLine(desc, qty, price) {
+  const div = document.createElement("div");
+  div.className = "enc-line";
+  div.style.cssText = "display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap";
+  div.innerHTML = `<input type="text" placeholder="Descrição (ex: Bolo 2kg)" value="${escapeHtml(String(desc || ""))}" style="flex:2;min-width:140px">
+    <input type="number" min="1" step="1" value="${qty || 1}" oninput="recalcEncTotal()" style="width:70px" title="Quantidade">
+    <input type="number" min="0" step="0.01" value="${price === "" || price == null ? "" : price}" placeholder="Valor unit." oninput="recalcEncTotal()" style="width:100px" title="Valor unitário (R$)">
+    <button type="button" class="btn btn-outline btn-sm" onclick="this.parentElement.remove();recalcEncTotal()">✕</button>`;
+  document.getElementById("ofEncLines").appendChild(div);
+  recalcEncTotal();
+}
+function collectEncItems() {
+  return [...document.querySelectorAll("#ofEncLines .enc-line")].map(l => {
+    const [d, q, u] = l.querySelectorAll("input");
+    const quantity = parseInt(q.value) || 0, unit_price = Number(u.value) || 0;
+    return { product_name: d.value.trim() || "Item", category: "manual", quantity, unit_price, subtotal: Number((quantity * unit_price).toFixed(2)) };
+  }).filter(i => i.quantity > 0 && i.unit_price > 0);
+}
+function recalcEncTotal() {
+  const pw = document.getElementById("ofProductWrap");
+  if (!pw || pw.dataset.lines !== "1" || document.getElementById("ofOrderType").value === "delivery") return;
+  const sum = collectEncItems().reduce((t, i) => t + i.subtotal, 0);
+  const base = document.getElementById("ofBaseTotal");
+  if (base) base.value = sum ? sum.toFixed(2) : "";
+  recalcOrderTotal();
 }
 
 function collectDeliveryItems() {
@@ -710,13 +776,14 @@ function openManualOrderForm() {
 async function saveManualOrder() {
   const name = document.getElementById("ofName").value.trim();
   const phone = document.getElementById("ofPhone").value.trim();
-  const product = document.getElementById("ofProduct").value.trim();
   const mt = orderTotalsFromForm();
   if (!name || !phone || !(mt.base > 0)) { alert("Preencha ao menos cliente, telefone e o valor dos produtos."); return; }
   if (Number(document.getElementById("ofDesconto").value) > mt.base) { alert("O desconto não pode ser maior que o valor dos produtos."); return; }
   const isDelivery = document.getElementById("ofOrderType").value === "delivery";
   const dItems = isDelivery ? collectDeliveryItems() : [];
   if (isDelivery && !dItems.length) { alert("Adicione ao menos um produto do delivery."); return; }
+  const eItems = isDelivery ? [] : collectEncItems();
+  if (!isDelivery && !eItems.length) { alert("Adicione ao menos um item com quantidade e valor unitário."); return; }
 
   const payload = {
     order_date: document.getElementById("ofOrderDate").value || null,
@@ -725,7 +792,7 @@ async function saveManualOrder() {
     customer_phone: phone,
     order_type: document.getElementById("ofOrderType").value,
     event_date: document.getElementById("ofEventDate").value || null,
-    items: isDelivery ? dItems : [{ product_name: product || "Pedido manual", category: "manual", quantity: 1, unit_price: mt.base, subtotal: mt.base }],
+    items: isDelivery ? dItems : eItems,
     subtotal: mt.base, discount_amount: mt.desconto, delivery_fee: mt.frete,
     total: mt.vendas, // total de vendas (produtos − desconto), sem frete
     adjustment_amount: 0,
@@ -789,6 +856,11 @@ async function saveOrderEdit(id) {
     payment_amount_2: Number(document.getElementById("ofPay2Amount").value) || null,
     observations: document.getElementById("ofObs").value.trim() || null,
   };
+  if (document.getElementById("ofProductWrap").dataset.lines === "1" && payload.order_type !== "delivery") {
+    const eItems = collectEncItems();
+    if (!eItems.length) { alert("Adicione ao menos um item com quantidade e valor unitário."); return; }
+    payload.items = eItems;
+  }
   const { error } = await sb.from("orders").update(payload).eq("id", id);
   if (error) { console.error(error); alert("Não foi possível salvar as alterações."); return; }
   document.getElementById("orderFormArea").innerHTML = "";
@@ -1720,18 +1792,20 @@ async function loadFinanceiro(main) {
   admin.data.cardInst = admin.data.cardsOk ? (ins.data || []) : [];
   admin.data.cardPaid = admin.data.cardsOk ? (pay.data || []) : [];
   // identificação dos pedidos (número + cliente) e valor de venda do estoque restante
-  const [ord, dp, db, ds] = await Promise.all([
+  await sb.rpc("rollover_delivery_stock"); // idempotente: só transfere sobras de mês já encerrado
+  const [ord, dp, db, ds, dt] = await Promise.all([
     sb.from("orders").select("id,order_number,customer_name"),
-    sb.from("products").select("id,price,active").eq("category", "delivery"),
-    sb.from("delivery_stock_batches").select("product_id,quantity"),
-    sb.from("delivery_sales").select("product_id,quantity,reversed"),
+    sb.from("products").select("*").eq("category", "delivery"),
+    sb.from("delivery_stock_batches").select("*"),
+    sb.from("delivery_sales").select("*"),
+    sb.from("delivery_stock_transfers").select("*"),
   ]);
   admin.data.finOrders = {}; (ord.data || []).forEach(o => { admin.data.finOrders[o.id] = o; });
-  const lv = {};
-  (db.data || []).forEach(x => { lv[x.product_id] = (lv[x.product_id] || 0) + Number(x.quantity); });
-  (ds.data || []).forEach(x => { if (!x.reversed) lv[x.product_id] = (lv[x.product_id] || 0) - Number(x.quantity); });
-  admin.data.finStockValue = (dp.data || []).filter(p => p.active).reduce((t, p) => t + Math.max(lv[p.id] || 0, 0) * Number(p.price || 0), 0);
-  admin.data.finStockUnits = (dp.data || []).filter(p => p.active).reduce((t, p) => t + Math.max(lv[p.id] || 0, 0), 0);
+  // dados do estoque de produtos: o resultado projetado é calculado POR MÊS (stockMonthRows)
+  admin.data.dProducts = (dp.data || []).filter(p => p.active !== false);
+  admin.data.dBatches = db.data || [];
+  admin.data.dSales = ds.data || [];
+  admin.data.dTransfers = dt.error ? [] : (dt.data || []);
   if (!admin.data.finMonth) admin.data.finMonth = new Date().toISOString().slice(0, 7);
   renderFinanceiro(main);
 }
@@ -1792,7 +1866,7 @@ function monthOut(key) {
     + admin.data.cardInst.filter(i => i.ref_month.slice(0, 7) === key).reduce((t, i) => t + Number(i.amount), 0);
 }
 function monthIn(key) { return admin.data.revenueEntries.filter(r => (r.entry_date || "").slice(0, 7) === key).reduce((t, r) => t + Number(r.amount), 0); }
-function setFinMonth(key) { if (key) { admin.data.finMonth = key; admin.data.openStatement = null; renderFinanceiro(document.getElementById("adminMain")); } }
+function setFinMonth(key) { if (key) { admin.data.finMonth = key; saveNav(); admin.data.openStatement = null; renderFinanceiro(document.getElementById("adminMain")); } }
 function setFinYearMonth() {
   const y = document.getElementById("finYear").value, m = document.getElementById("finMon").value;
   setFinMonth(`${y}-${m}`);
@@ -1806,6 +1880,10 @@ function renderFinanceiro(main) {
   const revenueM = admin.data.revenueEntries.filter(r => (r.entry_date || "").slice(0, 7) === key);
   const expensesM = admin.data.expenseEntries.filter(e => (e.entry_date || "").slice(0, 7) === key);
   const totalIn = monthIn(key), totalOut = monthOut(key), resultado = totalIn - totalOut;
+  // estoque restante SOMENTE do mês selecionado (saldo inicial transferido + produzido − vendido − transferido)
+  const stkRows = stockMonthRows(key);
+  const stockValue = stkRows.reduce((t, r) => t + r.potential, 0);
+  const stockUnits = stkRows.reduce((t, r) => t + Math.max(r.stock, 0), 0);
   const nowYear = new Date().getFullYear();
   const years = []; for (let y = Math.min(nowYear - 3, year); y <= Math.max(nowYear + 3, year); y++) years.push(y);
   const open = admin.data.openStatement;
@@ -1846,8 +1924,8 @@ function renderFinanceiro(main) {
       <div class="stat-card"><div class="label">Resultado de ${lbl}</div><div class="value" style="color:${resultado < 0 ? "#B23434" : "#2E7D46"}">${fmt(resultado)}</div></div>
       <div class="stat-card"><div class="label">Lucro de ${lbl} (% sobre as entradas)</div><div class="value" style="color:${totalIn > 0 ? (resultado < 0 ? "#B23434" : "#2E7D46") : "var(--muted)"}">${totalIn > 0 ? fmtPct((resultado / totalIn) * 100) : "N/D"}</div>
         <div class="hint" style="margin:4px 0 0">${totalIn > 0 ? (resultado < 0 ? "prejuízo no mês" : "resultado ÷ entradas × 100") : "sem entradas no mês"}</div></div>
-      <div class="stat-card"><div class="label">Resultado projetado</div><div class="value" style="color:${resultado + admin.data.finStockValue < 0 ? "#B23434" : "#2E7D46"}">${fmt(resultado + admin.data.finStockValue)}</div>
-        <div class="hint" style="margin:4px 0 0">Resultado de ${lbl} (${fmt(resultado)}) + estoque restante vendido (${admin.data.finStockUnits} un. = ${fmt(admin.data.finStockValue)})</div></div>
+      <div class="stat-card"><div class="label">Resultado projetado</div><div class="value" style="color:${resultado + stockValue < 0 ? "#B23434" : "#2E7D46"}">${fmt(resultado + stockValue)}</div>
+        <div class="hint" style="margin:4px 0 0">Resultado de ${lbl} (${fmt(resultado)}) + estoque restante vendido (${stockUnits} un. = ${fmt(stockValue)}) — estoque de ${lbl}</div></div>
       ${CARD_NAMES.map(stmtCard).join("")}
     </div>
     <p class="hint">As despesas do mês já incluem as parcelas de cartão que vencem neste mês. Pagar a fatura apenas marca como paga — não soma de novo.</p>
@@ -2493,7 +2571,7 @@ function stockMonthRows(key) {
     return { p, opening: tIn, produced, sold: sold - estornos, out: tOut, stock, invoiced, potential: Math.max(stock, 0) * Number(p.price) };
   });
 }
-function setStockMonth(key) { if (key) { admin.data.stockMonth = key; renderEstoqueProdutos(document.getElementById("adminMain")); } }
+function setStockMonth(key) { if (key) { admin.data.stockMonth = key; saveNav(); renderEstoqueProdutos(document.getElementById("adminMain")); } }
 function setStockYearMonth() { setStockMonth(`${document.getElementById("skYear").value}-${document.getElementById("skMon").value}`); }
 function renderStockTransfers(key) {
   const list = admin.data.dTransfers.filter(t => String(t.to_month).slice(0, 7) === key || String(t.from_month).slice(0, 7) === key);
@@ -4544,15 +4622,16 @@ function renderGalleryCard() {
   return `
     <div class="admin-card">
       <h2>Galeria de inspirações</h2>
-      <p class="hint">Fotos dos seus trabalhos, mostradas na aba Encomendas do site (o cliente pode ampliar). Não interferem no pedido. Use as setas para mudar a ordem e o botão “Visível” para esconder sem excluir.</p>
+      <p class="hint">Fotos dos seus trabalhos, mostradas na aba Encomendas do site (o cliente pode ampliar). Não interferem no pedido. Arraste as fotos (ou use as setas) para mudar a ordem; ela fica salva e o botão “Visível” para esconder sem excluir.</p>
       <label class="btn btn-pink" style="display:inline-block;cursor:pointer">+ Adicionar fotos
         <input type="file" accept="image/*" multiple style="display:none" onchange="uploadGalleryPhotos(this)">
       </label>
       <p class="photo-status" id="gallery-st"></p>
       ${g.length ? `<div class="gal-admin-grid">
         ${g.map((x, i) => `
-          <div class="gal-admin-item ${x.visible ? "" : "off"}">
-            <img src="${x.image_url}" alt="">
+          <div class="gal-admin-item ${x.visible ? "" : "off"}" draggable="true" data-id="${x.id}"
+               ondragstart="galDragStart(event)" ondragover="event.preventDefault()" ondrop="galDrop(event)" title="Arraste para reordenar">
+            <img src="${x.image_url}" alt="" draggable="false">
             <div class="gal-admin-actions">
               <button class="btn btn-outline btn-sm" onclick="moveGalleryPhoto('${x.id}', -1)" ${i === 0 ? "disabled" : ""} title="Mover para antes">←</button>
               <button class="btn btn-outline btn-sm" onclick="moveGalleryPhoto('${x.id}', 1)" ${i === g.length - 1 ? "disabled" : ""} title="Mover para depois">→</button>
@@ -4582,7 +4661,7 @@ async function uploadGalleryPhotos(input) {
       const up = await sb.storage.from("photos").upload(fileName, blob, { contentType: type });
       if (up.error) throw up.error;
       const url = sb.storage.from("photos").getPublicUrl(fileName).data.publicUrl;
-      const ins = await sb.from("gallery_photos").insert({ image_url: url, sort_order: ++next, visible: true });
+      const ins = await sb.from("gallery_photos").insert({ image_url: url, caption: "", sort_order: ++next, visible: true });
       if (ins.error) throw ins.error;
       ok++;
     } catch (e) { console.error(e); failed.push(`${file.name}: ${(e && e.message) || "falhou"}`); }
@@ -4591,15 +4670,30 @@ async function uploadGalleryPhotos(input) {
   if (failed.length) alert(`${ok} de ${files.length} foto(s) enviada(s).\n\nNão enviadas:\n- ${failed.join("\n- ")}`);
   await loadProducts(document.getElementById("adminMain"));
 }
-async function moveGalleryPhoto(id, dir) {
-  const g = admin.data.gallery, i = g.findIndex(x => x.id === id), j = i + dir;
-  if (i < 0 || j < 0 || j >= g.length) return;
-  const a = g[i], b = g[j];
-  // regrava a ordem inteira (0..n) para não depender de valores repetidos
-  [g[i], g[j]] = [b, a];
-  const results = await Promise.all(g.map((x, k) => sb.from("gallery_photos").update({ sort_order: k + 1 }).eq("id", x.id)));
+// grava a ordem inteira (1..n) no banco: a nova ordem permanece depois de atualizar a página
+async function saveGalleryOrder(list) {
+  const results = await Promise.all(list.map((x, k) => sb.from("gallery_photos").update({ sort_order: k + 1 }).eq("id", x.id)));
   if (results.some(r => r.error)) alert("Não foi possível salvar a nova ordem.");
   await loadProducts(document.getElementById("adminMain"));
+}
+async function moveGalleryPhoto(id, dir) {
+  const g = [...admin.data.gallery], i = g.findIndex(x => x.id === id), j = i + dir;
+  if (i < 0 || j < 0 || j >= g.length) return;
+  [g[i], g[j]] = [g[j], g[i]];
+  await saveGalleryOrder(g);
+}
+let galDragId = null;
+function galDragStart(e) { galDragId = e.currentTarget.dataset.id; if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; }
+async function galDrop(e) {
+  e.preventDefault();
+  const toId = e.currentTarget.dataset.id;
+  if (!galDragId || galDragId === toId) return;
+  const g = [...admin.data.gallery];
+  const from = g.findIndex(x => x.id === galDragId), to = g.findIndex(x => x.id === toId);
+  if (from < 0 || to < 0) return;
+  g.splice(to, 0, g.splice(from, 1)[0]);
+  galDragId = null;
+  await saveGalleryOrder(g);
 }
 async function toggleGalleryPhoto(id) {
   const x = admin.data.gallery.find(g => g.id === id); if (!x) return;

@@ -545,7 +545,7 @@ async function renderOrdersHistory() {
       ${orders && orders.length ? orders.map(o => `
         <div class="cart-summary">
           <div class="order-row-head">
-            <strong>${o.order_number}</strong>
+            <strong>Pedido ${o.order_number}</strong>
             <span class="badge-status ${o.status}">${STATUS_LABEL[o.status] || o.status}</span>
           </div>
           <p class="small-line">${new Date(o.created_at).toLocaleDateString("pt-BR")} — ${fmt(o.total)}</p>
@@ -1734,14 +1734,14 @@ async function submitBag() {
     origin: "site", fulfillment: mode,
   };
   const orders = [];
-  let msg = `Olá! Gostaria de fazer um pedido na Gizona Doces.\n\nNome: ${c.name}\nTelefone: ${c.phone}\n`;
+  let msg = `Olá! Gostaria de fazer um pedido na Gizona Doces.\n\nNome: ${c.name}\nTelefone: ${c.phone}\n\n`;
   if (mode === "pickup") msg += `🏠 RETIRADA no local${pickupAddress() ? ` (${pickupAddress()})` : ""}\n`;
   else if (address) msg += `🛵 ENTREGA — Endereço: ${address}\n`;
-  if (c.payment) msg += `Forma de pagamento: ${c.payment}\n`;
+  if (c.payment) msg += `\nForma de pagamento: ${c.payment}\n`;
   msg += `\n`;
 
   if (b.hasDel) {
-    msg += `🛵 DELIVERY\n` + b.delItems.map(i => `  - ${i.qty}x ${i.name} = ${fmt(Number(i.price) * i.qty)}`).join("\n") + `\n  Subtotal: ${fmt(b.delSub)}\n\n`;
+    msg += `*ITENS ESCOLHIDOS*\n\n` + b.delItems.map(i => `* ${i.qty}x ${i.name} = ${fmt(Number(i.price) * i.qty)}`).join("\n") + `\n\n`;
     orders.push({
       ...common, order_type: "delivery",
       items: b.delItems.map(i => ({ id: i.id, product_name: i.name, category: "delivery", quantity: i.qty, unit_price: Number(i.price), subtotal: Number(i.price) * i.qty })),
@@ -1807,9 +1807,9 @@ async function submitBag() {
   orders.forEach(o => { o.total = Number((o.subtotal - o.discount_amount).toFixed(2)); });
 
   if (coupon && m.discount > 0) msg += `Cupom ${coupon.code}: - ${fmt(m.discount)}\n`;
-  if (wantsShip(b) && !SHOW_SHIPPING) msg += `Entrega: valor a confirmar pelo WhatsApp, de acordo com o endereço informado\n`;
+  if (wantsShip(b) && !SHOW_SHIPPING) msg += `Entrega: valor a confirmar pelo WhatsApp, de acordo com o endereço informado.\n`;
   else if (wantsShip(b)) msg += m.feeFree ? `Entrega: Grátis\n` : (state.shipping.status === "ok" ? `Entrega (estimativa): ${fmt(m.fee)} — pode haver reajuste\n` : `Entrega: a combinar\n`);
-  msg += `\n${SHOW_SHIPPING || !wantsShip(b) ? "Total estimado" : "Total dos produtos (entrega à parte)"}: ${fmt(m.grand)}${b.hasEnc && !b.hasDel ? "" : ""}\n\nAguardo confirmação.`;
+  msg += `\n${SHOW_SHIPPING || !wantsShip(b) ? "Total estimado" : "Total (entrega à parte)"}: ${fmt(m.grand)}${b.hasEnc && !b.hasDel ? "" : ""}\n\nAguardo confirmação.`;
 
   // grava os pedidos (delivery primeiro: é ele que confere o estoque)
   for (const o of orders) {
