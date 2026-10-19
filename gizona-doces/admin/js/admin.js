@@ -134,6 +134,8 @@ function renderShell() {
     </div>
   `;
   loadTab();
+  updateNewOrdersUI();
+  startNewOrderPolling();
 }
 const ADMIN_TABS = ["dashboard","orders","products","customers","caixa","financeiro","estoque","estoque_produtos","receitas","fichas","precificacao","calendario","cupons","entrega","rewards"];
 function saveNav() {
@@ -315,8 +317,8 @@ async function loadDashboard(main) {
   const monthRevenue = active.filter(o => {
     const d = new Date(o.created_at);
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-  }).reduce((s, o) => s + Number(o.total || 0), 0);
-  const totalRevenue = active.reduce((s, o) => s + Number(o.total || 0), 0);
+  }).reduce((s, o) => s + Number(o.total || 0) + Number(o.delivery_fee || 0), 0);
+  const totalRevenue = active.reduce((s, o) => s + Number(o.total || 0) + Number(o.delivery_fee || 0), 0);
   const avgTicket = active.length ? totalRevenue / active.length : 0;
   const countByStatus = s => all.filter(o => o.status === s).length;
   const lowStock = (ingredients || []).filter(i => isLowStock(i));
@@ -347,10 +349,12 @@ async function loadDashboard(main) {
   active.forEach(o => { if (o.event_date) byDate[o.event_date] = (byDate[o.event_date] || 0) + 1; });
   const dates = Object.entries(byDate).sort(([a], [b]) => a.localeCompare(b)).slice(0, 8);
   const weekday = d => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "long" }).replace(/^./, c => c.toUpperCase());
-  const recent = all.slice(0, 5);
+  const recent = [...all].sort((a, b) => orderNum(b) - orderNum(a)).slice(0, 5);
 
   main.innerHTML = `
     <div class="admin-topbar"><h1>Dashboard</h1></div>
+
+    <div id="dashNewOrders"></div>
 
     <div class="stat-grid">
       ${stats.map(([label, value]) => `<div class="stat-card"><div class="label">${label}</div><div class="value">${value}</div></div>`).join("")}
@@ -384,7 +388,7 @@ async function loadDashboard(main) {
               <div style="color:var(--muted);font-size:11.5px">${o.customer_email || o.customer_phone || ""}</div>
             </div>
             <div style="text-align:right">
-              <div style="color:var(--pink);font-weight:700;font-size:13px">${fmt(Number(o.total))}</div>
+              <div style="color:var(--pink);font-weight:700;font-size:13px">${fmt(Number(o.total) + Number(o.delivery_fee || 0))}</div>
               <span class="badge ${o.status}">${STATUS_LABEL[o.status] || o.status}</span>
             </div>
           </div>`).join("") : `<div class="dash-row" style="color:var(--muted)">Nenhum pedido ainda.</div>`}
@@ -392,6 +396,7 @@ async function loadDashboard(main) {
     </div>
   `;
   renderDashboardReminders();
+  renderNewOrdersAlert();
 }
 
 /* ---------------- PEDIDOS ---------------- */
@@ -405,6 +410,9 @@ async function loadOrders(main) {
   admin.data.orderFilter = admin.data.orderFilter || "all";
   renderOrdersTable(main);
 }
+
+// número do pedido como inteiro (00012 -> 12) para ordenar corretamente
+function orderNum(o) { return parseInt(String(o.order_number || "").replace(/\D/g, ""), 10) || 0; }
 
 function paymentSummary(o) {
   const parts = [];
@@ -427,7 +435,8 @@ function renderOrdersTable(main) {
   const orders = admin.data.orders
     .filter(o => filter === "all" ? true : (o.origin || "site") === filter)
     .filter(o => typeFilter === "all" ? true : (o.order_type || "encomenda") === typeFilter)
-    .map(o => ({ ...o, order_date_key: o.order_date || (o.created_at ? o.created_at.slice(0, 10) : null) }));
+    .map(o => ({ ...o, order_date_key: o.order_date || (o.created_at ? o.created_at.slice(0, 10) : null) }))
+    .sort((a, b) => orderNum(b) - orderNum(a)); // maior número (mais recente) primeiro
   main.innerHTML = `
     <div class="admin-topbar"><h1>Pedidos</h1><button class="btn btn-pink" onclick="openManualOrderForm()">+ Lançar pedido manual</button></div>
     <p class="hint">Pedidos do site e pedidos lançados manualmente (WhatsApp, Instagram, presencial etc). Tudo editável.</p>
@@ -448,7 +457,7 @@ function renderOrdersTable(main) {
       return `<div class="admin-card" style="border-left:4px solid #E0A100"><p class="hint" style="margin:0">⏳ Vendas pendentes: <strong style="color:#B77B00;font-size:18px">${fmt(total)}</strong> · ${pend.length} cliente(s) com pagamento pendente</p></div>`;
     })()}
     ${orders.length ? groupByMonth(orders, "order_date_key").map(([key, listRaw]) => {
-      const list = [...listRaw].sort((a, b) => (pendingAmount(b) > 0 && b.status !== "cancelled" ? 1 : 0) - (pendingAmount(a) > 0 && a.status !== "cancelled" ? 1 : 0));
+      const list = [...listRaw].sort((a, b) => orderNum(b) - orderNum(a));
       const valid = list.filter(o => o.status !== "cancelled");
       const tot = valid.reduce((t, o) => t + Number(o.total || 0), 0);
       const frete = valid.reduce((t, o) => t + Number(o.delivery_fee || 0), 0);
@@ -463,7 +472,7 @@ function renderOrdersTable(main) {
           <thead><tr><th>Data</th><th>Nº</th><th>Cliente</th><th>Tipo</th><th>Origem</th><th>Total</th><th>Pagamento</th><th>Status</th><th></th></tr></thead>
           <tbody>
             ${list.map(o => `
-              <tr style="${o.status === "delivered" ? "background:#E6F6EA" : pendingAmount(o) > 0 && o.status !== "cancelled" ? "background:#FFF6DD" : ""}">
+              <tr style="${pendingAmount(o) > 0 && o.status !== "cancelled" ? "background:#FFF3C4" : o.status === "delivered" ? "background:#E6F6EA" : ""}">
                 <td>${o.order_date_key ? new Date(o.order_date_key + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                 <td>${o.order_number}</td>
                 <td>
@@ -525,7 +534,7 @@ async function ensureRevenueForOrder(order) {
   const { error: insertError } = await sb.from("revenue_entries").insert({
     entry_date: new Date().toISOString().slice(0, 10),
     description: "Pedido " + order.order_number,
-    amount: order.total,
+    amount: Number((Number(order.total || 0) + Number(order.delivery_fee || 0)).toFixed(2)), // produtos − desconto + frete
     source: "site",
     order_id: order.id,
   });
@@ -874,9 +883,6 @@ async function loadProducts(main) {
   const med = await sb.from("site_media").select("*");
   admin.data.mediaOk = !med.error;
   admin.data.media = {}; (med.data || []).forEach(m => { admin.data.media[m.key] = m.image_url; });
-  const gal = await sb.from("gallery_photos").select("*").order("sort_order").order("created_at");
-  admin.data.galleryOk = !gal.error;
-  admin.data.gallery = gal.data || [];
   renderProductsTable(main);
 }
 function renderProductsTable(main) {
@@ -889,7 +895,7 @@ function renderProductsTable(main) {
       <button class="btn ${tab === "delivery" ? "btn-pink" : "btn-outline"}" onclick="setProductTab('delivery')">Delivery</button>
     </div>
     ${tab === "delivery" ? `<p class="hint">Produtos de delivery são de uso interno por enquanto: o cliente ainda vê "Delivery em breve" no site. Eles alimentam o Estoque de Produtos.</p>` : ""}
-    ${tab === "encomendas" ? renderSiteMediaCard() + renderGalleryCard() : ""}
+    ${tab === "encomendas" ? renderSiteMediaCard() : ""}
     <div id="productFormArea"></div>
     <div class="admin-card">
       ${products.length ? `
@@ -4374,7 +4380,7 @@ async function saveQuickSale() {
 async function ensureRevenueForOrderQuiet(order) {
   const { data: existing } = await sb.from("revenue_entries").select("id").eq("order_id", order.id).maybeSingle();
   if (existing) return;
-  const { error } = await sb.from("revenue_entries").insert({ entry_date: new Date().toISOString().slice(0, 10), description: "Pedido " + order.order_number, amount: order.total, source: "site", order_id: order.id });
+  const { error } = await sb.from("revenue_entries").insert({ entry_date: new Date().toISOString().slice(0, 10), description: "Pedido " + order.order_number, amount: Number((Number(order.total || 0) + Number(order.delivery_fee || 0)).toFixed(2)), source: "site", order_id: order.id });
   if (error) { console.error(error); alert("A baixa foi registrada, mas a receita não entrou no Financeiro: " + (error.message || "")); }
 }
 
@@ -4614,96 +4620,124 @@ async function removeSiteMedia(key) {
   renderProductsTable(document.getElementById("adminMain"));
 }
 
+/* ---------------- Novos pedidos: aviso persistente + notificação ---------------- */
+const NEW_ORDER_POLL_MS = 20000;
+function seenOrderIds() { try { const v = localStorage.getItem("gz_seen_orders"); return v === null ? null : JSON.parse(v); } catch (e) { return []; } }
+function saveSeenOrderIds(ids) { try { localStorage.setItem("gz_seen_orders", JSON.stringify(ids.slice(-300))); } catch (e) {} }
 
-/* ---------------- Galeria de inspirações (aba Encomendas do site) ---------------- */
-function renderGalleryCard() {
-  if (!admin.data.galleryOk) return `<div class="error-box">Para usar a galeria de inspirações, rode o script <strong>add_melhorias_v2.sql</strong> no Supabase.</div>`;
-  const g = admin.data.gallery;
-  return `
-    <div class="admin-card">
-      <h2>Galeria de inspirações</h2>
-      <p class="hint">Fotos dos seus trabalhos, mostradas na aba Encomendas do site (o cliente pode ampliar). Não interferem no pedido. Arraste as fotos (ou use as setas) para mudar a ordem; ela fica salva e o botão “Visível” para esconder sem excluir.</p>
-      <label class="btn btn-pink" style="display:inline-block;cursor:pointer">+ Adicionar fotos
-        <input type="file" accept="image/*" multiple style="display:none" onchange="uploadGalleryPhotos(this)">
-      </label>
-      <p class="photo-status" id="gallery-st"></p>
-      ${g.length ? `<div class="gal-admin-grid">
-        ${g.map((x, i) => `
-          <div class="gal-admin-item ${x.visible ? "" : "off"}" draggable="true" data-id="${x.id}"
-               ondragstart="galDragStart(event)" ondragover="event.preventDefault()" ondrop="galDrop(event)" title="Arraste para reordenar">
-            <img src="${x.image_url}" alt="" draggable="false">
-            <div class="gal-admin-actions">
-              <button class="btn btn-outline btn-sm" onclick="moveGalleryPhoto('${x.id}', -1)" ${i === 0 ? "disabled" : ""} title="Mover para antes">←</button>
-              <button class="btn btn-outline btn-sm" onclick="moveGalleryPhoto('${x.id}', 1)" ${i === g.length - 1 ? "disabled" : ""} title="Mover para depois">→</button>
-              <button class="btn ${x.visible ? "btn-pink" : "btn-outline"} btn-sm" onclick="toggleGalleryPhoto('${x.id}')">${x.visible ? "Visível" : "Oculta"}</button>
-              <button class="btn btn-danger btn-sm" onclick="deleteGalleryPhoto('${x.id}')">Excluir</button>
-            </div>
-          </div>`).join("")}
-      </div>` : `<p class="hint">Nenhuma foto ainda.</p>`}
-    </div>`;
+async function fetchPendingSiteOrders() {
+  const { data, error } = await sb.from("orders")
+    .select("id,order_number,customer_name,customer_phone,total,delivery_fee,created_at,order_type,status")
+    .eq("status", "pending").eq("origin", "site").order("created_at", { ascending: false });
+  return error ? null : (data || []);
 }
-async function uploadGalleryPhotos(input) {
-  const files = [...input.files]; if (!files.length) return;
-  const st = document.getElementById("gallery-st");
-  let next = admin.data.gallery.reduce((m, x) => Math.max(m, x.sort_order || 0), 0);
-  let ok = 0; const failed = [];
-  // cada foto é independente: se uma falhar (ex.: formato que o navegador não converte), as outras continuam
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    st.textContent = `Enviando ${i + 1} de ${files.length}...`;
-    try {
-      let blob, ext = "jpg", type = "image/jpeg";
-      try { blob = await compressImage(file, 1600, 0.85); }
-      catch (e) { // não conseguiu redimensionar: envia o arquivo original
-        blob = file; type = file.type || "image/jpeg"; ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
-      }
-      const fileName = `gallery/${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-      const up = await sb.storage.from("photos").upload(fileName, blob, { contentType: type });
-      if (up.error) throw up.error;
-      const url = sb.storage.from("photos").getPublicUrl(fileName).data.publicUrl;
-      const ins = await sb.from("gallery_photos").insert({ image_url: url, caption: "", sort_order: ++next, visible: true });
-      if (ins.error) throw ins.error;
-      ok++;
-    } catch (e) { console.error(e); failed.push(`${file.name}: ${(e && e.message) || "falhou"}`); }
+
+function playNewOrderBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.25].forEach(t => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.15, ctx.currentTime + t); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.2);
+      o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.22);
+    });
+  } catch (e) {}
+}
+
+async function notifyDevice(title, body, tag) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return false;
+  try {
+    const reg = ("serviceWorker" in navigator) ? await navigator.serviceWorker.getRegistration() : null;
+    const opts = { body, tag, icon: "../images/brand/icon.png", requireInteraction: true, data: { url: location.pathname + "#/orders" } };
+    if (reg) await reg.showNotification(title, opts); else new Notification(title, opts);
+    return true;
+  } catch (e) { console.error(e); return false; }
+}
+
+async function enableDeviceNotifications() {
+  if (!("Notification" in window)) { alert("Este navegador não suporta notificações."); return; }
+  try { if ("serviceWorker" in navigator) await navigator.serviceWorker.register("sw.js"); } catch (e) { console.error(e); }
+  const perm = await Notification.requestPermission();
+  if (perm === "granted") await notifyDevice("Notificações ativadas", "Você será avisado quando chegar um novo pedido.", "gz-test");
+  renderNewOrdersAlert();
+}
+
+function newOrderTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString("pt-BR") + " às " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function renderNewOrdersAlert() {
+  const box = document.getElementById("dashNewOrders"); if (!box) return;
+  const list = admin.data.pendingNew || [];
+  const perm = ("Notification" in window) ? Notification.permission : "unsupported";
+  const permLine = perm === "granted" ? `✓ Notificações ativas neste aparelho (chegam enquanto o painel estiver aberto no navegador).`
+    : perm === "denied" ? `Notificações bloqueadas neste navegador. Libere nas configurações do site para receber avisos.`
+    : perm === "unsupported" ? `Este navegador não suporta notificações.`
+    : `<button class="btn btn-outline btn-sm" onclick="enableDeviceNotifications()">🔔 Ativar notificações neste aparelho</button>`;
+  box.innerHTML = `
+    ${list.length ? `<div class="new-order-alert">
+      <h2 class="dash-title" style="margin-top:0">🔔 ${list.length === 1 ? "1 novo pedido aguardando confirmação" : list.length + " novos pedidos aguardando confirmação"}</h2>
+      ${list.map(o => `
+        <div class="new-order-row">
+          <div style="flex:1"><strong>Pedido ${escapeHtml(String(o.order_number || ""))}</strong> · ${escapeHtml(o.customer_name || "")}
+            <div class="hint" style="margin:2px 0 0">Recebido em ${newOrderTime(o.created_at)} · ${o.order_type === "delivery" ? "Delivery" : "Encomenda"} · ${fmt(Number(o.total || 0) + Number(o.delivery_fee || 0))}</div></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-pink btn-sm" onclick="confirmNewOrder('${o.id}')">Confirmar pedido</button>
+            <button class="btn btn-outline btn-sm" onclick="setTab('orders')">Ver pedidos</button>
+          </div>
+        </div>`).join("")}
+    </div>` : ""}
+    <p class="hint" style="margin:6px 0 10px">${permLine}</p>`;
+}
+
+function updateNewOrdersUI() {
+  const n = (admin.data.pendingNew || []).length;
+  document.querySelectorAll('.admin-nav button[onclick="setTab(\'orders\')"]').forEach(b => {
+    const old = b.querySelector(".nav-badge"); if (old) old.remove();
+    if (n) { const sp = document.createElement("span"); sp.className = "nav-badge"; sp.textContent = n; b.appendChild(sp); }
+  });
+  renderNewOrdersAlert();
+}
+
+async function confirmNewOrder(id) {
+  const o = (admin.data.pendingNew || []).find(x => x.id === id);
+  const { error } = await sb.from("orders").update({ status: "confirmed" }).eq("id", id);
+  if (error) {
+    console.error(error);
+    alert(/Estoque insuficiente/i.test(error.message || "") ? "Estoque insuficiente para confirmar este pedido. Registre uma nova leva no Estoque de Produtos." : "Não foi possível confirmar: " + (error.message || ""));
+    return;
   }
-  input.value = "";
-  if (failed.length) alert(`${ok} de ${files.length} foto(s) enviada(s).\n\nNão enviadas:\n- ${failed.join("\n- ")}`);
-  await loadProducts(document.getElementById("adminMain"));
+  if (o) await ensureRevenueForOrderQuiet(o);
+  await pollNewOrders(true);
+  if (admin.tab === "orders") loadTab(); // atualiza a lista de pedidos se estiver nela
 }
-// grava a ordem inteira (1..n) no banco: a nova ordem permanece depois de atualizar a página
-async function saveGalleryOrder(list) {
-  const results = await Promise.all(list.map((x, k) => sb.from("gallery_photos").update({ sort_order: k + 1 }).eq("id", x.id)));
-  if (results.some(r => r.error)) alert("Não foi possível salvar a nova ordem.");
-  await loadProducts(document.getElementById("adminMain"));
+
+async function pollNewOrders(silent) {
+  if (!admin.session || !admin.isAdmin) return;
+  const list = await fetchPendingSiteOrders();
+  if (list === null) return;
+  admin.data.pendingNew = list;
+  const seen = seenOrderIds();
+  const ids = list.map(o => o.id);
+  if (seen === null) { saveSeenOrderIds(ids); } // 1ª vez neste aparelho: não dispara aviso dos que já existem (o aviso do dashboard continua)
+  else {
+    const fresh = list.filter(o => !seen.includes(o.id));
+    if (fresh.length) {
+      saveSeenOrderIds(seen.concat(fresh.map(o => o.id)));
+      if (!silent) {
+        playNewOrderBeep();
+        const o = fresh[0];
+        notifyDevice(fresh.length === 1 ? `Novo pedido ${o.order_number}` : `${fresh.length} novos pedidos`,
+          fresh.length === 1 ? `${o.customer_name} — recebido às ${new Date(o.created_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : "Aguardando confirmação", "gz-new-order");
+      }
+    }
+  }
+  updateNewOrdersUI();
 }
-async function moveGalleryPhoto(id, dir) {
-  const g = [...admin.data.gallery], i = g.findIndex(x => x.id === id), j = i + dir;
-  if (i < 0 || j < 0 || j >= g.length) return;
-  [g[i], g[j]] = [g[j], g[i]];
-  await saveGalleryOrder(g);
-}
-let galDragId = null;
-function galDragStart(e) { galDragId = e.currentTarget.dataset.id; if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; }
-async function galDrop(e) {
-  e.preventDefault();
-  const toId = e.currentTarget.dataset.id;
-  if (!galDragId || galDragId === toId) return;
-  const g = [...admin.data.gallery];
-  const from = g.findIndex(x => x.id === galDragId), to = g.findIndex(x => x.id === toId);
-  if (from < 0 || to < 0) return;
-  g.splice(to, 0, g.splice(from, 1)[0]);
-  galDragId = null;
-  await saveGalleryOrder(g);
-}
-async function toggleGalleryPhoto(id) {
-  const x = admin.data.gallery.find(g => g.id === id); if (!x) return;
-  const { error } = await sb.from("gallery_photos").update({ visible: !x.visible }).eq("id", id);
-  if (error) { alert("Não foi possível alterar."); return; }
-  await loadProducts(document.getElementById("adminMain"));
-}
-async function deleteGalleryPhoto(id) {
-  if (!confirm("Excluir esta foto da galeria?")) return;
-  const { error } = await sb.from("gallery_photos").delete().eq("id", id);
-  if (error) { alert("Não foi possível excluir."); return; }
-  await loadProducts(document.getElementById("adminMain"));
+
+function startNewOrderPolling() {
+  if (admin.pollTimer) return;
+  pollNewOrders(false);
+  admin.pollTimer = setInterval(() => pollNewOrders(false), NEW_ORDER_POLL_MS);
 }

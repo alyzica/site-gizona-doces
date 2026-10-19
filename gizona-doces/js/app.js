@@ -34,7 +34,6 @@ const state = {
   deliveryStatus: null,    // { open, message } (RPC delivery_status); null = ainda não carregou / script não rodado
   fulfillment: null,       // "delivery" | "pickup" (null = padrão conforme a sacola)
   originCoords: null, geoCache: {}, bagNotice: "",
-  gallery: [],             // galeria de inspirações (tabela gallery_photos)
   media: {},               // fotos do menu de encomendas (tabela site_media)
   cakes: [], cakeDraft: null,
   addrMode: null, otherAddr: { cep: "", street: "", number: "", complement: "", neighborhood: "", city: "", state: "" },
@@ -593,7 +592,6 @@ function renderCategory() {
       </div>
 
       ${state.orderTab === "delivery" ? renderDeliveryList() : `
-      ${renderGallerySection()}
       <div class="cat-choices">
         ${[
           { key: "brigadeiro", title: "Brigadeiro Gourmet", sub: "18 a 20g cada - caixas com 50 ou 100 unidades", icon: `<img src="images/icons/icon-brigadeiro.png" alt="Brigadeiro">` },
@@ -636,26 +634,6 @@ async function setOrderTab(tab) {
 }
 
 /* ---------------- Fotos do menu (admin sobe em Produtos) ---------------- */
-async function loadGallery() {
-  if (!sb) return;
-  try {
-    const { data, error } = await sb.from("gallery_photos").select("id, image_url, caption").eq("visible", true).order("sort_order").order("created_at").range(0, 999);
-    if (!error && data) state.gallery = data;
-  } catch (e) { /* sem a tabela ainda: não mostra galeria */ }
-}
-function renderGallerySection() {
-  const g = state.gallery || [];
-  if (!g.length) return "";
-  const urls = escapeAttr(JSON.stringify(g.map(x => x.image_url)));
-  return `
-    <div class="gallery-block">
-      <p class="order-info-title">Inspirações — trabalhos da Gizona</p>
-      <p class="hint" style="margin:0 0 10px">Toque em uma foto para ampliar.</p>
-      <div class="gallery-grid">
-        ${g.map((x, i) => `<button type="button" class="gallery-item" onclick="openPhoto(${urls}, ${i})" aria-label="Ampliar foto ${i + 1}"><img src="${escapeAttr(x.image_url)}" alt="${escapeAttr(x.caption || "Trabalho da Gizona")}" loading="lazy" onerror="this.parentElement.remove()"></button>`).join("")}
-      </div>
-    </div>`;
-}
 async function loadSiteMedia() {
   if (!sb) return;
   try {
@@ -2032,7 +2010,6 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
     console.error("Erro ao verificar login:", e);
   }
   await loadProductsFromDB();
-  loadGallery().then(() => { if (state.step === "category" && state.orderTab === "encomendas") { renderCategory(); decorateScreen(); } });
   loadSiteMedia().then(() => { if (state.step === "category" && state.orderTab === "encomendas") { renderCategory(); decorateScreen(); } });
   if (auth.session && auth.customer) {
     syncOrderCustomerFromProfile();
