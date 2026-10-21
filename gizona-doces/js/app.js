@@ -32,7 +32,10 @@ const state = {
   shipping: { status: "idle" }, shipCfg: null,
   deliveryCatalog: null,   // produtos de delivery com estoque (RPC delivery_catalog)
   deliveryStatus: null,    // { open, message } (RPC delivery_status); null = ainda não carregou / script não rodado
-  fulfillment: null,       // "delivery" | "pickup" (null = padrão conforme a sacola)
+  fulfillment: null,       // legado
+  fulfillDel: null,        // modalidade do DELIVERY: "delivery" | "pickup" (null = entrega)
+  fulfillEnc: null,        // modalidade da ENCOMENDA: independente do delivery
+  encAddrOn: false, encAddrText: "", // endereço próprio da encomenda (opcional)
   originCoords: null, geoCache: {}, bagNotice: "",
   media: {},               // fotos do menu de encomendas (tabela site_media)
   cakes: [], cakeDraft: null,
@@ -45,10 +48,47 @@ function fmt(v) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 const NAV_STACK = [];
+
+/* ---------------- Manter a tela ao atualizar a página ---------------- */
+const SNAP_KEY = "gizona_site_state_v1";
+const SNAP_KEYS = ["step", "authMode", "guest", "category", "box", "flavors", "geladinho", "wantsArt", "personalization", "customer", "isoporBox", "suggestQty", "orderTab", "delivery", "couponInput", "fulfillDel", "fulfillEnc", "encAddrOn", "encAddrText", "cakes", "cakeDraft", "addrMode", "otherAddr"];
+const SNAP_AUTH_STEPS = ["dashboard", "profile", "orders", "loyalty"];
+const SNAP_STEPS = ["welcome", "login", "register", "forgot-password", "guest-warning", "dashboard", "profile", "orders", "loyalty", "cover", "category", "brigadeiro-box", "brigadeiro-flavors", "personalization", "geladinho-info", "geladinho-flavors", "bolo", "cart"];
+let SNAP_PAUSED = false;
+function saveSnapshot() {
+  if (SNAP_PAUSED || !state.step || state.step === "loading") return;
+  try {
+    const snap = { v: 1, nav: NAV_STACK.slice(), scroll: Math.round(window.scrollY || 0), at: Date.now() };
+    SNAP_KEYS.forEach(k => { snap[k] = state[k]; });
+    sessionStorage.setItem(SNAP_KEY, JSON.stringify(snap));
+  } catch (e) { /* sem storage: segue sem persistir */ }
+}
+function clearSnapshot() { try { sessionStorage.removeItem(SNAP_KEY); } catch (e) {} }
+function restoreSnapshot() {
+  try {
+    const raw = sessionStorage.getItem(SNAP_KEY);
+    if (!raw) return null;
+    const snap = JSON.parse(raw);
+    if (!snap || snap.v !== 1 || !SNAP_STEPS.includes(snap.step)) return null;
+    if (SNAP_AUTH_STEPS.includes(snap.step) && !auth.customer) return null;
+    if (auth.customer && ["welcome", "login", "register", "forgot-password", "guest-warning"].includes(snap.step)) return null;
+    SNAP_KEYS.forEach(k => { if (k !== "step" && snap[k] !== undefined && snap[k] !== null) state[k] = snap[k]; });
+    // se o usuário está logado, o modo visitante não vale
+    if (auth.customer) state.guest = false;
+    NAV_STACK.length = 0; (snap.nav || []).forEach(x => { if (SNAP_STEPS.includes(x)) NAV_STACK.push(x); });
+    return snap;
+  } catch (e) { return null; }
+}
+let snapTimer = null;
+["input", "change"].forEach(ev => document.addEventListener(ev, () => { clearTimeout(snapTimer); snapTimer = setTimeout(saveSnapshot, 150); }, true));
+window.addEventListener("pagehide", saveSnapshot);
+window.addEventListener("beforeunload", saveSnapshot);
+window.addEventListener("scroll", () => { clearTimeout(snapTimer); snapTimer = setTimeout(saveSnapshot, 250); }, { passive: true });
 async function go(step, opts) {
   if (!(opts && opts.tab) && state.step && state.step !== step && state.step !== "loading") NAV_STACK.push(state.step);
   if (opts && opts.tab) NAV_STACK.length = 0;
   state.step = step;
+  SNAP_PAUSED = false;
   if (["dashboard", "loyalty"].includes(step) && auth.customer) {
     await loadLoyaltyData();
   }
@@ -81,6 +121,7 @@ function render() {
     cart: renderCart,
   }[state.step];
   const stepAtRender = state.step;
+  saveSnapshot();
   Promise.resolve(view()).then(() => { if (state.step === stepAtRender) decorateScreen(); });
 }
 
@@ -1130,15 +1171,20 @@ function bagData() {
   return { brigItems, gelaItems, cakeItems, cakeSubtotal, delItems, brigSubtotal, gelaSubtotal, encSub, delSub, itemCount, hasEnc: brigItems.length + gelaItems.length + cakeItems.length > 0, hasDel: delItems.length > 0 };
 }
 
-function fulfillMode(b) {
+// Modalidades INDEPENDENTES: delivery e encomenda têm cada uma a sua.
+function modeDel() { return state.fulfillDel || "delivery"; }
+function modeEnc(b) { b = b || bagData(); return state.fulfillEnc || (b.hasDel ? modeDel() : "pickup"); }
+function fulfillMode(b) { // "delivery" se QUALQUER parte presente for entregue
   b = b || bagData();
-  return state.fulfillment || (b.hasDel ? "delivery" : "pickup");
+  return (b.hasDel && modeDel() === "delivery") || (b.hasEnc && modeEnc(b) === "delivery") ? "delivery" : "pickup";
 }
-function setFulfillment(mode) {
-  state.fulfillment = mode;
+function setFulfillment(part, mode) {
+  if (part === "enc") state.fulfillEnc = mode; else state.fulfillDel = mode;
   state.shipping = { status: "idle" };
   render();
 }
+function setEncAddr(on) { state.encAddrOn = !!on; render(); }
+const encOwnAddr = b => (b = b || bagData(), b.hasDel && b.hasEnc && modeDel() === "delivery" && modeEnc(b) === "delivery" && state.encAddrOn);
 function pickupAddress() {
   return (state.shipCfg && state.shipCfg.origin_address) || "";
 }
@@ -1170,10 +1216,12 @@ function paintBagTotals() {
   const cfg = state.shipCfg;
   let feeRow = "";
   const mode = fulfillMode(b);
-  if ((b.hasDel || b.hasEnc) && mode === "pickup") {
-    feeRow = `<div class="sum-row"><span>Retirada</span><span><strong class="free">Grátis</strong></span></div>`;
-  } else if (wantsShip(b) && !SHOW_SHIPPING) {
-    feeRow = `<p class="sum-note">${SHIPPING_NOTICE}</p>`;
+  const pk = [b.hasDel && modeDel() === "pickup" ? "delivery" : "", b.hasEnc && modeEnc(b) === "pickup" ? "encomenda" : ""].filter(Boolean);
+  const pkRows = pk.map(t => `<div class="sum-row"><span>Retirada · ${t}</span><span><strong class="free">Grátis</strong></span></div>`).join("");
+  if (!wantsShip(b)) {
+    feeRow = pkRows;
+  } else if (!SHOW_SHIPPING) {
+    feeRow = pkRows + `<p class="sum-note">Frete ${b.hasDel && modeDel() === "delivery" && b.hasEnc && modeEnc(b) === "delivery" ? "do delivery e da encomenda" : (b.hasDel && modeDel() === "delivery" ? "do delivery" : "da encomenda")}: a consultar pelo WhatsApp. ${SHIPPING_NOTICE}</p>`;
   } else if (wantsShip(b)) {
     const hasAddr = addrReady();
     let val, note;
@@ -1198,8 +1246,8 @@ function paintBagTotals() {
     ${feeRow}
     <div class="sum-row total"><span>Total</span><span>${fmt(m.grand)}</span></div>
     ${b.hasEnc && b.hasDel ? `<p class="sum-note">Seu pedido será separado em <strong>delivery</strong> (entrega agora) e <strong>encomenda</strong> (para a data do evento), mas você finaliza tudo de uma vez.</p>` : ""}
-    ${b.hasEnc && mode === "pickup" ? `<p class="sum-note">Retirada da encomenda no endereço combinado.</p>` : ""}
-    ${b.hasEnc && mode === "delivery" ? `<p class="sum-note">A entrega da encomenda é combinada pelo WhatsApp e acontece somente após o pagamento total.</p>` : ""}`;
+    ${b.hasEnc && modeEnc(b) === "pickup" ? `<p class="sum-note">Retirada da encomenda no endereço combinado.</p>` : ""}
+    ${b.hasEnc && modeEnc(b) === "delivery" ? `<p class="sum-note">A entrega da encomenda é combinada pelo WhatsApp e acontece somente após o pagamento total.</p>` : ""}`;
   barEl.innerHTML = `
     <div><small>Total${m.fee === 0 && wantsShip(b) ? " com <strong>entrega grátis</strong>" : ""}</small><strong>${fmt(m.grand)}</strong> <small>/ ${b.itemCount} ${b.itemCount === 1 ? "item" : "itens"}</small></div>
     <button id="bagSendBtn" ${bagCanSubmit(b) ? "" : "disabled"} onclick="submitBag()">Enviar pedido</button>`;
@@ -1211,6 +1259,7 @@ function bagCanSubmit(b) {
   const c = auth.customer ? { name: auth.customer.full_name || "", phone: auth.customer.phone || "" } : state.customer;
   if (!c.name.trim() || !c.phone.trim()) return false;
   if (fulfillMode(b) === "delivery" && !addrComplete()) return false;
+  if (encOwnAddr(b) && !state.encAddrText.trim()) return false;
   if (b.hasDel && deliveryClosed()) return false;
   return true;
 }
@@ -1253,6 +1302,23 @@ async function oaCep(el) {
     const n = document.getElementById("oa_number"); if (n && !n.value) n.focus();
   }
   scheduleShipping();
+}
+
+function fulfilBox(part, title, fm) {
+  const ic = {
+    delivery: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M3 7h11v9H3V7z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 10h4l3 3v3h-7v-6z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="7" cy="18" r="1.6" stroke="currentColor" stroke-width="1.5"/><circle cx="17" cy="18" r="1.6" stroke="currentColor" stroke-width="1.5"/></svg>',
+    pickup: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M12 21s7-6.2 7-11.5A7 7 0 005 9.5C5 14.800 12 21 12 21z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="9.5" r="2.5" stroke="currentColor" stroke-width="1.6"/></svg>',
+  };
+  return `<div class="cart-summary fulfil-box">
+    <p class="cart-section-title">${title}</p>
+    <div class="seg">
+      <button class="${fm === "delivery" ? "on" : ""}" onclick="setFulfillment('${part}','delivery')">${ic.delivery}Entrega</button>
+      <button class="${fm === "pickup" ? "on" : ""}" onclick="setFulfillment('${part}','pickup')">${ic.pickup}Retirada</button>
+    </div>
+    ${fm === "pickup"
+      ? `<div class="pickup-card"><strong>Retirar em</strong><span>${pickupAddress() ? escapeAttr(pickupAddress()) : "Endereço combinado pelo WhatsApp"}</span><small>Retirada no local, sem frete. Avisamos pelo WhatsApp quando estiver pronto.</small></div>`
+      : `<p class="hint" style="margin:10px 0 0">${SHOW_SHIPPING ? "Entrega com taxa estimada pela distância até o endereço abaixo." : SHIPPING_NOTICE}</p>`}
+  </div>`;
 }
 
 function renderCart() {
@@ -1358,16 +1424,8 @@ function renderCart() {
       ${!empty ? renderBagSuggestions(b) : ""}
 
       ${!empty ? `
-      <div class="cart-summary fulfil-box">
-        <p class="cart-section-title">Como você quer receber?</p>
-        <div class="seg">
-          <button class="${fm === "delivery" ? "on" : ""}" onclick="setFulfillment('delivery')"><svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M3 7h11v9H3V7z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 10h4l3 3v3h-7v-6z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="7" cy="18" r="1.6" stroke="currentColor" stroke-width="1.5"/><circle cx="17" cy="18" r="1.6" stroke="currentColor" stroke-width="1.5"/></svg>Entrega</button>
-          <button class="${fm === "pickup" ? "on" : ""}" onclick="setFulfillment('pickup')"><svg viewBox="0 0 24 24" width="18" height="18" fill="none"><path d="M12 21s7-6.2 7-11.5A7 7 0 005 9.5C5 14.800 12 21 12 21z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="9.5" r="2.5" stroke="currentColor" stroke-width="1.6"/></svg>Retirada</button>
-        </div>
-        ${fm === "pickup" ? `
-          <div class="pickup-card"><strong>Retirar em</strong><span>${pickupAddress() ? escapeAttr(pickupAddress()) : "Endereço combinado pelo WhatsApp"}</span><small>Sem taxa de entrega. Avisamos pelo WhatsApp quando estiver pronto.</small></div>`
-        : (wantsShip(b) ? `<p class="hint" style="margin:10px 0 0">${SHOW_SHIPPING ? "Entrega com taxa estimada pela distância até o endereço abaixo." : SHIPPING_NOTICE}</p>` : "")}
-      </div>
+      ${b.hasDel ? fulfilBox("del", "🛵 Delivery — como você quer receber?", modeDel()) : ""}
+      ${b.hasEnc ? fulfilBox("enc", "🎂 Encomenda — como você quer receber?", modeEnc(b)) : ""}
       <div class="cart-form-block">
         <p class="cart-section-title">${isGuestOrder ? "Seus dados para contato" : "Dados do pedido"}</p>
         ${isGuestOrder ? `
@@ -1375,6 +1433,9 @@ function renderCart() {
           <label>Telefone / WhatsApp<input type="text" placeholder="(19) 99999-9999" value="${c.phone}" oninput="maskPhone(this); c_update('phone', this.value); paintBagTotals()"></label>
         ` : `<p class="hint">Usaremos os dados do seu perfil (nome e telefone): <strong>${auth.customer.full_name}</strong>.</p>`}
         ${fm === "delivery" ? renderAddressPicker() : ""}
+        ${b.hasDel && b.hasEnc && modeDel() === "delivery" && modeEnc(b) === "delivery" ? `
+          <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" ${state.encAddrOn ? "checked" : ""} onchange="setEncAddr(this.checked)"> Entregar a encomenda em outro endereço</label>
+          ${state.encAddrOn ? `<label>Endereço da encomenda<input type="text" placeholder="Rua, número, bairro, cidade" value="${escapeAttr(state.encAddrText)}" oninput="state.encAddrText = this.value; paintBagTotals()"></label>` : ""}` : ""}
         ${b.hasEnc ? `
         <label>Data do evento<input type="date" id="eventDateInput" min="${minEventDate()}" value="${c.eventDate}" onchange="handleEventDateInput(this)"></label>
         <p class="hint" style="margin-top:-6px">Trabalhamos com antecedência mínima de 5 dias.</p>` : ""}
@@ -1690,8 +1751,11 @@ async function submitBag() {
   const c = auth.customer
     ? { ...state.customer, name: auth.customer.full_name || state.customer.name, phone: auth.customer.phone || state.customer.phone }
     : state.customer;
-  const mode = fulfillMode(b);
-  const address = mode === "delivery" ? bagAddress().trim() : "";
+  const mDel = modeDel(), mEnc = modeEnc(b);
+  const anyShip = fulfillMode(b) === "delivery";
+  const address = anyShip ? bagAddress().trim() : "";
+  const addrDel = b.hasDel && mDel === "delivery" ? address : "";
+  const addrEnc = b.hasEnc && mEnc === "delivery" ? (encOwnAddr(b) ? state.encAddrText.trim() : address) : "";
 
   // confere o cupom de novo com os valores finais
   let coupon = null;
@@ -1709,39 +1773,42 @@ async function submitBag() {
     customer_name: c.name, customer_phone: c.phone,
     customer_email: auth.customer ? auth.customer.email : null,
     payment_method: paymentMap[c.payment] || null,
-    origin: "site", fulfillment: mode,
+    origin: "site",
   };
+  const modeLabel = (mm) => mm === "delivery" ? "Entrega" : "Retirada";
+  const freteLine = (mm, valor) => mm === "pickup" ? "retirada no local" : (valor != null ? fmt(valor) : "a consultar pelo WhatsApp");
+  const feeDel = mDel === "delivery" && b.hasDel ? (m.fee || 0) : 0;
+  const feeEnc = mEnc === "delivery" && b.hasEnc && !(b.hasDel && mDel === "delivery") ? (m.fee || 0) : 0;
+  const feeKnown = SHOW_SHIPPING && (m.fee != null);
   const orders = [];
-  let msg = `Olá! Gostaria de fazer um pedido na Gizona Doces.\n\nNome: ${c.name}\nTelefone: ${c.phone}\n\n`;
-  if (mode === "pickup") msg += `🏠 RETIRADA no local${pickupAddress() ? ` (${pickupAddress()})` : ""}\n`;
-  else if (address) msg += `🛵 ENTREGA — Endereço: ${address}\n`;
-  if (c.payment) msg += `\nForma de pagamento: ${c.payment}\n`;
-  msg += `\n`;
+  let msg = `Olá! Gostaria de fazer um pedido na Gizona Doces.\n\nNome: ${c.name}\nTelefone: ${c.phone}\n`;
 
   if (b.hasDel) {
-    msg += `*ITENS ESCOLHIDOS*\n\n` + b.delItems.map(i => `* ${i.qty}x ${i.name} = ${fmt(Number(i.price) * i.qty)}`).join("\n") + `\n\n`;
+    msg += `\n🛵 DELIVERY\n` + b.delItems.map(i => `• ${i.qty}x ${i.name} = ${fmt(Number(i.price) * i.qty)}`).join("\n") + `\n`;
+    msg += `Subtotal dos produtos: ${fmt(b.delSub)}\n`;
+    if (mDel === "delivery") { msg += `Modalidade: Entrega\n`; if (addrDel) msg += `Endereço: ${addrDel}\n`; msg += `Frete: ${freteLine(mDel, feeKnown ? feeDel : null)}\n`; }
+    else msg += `Modalidade: Retirada no local${pickupAddress() ? ` (${pickupAddress()})` : ""}\n`;
     orders.push({
-      ...common, order_type: "delivery",
+      ...common, order_type: "delivery", fulfillment: mDel,
       items: b.delItems.map(i => ({ id: i.id, product_name: i.name, category: "delivery", quantity: i.qty, unit_price: Number(i.price), subtotal: Number(i.price) * i.qty })),
       subtotal: b.delSub, discount_amount: 0,
-      delivery_fee: mode === "delivery" ? (m.fee || 0) : 0, delivery_km: mode === "delivery" && state.shipping.status === "ok" ? Number(state.shipping.km.toFixed(2)) : null,
-      event_date: null, personalization: {}, observations: mode === "delivery" ? `Endereço: ${address}` : "Retirada no local",
+      delivery_fee: mDel === "delivery" ? feeDel : 0, delivery_km: mDel === "delivery" && state.shipping.status === "ok" ? Number(state.shipping.km.toFixed(2)) : null,
+      event_date: null, personalization: {}, observations: mDel === "delivery" ? `Endereço: ${addrDel}` : "Retirada no local",
     });
   }
   if (b.hasEnc) {
-    msg += `📅 ENCOMENDA\n`;
-    if (c.eventDate) msg += `Data do evento: ${new Date(c.eventDate + "T00:00:00").toLocaleDateString("pt-BR")}\n`;
+    msg += `\n🎂 ENCOMENDA\n`;
     const items = [];
     if (b.brigItems.length) {
       msg += `${state.box.boxConfig.title}\n`;
       b.brigItems.forEach(i => {
-        msg += `  - ${i.name}: ${i.qty} unidades\n`;
+        msg += `• ${i.name}: ${i.qty} unidades\n`;
         items.push({ product_name: i.name, category: "brigadeiro", quantity: i.qty, unit_price: i.price, subtotal: i.price * i.qty });
       });
-      msg += `  Subtotal: ${fmt(b.brigSubtotal)}\n\n`;
+      msg += `Subtotal ${state.box.boxConfig.title}: ${fmt(b.brigSubtotal)}\n`;
     }
     b.cakeItems.forEach(c => {
-      msg += `${cakeTitle(c)} — ${fmt(c.price)}\n` + cakeDetails(c).map(l => `  - ${l}\n`).join("") + `\n`;
+      msg += `${cakeTitle(c)} — ${fmt(c.price)}\n` + cakeDetails(c).map(l => `   - ${l}\n`).join("");
       items.push({ product_name: `${cakeTitle(c)} — massa ${c.massa}; recheio${c.recheios.length > 1 ? "s" : ""}: ${c.recheios.join(" + ")}`, category: "bolo", quantity: 1, unit_price: c.price, subtotal: c.price });
       if (c.adicionais.length) items.push({ product_name: `Adicionais do bolo ${c.size}: ${c.adicionais.join(", ")}`, category: "bolo", quantity: 1, unit_price: null, subtotal: null });
       if (c.obs) items.push({ product_name: `Decoração do bolo ${c.size}: ${c.obs}`, category: "bolo", quantity: 1, unit_price: null, subtotal: null });
@@ -1749,14 +1816,13 @@ async function submitBag() {
     if (b.gelaItems.length) {
       msg += `Geladinhos Gourmet Tamanho Festa\n`;
       b.gelaItems.forEach(i => {
-        msg += `  - ${i.name}: ${i.qty} unidades x ${fmt(i.price)} = ${fmt(i.price * i.qty)}\n`;
+        msg += `• ${i.qty}x ${i.name} = ${fmt(i.price * i.qty)}\n`;
         items.push({ product_name: i.name, category: "geladinho", quantity: i.qty, unit_price: i.price, subtotal: i.price * i.qty });
       });
       if (state.isoporBox) {
-        msg += `  Caixa de isopor personalizada: valor a combinar\n`;
+        msg += `• Caixa de isopor personalizada: valor a combinar\n`;
         items.push({ product_name: "Caixa de isopor personalizada", category: "geladinho", quantity: 1, unit_price: null, subtotal: null });
       }
-      msg += `\n`;
     }
     if (state.wantsArt) {
       const p = state.personalization;
@@ -1767,12 +1833,15 @@ async function submitBag() {
       if (p.colors) msg += `  Cores: ${p.colors}\n`;
       if (p.custom_text) msg += `  Texto: ${p.custom_text}\n`;
       if (p.art_description) msg += `  Descrição: ${p.art_description}\n`;
-      msg += `\n`;
     }
+    msg += `Subtotal da encomenda: ${fmt(b.encSub)}\n`;
+    if (c.eventDate) msg += `Data da encomenda: ${new Date(c.eventDate + "T00:00:00").toLocaleDateString("pt-BR")}\n`;
+    if (mEnc === "delivery") { msg += `Modalidade: Entrega\n`; if (addrEnc) msg += `Endereço: ${addrEnc}\n`; msg += `Frete: ${freteLine(mEnc, feeKnown ? feeEnc : null)}\n`; }
+    else msg += `Modalidade: Retirada no local${pickupAddress() ? ` (${pickupAddress()})` : ""}\n`;
     orders.push({
-      ...common, order_type: "encomenda", items, subtotal: b.encSub, discount_amount: 0, delivery_fee: !b.hasDel && mode === "delivery" ? (m.fee || 0) : 0, delivery_km: !b.hasDel && mode === "delivery" && state.shipping.status === "ok" && state.shipping.km ? Number(state.shipping.km.toFixed(2)) : null,
+      ...common, order_type: "encomenda", fulfillment: mEnc, items, subtotal: b.encSub, discount_amount: 0, delivery_fee: mEnc === "delivery" ? feeEnc : 0, delivery_km: mEnc === "delivery" && feeEnc && state.shipping.status === "ok" && state.shipping.km ? Number(state.shipping.km.toFixed(2)) : null,
       event_date: c.eventDate || null, personalization: state.wantsArt ? state.personalization : {},
-      observations: mode === "delivery" ? (address ? `Endereço: ${address}` : "") : "Retirada no local",
+      observations: mEnc === "delivery" ? (addrEnc ? `Endereço: ${addrEnc}` : "") : "Retirada no local",
     });
   }
 
@@ -1784,10 +1853,16 @@ async function submitBag() {
   }
   orders.forEach(o => { o.total = Number((o.subtotal - o.discount_amount).toFixed(2)); });
 
+  msg += `\n`;
+  if (b.hasDel) msg += `Subtotal do delivery: ${fmt(b.delSub)}\n`;
+  if (b.hasEnc) msg += `Subtotal da encomenda: ${fmt(b.encSub)}\n`;
+  if (b.hasDel) msg += `Frete do delivery: ${freteLine(mDel, feeKnown && mDel === "delivery" ? feeDel : null)}\n`;
+  if (b.hasEnc) msg += `Frete da encomenda: ${freteLine(mEnc, feeKnown && mEnc === "delivery" ? feeEnc : null)}\n`;
   if (coupon && m.discount > 0) msg += `Cupom ${coupon.code}: - ${fmt(m.discount)}\n`;
-  if (wantsShip(b) && !SHOW_SHIPPING) msg += `Entrega: valor a confirmar pelo WhatsApp, de acordo com o endereço informado.\n`;
-  else if (wantsShip(b)) msg += m.feeFree ? `Entrega: Grátis\n` : (state.shipping.status === "ok" ? `Entrega (estimativa): ${fmt(m.fee)} — pode haver reajuste\n` : `Entrega: a combinar\n`);
-  msg += `\n${SHOW_SHIPPING || !wantsShip(b) ? "Total estimado" : "Total (entrega à parte)"}: ${fmt(m.grand)}${b.hasEnc && !b.hasDel ? "" : ""}\n\nAguardo confirmação.`;
+  const pendingFrete = (b.hasDel && mDel === "delivery" && !feeKnown) || (b.hasEnc && mEnc === "delivery" && !feeKnown);
+  msg += `Total estimado: ${fmt(m.grand)}${pendingFrete ? " (sem o frete a consultar)" : ""}\n`;
+  if (c.payment) msg += `Forma de pagamento: ${c.payment}\n`;
+  msg += `\nAguardo confirmação.`;
 
   // grava os pedidos (delivery primeiro: é ele que confere o estoque)
   for (const o of orders) {
@@ -1817,7 +1892,7 @@ async function submitBag() {
 
   const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`;
   if (whatsappWindow) whatsappWindow.location.href = url; else window.location.href = url;
-  state.delivery = {}; state.coupon = null; state.couponMsg = ""; state.shipping = { status: "idle" }; state.fulfillment = null;
+  state.delivery = {}; state.coupon = null; state.couponMsg = ""; state.shipping = { status: "idle" }; state.fulfillment = null; state.fulfillDel = null; state.fulfillEnc = null; state.encAddrOn = false; state.encAddrText = "";
   loadDeliveryCatalog();
   renderConfirmation();
   decorateScreen();
@@ -1939,6 +2014,7 @@ function handleEventDateInput(el) {
 
 
 function renderConfirmation() {
+  SNAP_PAUSED = true; clearSnapshot();
   app.innerHTML = `
     <section class="screen center-screen">
       <img class="cover-seal" src="images/brand/icon.png" alt="Gizona Doces">
@@ -1949,6 +2025,7 @@ function renderConfirmation() {
   `;
 }
 function resetOrder() {
+  SNAP_PAUSED = false;
   state.category = null;
   state.box = null;
   state.flavors = {};
@@ -1961,6 +2038,8 @@ function resetOrder() {
   state.isoporBox = false;
   state.suggestQty = {};
   state.personalization = { birthday_name: "", age: "", theme: "", colors: "", custom_text: "", art_description: "" };
+  state.fulfillDel = null; state.fulfillEnc = null; state.encAddrOn = false; state.encAddrText = "";
+  clearSnapshot();
   go(state.guest ? "welcome" : "dashboard");
 }
 
@@ -2014,9 +2093,13 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
   if (auth.session && auth.customer) {
     syncOrderCustomerFromProfile();
     state.step = "dashboard";
-    await loadLoyaltyData();
   } else {
     state.step = "welcome";
   }
+  const snap = restoreSnapshot();           // volta para a mesma tela/dados de antes do refresh
+  if (snap) state.step = snap.step;
+  if (auth.session && auth.customer) { try { await loadLoyaltyData(); } catch (e) {} }
+  if (snap && ["cart", "category"].includes(state.step) && state.deliveryCatalog === null) { try { await loadDeliveryCatalog(); } catch (e) {} }
   render();
+  if (snap && snap.scroll) setTimeout(() => window.scrollTo({ top: snap.scroll }), 120);
 })();

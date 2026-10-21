@@ -259,3 +259,8 @@ input[type="checkbox"]{accent-color:var(--pink);}
 .new-order-alert{background:#FFF3C4;border:1px solid #E0A100;border-left:5px solid #E0A100;border-radius:12px;padding:12px 14px;margin-bottom:10px}
 .new-order-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 0;border-top:1px solid rgba(224,161,0,.35)}
 .nav-badge{margin-left:auto;background:#C0392B;color:#fff;border-radius:999px;font-size:11px;font-weight:700;min-width:18px;height:18px;padding:0 5px;display:inline-flex;align-items:center;justify-content:center}
+
+.cust-sugg{position:absolute;top:100%;left:0;right:0;z-index:30;background:#fff;border:1.5px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);max-height:240px;overflow:auto;margin-top:2px}
+.cust-sugg-item{padding:9px 12px;cursor:pointer;display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--ink);font-weight:500}
+.cust-sugg-item small{color:var(--muted)}
+.cust-sugg-item:hover{background:#fdf1f4}

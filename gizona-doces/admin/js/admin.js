@@ -578,13 +578,58 @@ function orderMoneyParts(o) {
   return { base: Number(base.toFixed(2)), desconto, frete, legacyWarn: legacy && adj > 0 && !frete && !desconto, legacyAdj: adj };
 }
 
+/* ---- Autocomplete de cliente do Clube Fidelidade (pedido manual) ---- */
+async function ofLoadCustomers() {
+  if (admin.data.ofCustomers) return admin.data.ofCustomers;
+  const { data } = await sb.from("customers").select("id, full_name, phone").order("full_name");
+  admin.data.ofCustomers = data || [];
+  return admin.data.ofCustomers;
+}
+const ofNorm = t => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+function ofBadge() {
+  const el = document.getElementById("ofCustBadge"); if (!el) return;
+  const id = document.getElementById("ofCustId").value;
+  const locked = document.getElementById("ofCustId").dataset.locked === "1";
+  el.innerHTML = id
+    ? `<span style="color:#2e7d32">✔ Cadastro do Clube vinculado${locked ? " (login no site)" : ""} — este pedido gera pontos quando entregue/concluído.</span>`
+    : `<span style="color:var(--muted)">Texto livre — sem vínculo com o Clube (não gera pontos). Digite as primeiras letras para buscar um cadastro.</span>`;
+}
+function ofHideSugg() { const b = document.getElementById("ofSugg"); if (b) b.style.display = "none"; }
+async function ofNameInput() {
+  const nameEl = document.getElementById("ofName"), idEl = document.getElementById("ofCustId"), box = document.getElementById("ofSugg");
+  if (!nameEl || !idEl || !box) return;
+  if (idEl.dataset.locked !== "1" && idEl.value && nameEl.value.trim() !== idEl.dataset.name) { idEl.value = ""; idEl.dataset.name = ""; }
+  ofBadge();
+  const q = ofNorm(nameEl.value);
+  if (q.length < 2 || (idEl.value && nameEl.value.trim() === idEl.dataset.name)) { box.style.display = "none"; return; }
+  const list = await ofLoadCustomers();
+  const hits = list.filter(c => ofNorm(c.full_name).split(/\s+/).some(w => w.startsWith(q)) || ofNorm(c.full_name).startsWith(q)).slice(0, 8);
+  if (!hits.length) { box.style.display = "none"; return; }
+  box.innerHTML = hits.map(c => `<div class="cust-sugg-item" onmousedown="ofPickCustomer('${c.id}')"><strong>${escapeHtml(c.full_name)}</strong><small>${escapeHtml(c.phone || "sem telefone")}</small></div>`).join("");
+  box.style.display = "block";
+}
+function ofPickCustomer(id) {
+  const c = (admin.data.ofCustomers || []).find(x => x.id === id); if (!c) return;
+  document.getElementById("ofName").value = c.full_name;
+  if (c.phone) document.getElementById("ofPhone").value = c.phone;
+  const idEl = document.getElementById("ofCustId");
+  idEl.value = c.id; idEl.dataset.name = c.full_name; idEl.dataset.phone = c.phone || "";
+  ofHideSugg(); ofBadge();
+}
+function ofPhoneInput() { /* telefone livre não desfaz o vínculo escolhido; o vínculo é pelo id do cadastro */ }
+
 function orderFormFields(o) {
   o = o || {};
   const ob = orderMoneyParts(o);
   return `
     <div class="form-grid">
-      <label>Cliente<input type="text" id="ofName" value="${o.customer_name || ""}"></label>
-      <label>Telefone/WhatsApp<input type="text" id="ofPhone" value="${o.customer_phone || ""}"></label>
+      <label style="position:relative">Cliente
+        <input type="text" id="ofName" value="${escapeHtml(o.customer_name || "")}" autocomplete="off" oninput="ofNameInput()" onfocus="ofNameInput()" onblur="setTimeout(ofHideSugg,180)">
+        <input type="hidden" id="ofCustId" value="${o.customer_id || ""}" data-name="${escapeHtml(o.customer_name || "")}" data-locked="${o.loyalty_link === "auth" ? "1" : ""}">
+        <div id="ofSugg" class="cust-sugg" style="display:none"></div>
+        <span id="ofCustBadge" class="hint" style="margin:0;font-weight:600"></span>
+      </label>
+      <label>Telefone/WhatsApp<input type="text" id="ofPhone" value="${escapeHtml(o.customer_phone || "")}" oninput="ofPhoneInput()"></label>
       <label>Tipo do pedido
         <select id="ofOrderType" onchange="onOrderTypeChange()">
           <option value="encomenda" ${(o.order_type || "encomenda") === "encomenda" ? "selected" : ""}>Encomenda</option>
@@ -780,6 +825,7 @@ function openManualOrderForm() {
   ["ofPay1Amount", "ofPay2Amount"].forEach(id => document.getElementById(id).addEventListener("input", checkPaymentSum));
   onOrderTypeChange();
   recalcOrderTotal();
+  ofBadge();
 }
 
 async function saveManualOrder() {
@@ -799,6 +845,7 @@ async function saveManualOrder() {
     origin: "manual",
     customer_name: name,
     customer_phone: phone,
+    customer_id: document.getElementById("ofCustId").value || null,
     order_type: document.getElementById("ofOrderType").value,
     event_date: document.getElementById("ofEventDate").value || null,
     items: isDelivery ? dItems : eItems,
@@ -840,6 +887,7 @@ function openOrderEditForm(id) {
   ["ofPay1Amount", "ofPay2Amount"].forEach(idAttr => document.getElementById(idAttr).addEventListener("input", checkPaymentSum));
   onOrderTypeChange(o);
   recalcOrderTotal();
+  ofBadge();
 }
 
 async function saveOrderEdit(id) {
@@ -851,6 +899,7 @@ async function saveOrderEdit(id) {
   const payload = {
     customer_name: document.getElementById("ofName").value.trim(),
     customer_phone: document.getElementById("ofPhone").value.trim(),
+    customer_id: document.getElementById("ofCustId").value || null,
     order_type: document.getElementById("ofOrderType").value,
     order_date: document.getElementById("ofOrderDate").value || null,
     event_date: document.getElementById("ofEventDate").value || null,
@@ -1446,15 +1495,14 @@ async function renderCustomerDetail(main) {
   if (isNew) { main.innerHTML = head + `<p class="hint">Cadastro manual: o cliente ainda não tem login no site. Se ele criar uma conta depois com o mesmo CPF, os pedidos e pontos serão unidos automaticamente.</p>` + form; return; }
 
   // dados do cliente
-  // pedidos vinculados ao cadastro + pedidos manuais feitos com o mesmo telefone
+  // só pedidos VINCULADOS ao cadastro contam (nada de ligar por nome/telefone)
   const [byId, byPhone] = await Promise.all([
     sb.from("orders").select("*").eq("customer_id", c.id),
-    c.phone ? sb.from("orders").select("*").eq("customer_phone", c.phone) : Promise.resolve({ data: [] }),
+    c.phone ? sb.from("orders").select("*").eq("customer_phone", c.phone).is("customer_id", null) : Promise.resolve({ data: [] }),
   ]);
   if (admin.data.custView !== id) return; // usuário mudou de tela enquanto carregava
-  const seen = new Set();
-  const ords = [...(byId.data || []), ...(byPhone.data || [])].filter(o => !seen.has(o.id) && seen.add(o.id))
-    .sort((x, y) => String(y.created_at).localeCompare(String(x.created_at)));
+  const ords = (byId.data || []).sort((x, y) => String(y.created_at).localeCompare(String(x.created_at)));
+  const unlinked = byPhone.data || [];
   const done = ords.filter(o => o.status === "delivered" || o.status === "completed");
   const spent = done.reduce((s, o) => s + Number(o.total || 0), 0);
   const card = custCard(c.id);
@@ -1528,6 +1576,7 @@ async function renderCustomerDetail(main) {
               <td><span class="badge ${o.status}">${STATUS_LABEL[o.status] || o.status}</span></td></tr>`;
           }).join("")}
         </tbody></table></div>` : `<p class="center-msg">Nenhuma compra registrada.</p>`}
+      ${unlinked.length ? `<p class="hint" style="margin-top:10px">⚠ ${unlinked.length} pedido${unlinked.length > 1 ? "s" : ""} com o mesmo telefone (${unlinked.map(o => escapeHtml(o.order_number || "")).join(", ")}) <strong>não estão vinculados</strong> a este cadastro e por isso não geram pontos. Para vincular, edite o pedido e escolha este cliente no campo "Cliente".</p>` : ""}
     </div>
 
     <div class="admin-card">

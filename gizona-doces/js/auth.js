@@ -73,6 +73,7 @@ async function auth_logout() {
   await sb.auth.signOut();
   auth.session = null;
   auth.customer = null;
+  if (typeof clearSnapshot === "function") clearSnapshot();
 }
 
 /* Envia e-mail de recuperação de senha */
