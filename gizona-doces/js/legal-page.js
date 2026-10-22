@@ -2,6 +2,7 @@
   const L = window.GIZONA_LEGAL || {};
   const todo = () => { const m = document.createElement("mark"); m.className = "lg-todo"; m.textContent = "[preencher]"; return m; };
   document.querySelectorAll("[data-l]").forEach(el => { const v = L[el.dataset.l]; if (v) el.textContent = v; else el.replaceChildren(todo()); });
+  document.querySelectorAll("[data-l-cnpj]").forEach(el => { el.textContent = L.cnpj ? ", CNPJ " + L.cnpj : ""; });
   document.querySelectorAll("[data-l-opt]").forEach(el => { el.textContent = L[el.dataset.lOpt] || el.dataset.default || ""; });
   document.querySelectorAll("[data-l-wa]").forEach(el => {
     const n = String(L.whatsapp || "").replace(/\D/g, "");

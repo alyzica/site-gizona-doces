@@ -6,13 +6,13 @@
 ============================================================ */
 window.GIZONA_LEGAL = {
   nomeFantasia: "Gizona Doces",
-  razaoSocial: "",            // ex.: "Giovanna ... — MEI" ou "Gizona Doces Ltda" (como está no CNPJ)
-  cnpj: "",                   // ex.: "00.000.000/0001-00"
+  razaoSocial: "Alysson Murari Izidorio",            // sem CNPJ: nome completo de quem responde pela Gizona Doces. Com MEI: o nome do CNPJ.
+  cnpj: "",                   // sem CNPJ: deixe vazio (aparece só o nome). Se abrirem MEI, preencha aqui.
   endereco: "Rua das Oliveiras, 74 – Vale das Nogueiras, Americana/SP", // confirme (CEP, se quiser incluir)
-  emailContato: "",           // e-mail para dúvidas, pedidos de privacidade (LGPD) e reclamações
+  emailContato: "gizonadoces@gmail.com", // e-mail para dúvidas, pedidos de privacidade (LGPD) e reclamações
   whatsapp: "5519997489773",  // só números, com 55 + DDD
   instagram: "https://www.instagram.com/gizonadoces/",
-  responsavelDados: "",       // nome de quem atende pedidos de privacidade (pode ser o(a) próprio(a) dono(a))
+  responsavelDados: "Alysson Murari Izidorio",       // nome de quem atende pedidos de privacidade (pode ser o(a) próprio(a) dono(a))
   atualizadoEm: "21/10/2026", // data da última revisão destes textos
   versao: "2026-10-21",       // muda sempre que os textos mudarem (gravada no aceite do cadastro)
 
