@@ -72,3 +72,13 @@ seu, sem depender de plataforma fechada. Quando quiser seguir pra essa etapa,
 - Fotos reais dos sabores (ainda não temos as fotos)
 - Upload de imagem de referência na personalização — por ora, a cliente pode
   mandar a foto de referência direto no WhatsApp depois de enviar o pedido
+
+## Dados legais, privacidade e cookies (LGPD)
+- Edite **só** `js/legal-config.js` (razão social, CNPJ, e-mail de contato, regras de cancelamento). Ele alimenta
+  `privacidade.html`, `termos.html`, `reembolso.html`, `cookies.html` e o rodapé do site.
+  Campos vazios aparecem como "[preencher]" nas páginas — preencha antes de divulgar.
+- Quando mudar os textos legais, atualize `atualizadoEm` e `versao` no mesmo arquivo.
+- O site só usa armazenamento essencial. **Se algum dia adicionar Google Analytics, pixel ou similar**, ele só pode
+  carregar se `GizonaConsent.has("analytics")` for verdadeiro (precisa criar a escolha no aviso) e as políticas devem ser atualizadas.
+- Rode `supabase/add_lgpd_consentimento.sql` para gravar o aceite da política no cadastro.
+- Fontes (Montserrat, licença OFL) ficam em `fonts/`, sem Google Fonts.

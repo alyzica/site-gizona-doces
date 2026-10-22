@@ -159,6 +159,7 @@ function decorateScreen() {
         <a class="footer-btn" href="${INSTAGRAM_URL}" target="_blank" rel="noopener" aria-label="Instagram">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.3" cy="6.7" r="1" fill="currentColor" stroke="none"/></svg>Instagram</a>
       </div>
+      ${window.GizonaConsent ? GizonaConsent.footerHtml() : ""}
       <p class="footer-copy">© ${new Date().getFullYear()} Gizona Doces · Todos os direitos reservados</p>
     </footer>`;
   if (!NAV_STEPS.includes(step)) { app.insertAdjacentHTML("beforeend", footer); return; }
@@ -219,6 +220,7 @@ function renderWelcome() {
           <svg viewBox="0 0 24 24" width="17" height="17" fill="none"><path d="M9 12a4 4 0 100-8 4 4 0 000 8zM3 21a6 6 0 0112 0M18 8v6M15 11h6" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>Criar meu cadastro
         </button>
         <button class="btn btn-link-white" onclick="go('guest-warning')">Continuar sem cadastro</button>
+        <p class="hint" style="color:#fff;text-align:center;font-size:12px;margin:6px 0 0">Ao criar cadastro você aceita a <a href="privacidade.html" target="_blank" rel="noopener" style="color:#fff;font-weight:700">Política de Privacidade</a> e os <a href="termos.html" target="_blank" rel="noopener" style="color:#fff;font-weight:700">Termos de Uso</a>.</p>
       </div>
     </section>
   `;
@@ -233,7 +235,7 @@ function renderLogin() {
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="#F06292" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <h2>Entrar na minha conta</h2>
       </div>
-      ${state.formError ? `<div class="form-error">${state.formError}</div>` : ""}
+      ${state.formError ? `<div class="form-error" role="alert">${state.formError}</div>` : ""}
       <div class="login-field">
         <label for="loginEmail"><svg viewBox="0 0 24 24" width="15" height="15" fill="none"><path d="M4 6h16v12H4V6z" stroke="#3D1A24" stroke-width="1.6"/><path d="M4 7l8 6 8-6" stroke="#3D1A24" stroke-width="1.6"/></svg>E-mail</label>
         <input type="email" id="loginEmail" placeholder="seu@email.com">
@@ -273,7 +275,7 @@ function renderForgotPassword() {
   app.innerHTML = `
     <section class="screen">
       <div class="screen-head pink"><h2>Esqueci minha senha</h2><p>Vamos te enviar um link</p></div>
-      ${state.formError ? `<div class="form-error">${state.formError}</div>` : ""}
+      ${state.formError ? `<div class="form-error" role="alert">${state.formError}</div>` : ""}
       <div id="forgotSuccess"></div>
       <div class="art-form">
         <label>E-mail<input type="email" id="forgotEmail" placeholder="seu@email.com"></label>
@@ -304,16 +306,9 @@ function renderRegister() {
   app.innerHTML = `
     <section class="screen">
       <div class="screen-head pink"><h2>Criar cadastro</h2><p>Preencha seus dados</p></div>
-      ${state.formError ? `<div class="form-error">${state.formError}</div>` : ""}
+      ${state.formError ? `<div class="form-error" role="alert">${state.formError}</div>` : ""}
       <div class="art-form">
         <label>Nome completo *<input type="text" id="regName"></label>
-        <label>Gênero
-          <select id="regGender">
-            <option value="">Prefiro não informar</option>
-            <option value="feminino">Feminino</option>
-            <option value="masculino">Masculino</option>
-          </select>
-        </label>
         <label>CPF *<input type="text" id="regCpf" placeholder="000.000.000-00" maxlength="14" oninput="maskCpf(this)"></label>
         <label>Telefone / WhatsApp *<input type="text" id="regPhone" placeholder="(19) 99999-9999" maxlength="15" oninput="maskPhone(this)"></label>
         <label>E-mail *<input type="email" id="regEmail"></label>
@@ -330,6 +325,8 @@ function renderRegister() {
           <label>UF<input type="text" id="regState" maxlength="2" style="text-transform:uppercase"></label>
         </div>
         <label>Complemento (opcional)<input type="text" id="regComplement"></label>
+        <p class="hint" style="margin:0">Pedimos só o necessário para pedidos, entrega e fidelidade. O CPF serve para identificar você e evitar cadastros duplicados no Clube.</p>
+        <label class="consent-row"><input type="checkbox" id="regConsent"> <span>Li e aceito a <a href="privacidade.html" target="_blank" rel="noopener">Política de Privacidade</a> e os <a href="termos.html" target="_blank" rel="noopener">Termos de Uso</a>. *</span></label>
       </div>
       <button class="btn btn-primary btn-block btn-lg" id="registerBtn" onclick="handleRegister()">Criar Cadastro</button>
       ${navButtons({ back: "welcome" })}
@@ -374,7 +371,6 @@ async function handleCepInput(el) {
 
 async function handleRegister() {
   const name = document.getElementById("regName").value.trim();
-  const gender = document.getElementById("regGender").value;
   const cpf = document.getElementById("regCpf").value.trim();
   const phone = document.getElementById("regPhone").value.trim();
   const email = document.getElementById("regEmail").value.trim();
@@ -389,12 +385,17 @@ async function handleRegister() {
     render();
     return;
   }
+  if (!document.getElementById("regConsent").checked) {
+    state.formError = "Para criar o cadastro, aceite a Política de Privacidade e os Termos de Uso.";
+    render();
+    return;
+  }
 
   const btn = document.getElementById("registerBtn");
   btn.disabled = true; btn.textContent = "Criando...";
   try {
     await auth_register({
-      name, gender, cpf, phone, email, password, number, complement,
+      name, cpf, phone, email, password, number, complement,
       cep: cep.replace(/\D/g, ""),
       ...addrFields,
     });
@@ -521,7 +522,7 @@ function renderProfile() {
   app.innerHTML = `
     <section class="screen">
       <div class="screen-head pink"><h2>Meu Perfil</h2></div>
-      ${state.formError ? `<div class="form-error">${state.formError}</div>` : ""}
+      ${state.formError ? `<div class="form-error" role="alert">${state.formError}</div>` : ""}
       <div class="art-form">
         <label>Nome completo<input type="text" id="prName" value="${c.full_name || ""}"></label>
         <label>Gênero
@@ -548,9 +549,40 @@ function renderProfile() {
       </div>
       <button class="btn btn-primary btn-block btn-lg" id="profileSaveBtn" onclick="handleProfileSave()">Salvar alterações</button>
       <button class="btn btn-link-pink" onclick="go('forgot-password')">Alterar senha</button>
+      <div class="cart-summary" id="privacyBox">
+        <p class="cart-section-title">Meus dados e privacidade</p>
+        <p class="hint">Você pode baixar uma cópia dos seus dados e pedir correção ou exclusão do cadastro a qualquer momento. Registros de pedidos precisam ser mantidos pelo prazo que a lei exige.</p>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button class="btn btn-ghost btn-block" onclick="downloadMyData()">Baixar meus dados</button>
+          <button class="btn btn-ghost btn-block" onclick="requestDataAction('correção')">Pedir correção de dados</button>
+          <button class="btn btn-ghost btn-block" onclick="requestDataAction('exclusão do cadastro')">Pedir exclusão do cadastro</button>
+        </div>
+        <p class="hint" style="margin-top:10px"><a href="privacidade.html" target="_blank" rel="noopener" style="color:var(--pink-dark);font-weight:700">Política de Privacidade</a> · <a href="termos.html" target="_blank" rel="noopener" style="color:var(--pink-dark);font-weight:700">Termos de Uso</a></p>
+      </div>
       ${navButtons({ back: "dashboard" })}
     </section>
   `;
+}
+async function downloadMyData() {
+  try {
+    const id = auth.customer.id;
+    const [c, o, l, m] = await Promise.all([
+      sb.from("customers").select("*").eq("id", id).maybeSingle(),
+      sb.from("orders").select("*").eq("customer_id", id),
+      sb.from("loyalty_cards").select("*").eq("customer_id", id).maybeSingle(),
+      sb.from("loyalty_movements").select("*").eq("customer_id", id),
+    ]);
+    const out = { gerado_em: new Date().toISOString(), cadastro: c.data, pedidos: o.data || [], fidelidade: l.data, movimentos_fidelidade: m.data || [] };
+    const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "meus-dados-gizona-doces.json";
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  } catch (e) { alert("Não foi possível gerar o arquivo agora. Tente de novo ou peça pelo WhatsApp."); }
+}
+function requestDataAction(kind) {
+  const L = window.GIZONA_LEGAL || {};
+  const c = auth.customer || {};
+  const msg = `Olá! Sou titular de dados e gostaria de solicitar: ${kind}.\nNome: ${c.full_name || ""}\nE-mail do cadastro: ${c.email || ""}`;
+  window.open(`https://wa.me/${L.whatsapp || WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank", "noopener");
 }
 async function handleProfileSave() {
   const btn = document.getElementById("profileSaveBtn");
@@ -780,10 +812,10 @@ function cartRemoveCake(i) { state.cakes.splice(i, 1); render(); }
 function productCard(o) {
   const photos = (o.photos || []).filter(Boolean);
   const listAttr = escapeAttr(JSON.stringify(photos)).replace(/"/g, "&quot;");
-  const one = (src, idx) => `<span class="pc-thumb" onclick="openPhoto(${listAttr}, ${idx})" role="button" aria-label="Ampliar foto ${idx + 1} de ${escapeAttr(o.name)}">
+  const one = (src, idx) => `<button type="button" class="pc-thumb" onclick="openPhoto(${listAttr}, ${idx})" aria-label="Ampliar foto ${idx + 1} de ${escapeAttr(o.name)}">
       <img src="${escapeAttr(src)}" alt="${escapeAttr(o.name)}" style="--img-scale:${idx === 0 ? (o.scale || 1) : (o.scale2 || 1)};--img-x:${idx === 0 ? (o.x || 50) : (o.x2 || 50)}%;--img-y:${idx === 0 ? (o.y || 50) : (o.y2 || 50)}%" onerror="this.parentElement.remove()">
-      <i class="pc-zoom"><svg viewBox="0 0 24 24" width="13" height="13" fill="none"><circle cx="11" cy="11" r="6" stroke="#fff" stroke-width="2"/><path d="M16 16l4 4M11 8.5v5M8.5 11h5" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></i>
-    </span>`;
+      <i class="pc-zoom" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none"><circle cx="11" cy="11" r="6" stroke="#fff" stroke-width="2"/><path d="M16 16l4 4M11 8.5v5M8.5 11h5" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></i>
+    </button>`;
   // 2 fotos do mesmo produto ficam uma embaixo da outra
   const thumb = photos.length
     ? `<span class="pc-photos">${photos.map(one).join("")}</span>`
@@ -801,9 +833,9 @@ function productCard(o) {
     </div>
     <div class="pc-bottom">
       <span class="stepper">
-        <button onclick="${o.minus}" ${o.minusOff ? "disabled" : ""}>–</button>
+        <button onclick="${o.minus}" ${o.minusOff ? "disabled" : ""} aria-label="Diminuir quantidade">–</button>
         <span>${o.qty}</span>
-        <button onclick="${o.plus}" ${o.plusOff ? "disabled" : ""}>+</button>
+        <button onclick="${o.plus}" ${o.plusOff ? "disabled" : ""} aria-label="Aumentar quantidade">+</button>
       </span>
       ${o.note ? `<span class="pc-note ${o.noteClass || ""}">${o.note}</span>` : ""}
     </div>
@@ -1348,15 +1380,15 @@ function renderCart() {
             <div class="cart-line-edit">
               <span>${i.name}</span>
               <span class="stepper">
-                <button onclick="cartChangeBrig('${i.id}', -1)">–</button>
+                <button onclick="cartChangeBrig('${i.id}', -1)" aria-label="Diminuir quantidade">–</button>
                 <span>${i.qty}</span>
-                <button onclick="cartChangeBrig('${i.id}', 1)">+</button>
+                <button onclick="cartChangeBrig('${i.id}', 1)" aria-label="Aumentar quantidade">+</button>
               </span>
               <select class="swap-select" onchange="swapBrigFlavor('${i.id}', this.value)">
                 <option value="">Trocar sabor...</option>
                 ${unusedBrigFlavors.map(p => `<option value="${p.id}">${p.name}</option>`).join("")}
               </select>
-              <button class="btn-remove" onclick="cartRemoveBrig('${i.id}')" title="Remover">✕</button>
+              <button class="btn-remove" onclick="cartRemoveBrig('${i.id}')" title="Remover" aria-label="Remover item">✕</button>
             </div>
           `).join("")}
           <div class="cart-line total"><span>Subtotal brigadeiros</span><strong>${fmt(b.brigSubtotal)}</strong></div>
@@ -1366,7 +1398,7 @@ function renderCart() {
         <div class="cart-summary">
           <p class="cart-section-title">Encomenda · ${cakeTitle(c)}</p>
           <div class="cart-line-edit"><span>${cakeDetails(c).map(escapeAttr).join("<br>")}</span>
-            <button class="btn-remove" onclick="cartRemoveCake(${c.idx})" title="Remover">✕</button></div>
+            <button class="btn-remove" onclick="cartRemoveCake(${c.idx})" title="Remover" aria-label="Remover item">✕</button></div>
           <div class="cart-line total"><span>Valor do bolo</span><strong>${fmt(c.price)}</strong></div>
         </div>`).join("")}
 
@@ -1377,11 +1409,11 @@ function renderCart() {
             <div class="cart-line-edit">
               <span>${i.name}</span>
               <span class="stepper">
-                <button onclick="cartChangeGeladinho('${i.id}', -1)">–</button>
+                <button onclick="cartChangeGeladinho('${i.id}', -1)" aria-label="Diminuir quantidade">–</button>
                 <span>${i.qty}</span>
-                <button onclick="cartChangeGeladinho('${i.id}', 1)">+</button>
+                <button onclick="cartChangeGeladinho('${i.id}', 1)" aria-label="Aumentar quantidade">+</button>
               </span>
-              <button class="btn-remove" onclick="cartRemoveGeladinho('${i.id}')" title="Remover">✕</button>
+              <button class="btn-remove" onclick="cartRemoveGeladinho('${i.id}')" title="Remover" aria-label="Remover item">✕</button>
             </div>
           `).join("")}
           <div class="cart-line total"><span>Subtotal geladinhos</span><strong>${fmt(b.gelaSubtotal)}</strong></div>
@@ -1401,11 +1433,11 @@ function renderCart() {
             <div class="cart-line-edit">
               <span>${i.name}<br><small class="muted">${fmt(Number(i.price))} / un.</small></span>
               <span class="stepper">
-                <button onclick="cartChangeDelivery('${i.id}', -1)">–</button>
+                <button onclick="cartChangeDelivery('${i.id}', -1)" aria-label="Diminuir quantidade">–</button>
                 <span>${i.qty}</span>
                 <button onclick="cartChangeDelivery('${i.id}', 1)" ${i.qty >= i.stock ? "disabled" : ""}>+</button>
               </span>
-              <button class="btn-remove" onclick="cartRemoveDelivery('${i.id}')" title="Remover">✕</button>
+              <button class="btn-remove" onclick="cartRemoveDelivery('${i.id}')" title="Remover" aria-label="Remover item">✕</button>
             </div>
           `).join("")}
           <div class="cart-line total"><span>Subtotal delivery</span><strong>${fmt(b.delSub)}</strong></div>
@@ -1432,6 +1464,7 @@ function renderCart() {
           <label>Nome completo<input type="text" value="${c.name}" oninput="c_update('name', this.value); paintBagTotals()"></label>
           <label>Telefone / WhatsApp<input type="text" placeholder="(19) 99999-9999" value="${c.phone}" oninput="maskPhone(this); c_update('phone', this.value); paintBagTotals()"></label>
         ` : `<p class="hint">Usaremos os dados do seu perfil (nome e telefone): <strong>${auth.customer.full_name}</strong>.</p>`}
+        <p class="hint" style="margin:0">Usamos seus dados apenas para atender este pedido. Veja a <a href="privacidade.html" target="_blank" rel="noopener" style="color:var(--pink-dark);font-weight:700">Política de Privacidade</a>.</p>
         ${fm === "delivery" ? renderAddressPicker() : ""}
         ${b.hasDel && b.hasEnc && modeDel() === "delivery" && modeEnc(b) === "delivery" ? `
           <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" ${state.encAddrOn ? "checked" : ""} onchange="setEncAddr(this.checked)"> Entregar a encomenda em outro endereço</label>
@@ -1454,7 +1487,7 @@ function renderCart() {
           <div class="coupon-applied"><span>${state.coupon.code}${state.coupon.description ? ` · ${state.coupon.description}` : ""}</span><button onclick="removeCoupon()">Remover</button></div>
         ` : `
           <div class="coupon-form">
-            <input type="text" id="couponInput" placeholder="CÓDIGO" value="${escapeAttr(state.couponInput || "")}" oninput="state.couponInput = this.value.toUpperCase(); this.value = state.couponInput" style="text-transform:uppercase">
+            <input type="text" id="couponInput" aria-label="Código do cupom" placeholder="CÓDIGO" value="${escapeAttr(state.couponInput || "")}" oninput="state.couponInput = this.value.toUpperCase(); this.value = state.couponInput" style="text-transform:uppercase">
             <button onclick="applyCoupon()">Adicionar</button>
           </div>`}
         ${state.couponMsg ? `<p class="coupon-msg ${state.coupon && state.coupon.valid ? "ok" : "bad"}">${state.couponMsg}</p>` : ""}
@@ -1919,9 +1952,9 @@ function renderSuggestions() {
               <strong>${p.name}</strong>
               <span class="suggest-price">${fmt(p.price)}</span>
               <span class="stepper small">
-                <button onclick="adjustSuggestQty('${p.id}', '${p.type}', -1)">–</button>
+                <button onclick="adjustSuggestQty('${p.id}', '${p.type}', -1)" aria-label="Diminuir quantidade">–</button>
                 <span>${qty}</span>
-                <button onclick="adjustSuggestQty('${p.id}', '${p.type}', 1)">+</button>
+                <button onclick="adjustSuggestQty('${p.id}', '${p.type}', 1)" aria-label="Aumentar quantidade">+</button>
               </span>
             </div>
             <button class="suggest-add" onclick="addSuggestion('${p.id}', '${p.type}')" title="Adicionar ao carrinho">🛒</button>

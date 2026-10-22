@@ -38,7 +38,7 @@ function renderLoyaltyClub() {
         const missing = Math.max(0, required - points);
         return `
           <div class="cart-summary reward-row">
-            ${r.image_url ? `<img class="reward-thumb" src="${r.image_url}" onerror="this.remove()">` : ""}
+            ${r.image_url ? `<img class="reward-thumb" src="${r.image_url}" alt="" onerror="this.remove()">` : ""}
             <div style="flex:1">
               <p class="cart-section-title" style="margin:0">${r.name}</p>
               <p class="small-line">${r.description || ""}</p>

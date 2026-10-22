@@ -1,3 +1,8 @@
+@font-face{font-family:"Montserrat";font-style:normal;font-weight:400;font-display:swap;src:url("../../fonts/Montserrat-Regular.woff") format("woff");}
+@font-face{font-family:"Montserrat";font-style:normal;font-weight:500;font-display:swap;src:url("../../fonts/Montserrat-Medium.woff") format("woff");}
+@font-face{font-family:"Montserrat";font-style:normal;font-weight:600;font-display:swap;src:url("../../fonts/Montserrat-SemiBold.woff") format("woff");}
+@font-face{font-family:"Montserrat";font-style:normal;font-weight:700;font-display:swap;src:url("../../fonts/Montserrat-Bold.woff") format("woff");}
+@font-face{font-family:"Montserrat";font-style:normal;font-weight:800;font-display:swap;src:url("../../fonts/Montserrat-ExtraBold.woff") format("woff");}
 :root{
   --pink:#F06292; --pink-dark:#E91E8C; --pink-soft:#FDE3EC;
   --ink:#3D1A24; --muted:#8C6B76; --border:#EFE3E8; --bg:#FAF6F4;
@@ -264,3 +269,8 @@ input[type="checkbox"]{accent-color:var(--pink);}
 .cust-sugg-item{padding:9px 12px;cursor:pointer;display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--ink);font-weight:500}
 .cust-sugg-item small{color:var(--muted)}
 .cust-sugg-item:hover{background:#fdf1f4}
+
+:focus-visible{outline:3px solid #1a5fd0;outline-offset:2px;}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
+
+:root{--pink:#C42B63;--pink-dark:#A8174F;--muted:#7A5A66;}

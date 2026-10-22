@@ -29,7 +29,7 @@ async function auth_loadCustomer() {
 }
 
 /* Cadastro: cria o login e o perfil do cliente */
-async function auth_register({ name, gender, cpf, phone, email, password, cep, street, number, complement, neighborhood, city, state }) {
+async function auth_register({ name, cpf, phone, email, password, cep, street, number, complement, neighborhood, city, state }) {
   const cpfDigits = cpf.replace(/\D/g, "");
 
   // Verifica se o CPF já existe antes de criar a conta
@@ -47,15 +47,18 @@ async function auth_register({ name, gender, cpf, phone, email, password, cep, s
 
   const userId = signUpData.user.id;
 
-  const { error: insertError } = await sb.from("customers").insert({
+  const row = {
     id: userId,
     full_name: name,
-    gender: gender || null,
     cpf: cpfDigits,
     phone,
     email,
     cep, street, number, complement, neighborhood, city, state,
-  });
+  };
+  const L = window.GIZONA_LEGAL || {};
+  let { error: insertError } = await sb.from("customers").insert({ ...row, privacy_accepted_at: new Date().toISOString(), privacy_version: L.versao || null });
+  // se o script de LGPD ainda não foi rodado no banco, cadastra sem os campos do aceite
+  if (insertError && /privacy_(accepted_at|version)/i.test(insertError.message || "")) ({ error: insertError } = await sb.from("customers").insert(row));
   if (insertError) throw insertError;
 
   auth.session = signUpData.session;

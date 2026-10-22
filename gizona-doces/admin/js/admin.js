@@ -953,7 +953,7 @@ function renderProductsTable(main) {
           <tbody>
             ${products.map(p => `
               <tr>
-                <td>${p.image_url ? `<img class="img-thumb" src="${p.image_url}" onerror="this.style.display='none'">` : ""}</td>
+                <td>${p.image_url ? `<img class="img-thumb" src="${p.image_url}" alt="Foto do produto ${escapeHtml(p.name || "")}" onerror="this.style.display='none'">` : ""}</td>
                 <td>${p.name}</td>
                 <td>${p.category === "brigadeiro" ? "Brigadeiro" : p.category === "geladinho" ? "Geladinho" : "Delivery"}</td>
                 <td>${fmt(p.price)}</td>
@@ -1077,7 +1077,7 @@ function productImagePreviewHTML(url, p, kind) {
   const scale = imageSetting(p, kind === "primary" ? "image_scale" : "image2_scale", 1);
   const x = imageSetting(p, kind === "primary" ? "image_position_x" : "image2_position_x", 50);
   const y = imageSetting(p, kind === "primary" ? "image_position_y" : "image2_position_y", 50);
-  return `<img src="${url}" style="--img-scale:${scale};--img-x:${x}%;--img-y:${y}%">`;
+  return `<img src="${url}" alt="Pré-visualização da imagem" style="--img-scale:${scale};--img-x:${x}%;--img-y:${y}%">`;
 }
 
 function updateProductImagePreview(prefix) {
@@ -1340,7 +1340,7 @@ async function handlePhotoUpload(inputEl, targetFieldId) {
     if (error) throw error;
     const { data: urlData } = sb.storage.from("photos").getPublicUrl(fileName);
     document.getElementById(targetFieldId).value = urlData.publicUrl;
-    previewEl.innerHTML = `<img src="${urlData.publicUrl}" style="--img-scale:1;--img-x:50%;--img-y:50%">`;
+    previewEl.innerHTML = `<img src="${urlData.publicUrl}" alt="Pré-visualização da imagem" style="--img-scale:1;--img-x:50%;--img-y:50%">`;
     const cropButton = document.querySelector(`button[onclick^="openImageCropper('${targetFieldId}'"]`);
     if (cropButton) cropButton.disabled = false;
     updateProductImagePreview(targetFieldId);
@@ -3802,7 +3802,7 @@ function openRewardForm(id) {
 
       <div class="photo-upload-box" style="margin-top:10px">
         <p class="photo-upload-label">Foto do mimo</p>
-        <div id="rfImagePreview" class="photo-preview">${reward && reward.image_url ? `<img src="${reward.image_url}" style="--img-scale:1;--img-x:50%;--img-y:50%">` : "Sem foto"}</div>
+        <div id="rfImagePreview" class="photo-preview">${reward && reward.image_url ? `<img src="${reward.image_url}" alt="Pré-visualização da imagem" style="--img-scale:1;--img-x:50%;--img-y:50%">` : "Sem foto"}</div>
         <input type="hidden" id="rfImage" value="${reward ? reward.image_url || "" : ""}">
         <input type="file" accept="image/*" onchange="handleRewardPhoto(this)">
         <p id="rfImageStatus" class="photo-status"></p>
@@ -3860,7 +3860,7 @@ async function handleRewardPhoto(inputEl) {
     if (error) throw error;
     const { data: urlData } = sb.storage.from("photos").getPublicUrl(fileName);
     document.getElementById("rfImage").value = urlData.publicUrl;
-    document.getElementById("rfImagePreview").innerHTML = `<img src="${urlData.publicUrl}" style="--img-scale:1;--img-x:50%;--img-y:50%">`;
+    document.getElementById("rfImagePreview").innerHTML = `<img src="${urlData.publicUrl}" alt="Pré-visualização da imagem" style="--img-scale:1;--img-x:50%;--img-y:50%">`;
     statusEl.textContent = `Pronto (${(compressed.size / 1024).toFixed(0)} KB)`;
   } catch (e) {
     console.error(e);
