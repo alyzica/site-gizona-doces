@@ -119,6 +119,7 @@ function renderShell() {
           <button class="${admin.tab === 'financeiro' ? 'active' : ''}" onclick="setTab('financeiro')">${navIcon("chart")}Financeiro</button>
           <button class="${admin.tab === 'estoque' ? 'active' : ''}" onclick="setTab('estoque')">${navIcon("box")}Estoque de Insumos</button>
           <button class="${admin.tab === 'estoque_produtos' ? 'active' : ''}" onclick="setTab('estoque_produtos')">${navIcon("cube")}Estoque de Produtos</button>
+          <button class="${admin.tab === 'planejamento' ? 'active' : ''}" onclick="setTab('planejamento')">${navIcon("calendar")}Produção e congelados</button>
           <button class="${admin.tab === 'receitas' ? 'active' : ''}" onclick="setTab('receitas')">${navIcon("book")}Receitas</button>
           <button class="${admin.tab === 'fichas' ? 'active' : ''}" onclick="setTab('fichas')">${navIcon("sheet")}Ficha técnica</button>
           <button class="${admin.tab === 'precificacao' ? 'active' : ''}" onclick="setTab('precificacao')">${navIcon("calc")}Precificação</button>
@@ -137,7 +138,7 @@ function renderShell() {
   updateNewOrdersUI();
   startNewOrderPolling();
 }
-const ADMIN_TABS = ["dashboard","orders","products","customers","caixa","financeiro","estoque","estoque_produtos","receitas","fichas","precificacao","calendario","cupons","entrega","rewards"];
+const ADMIN_TABS = ["dashboard","orders","products","customers","caixa","financeiro","estoque","estoque_produtos","planejamento","receitas","fichas","precificacao","calendario","cupons","entrega","rewards"];
 function saveNav() {
   try { localStorage.setItem("gz_admin_nav", JSON.stringify({ tab: admin.tab, finMonth: admin.data.finMonth || null, stockMonth: admin.data.stockMonth || null })); } catch (e) {}
 }
@@ -174,6 +175,7 @@ async function loadTab() {
     else if (admin.tab === "financeiro") await loadFinanceiro(main);
     else if (admin.tab === "estoque") await loadEstoque(main);
     else if (admin.tab === "estoque_produtos") await loadEstoqueProdutos(main);
+    else if (admin.tab === "planejamento") await loadPlanejamento(main);
     else if (admin.tab === "receitas") await loadReceitas(main);
     else if (admin.tab === "fichas") await loadFichas(main);
     else if (admin.tab === "precificacao") await loadPrecificacao(main);
@@ -714,6 +716,8 @@ function onOrderTypeChange(existing) {
     const lv = {};
     (b || []).forEach(x => { lv[x.product_id] = (lv[x.product_id] || 0) + Number(x.quantity); });
     (sl || []).forEach(x => { if (!x.reversed) lv[x.product_id] = (lv[x.product_id] || 0) - Number(x.quantity); });
+    const { data: wo } = await sb.from("delivery_stock_writeoffs").select("product_id,quantity");
+    (wo || []).forEach(x => { lv[x.product_id] = (lv[x.product_id] || 0) - Number(x.quantity); });
     admin.data.dStockLevels = Object.entries(lv).map(([product_id, stock]) => ({ product_id, stock }));
     addDeliveryLine();
   });
@@ -1848,13 +1852,15 @@ async function loadFinanceiro(main) {
   admin.data.cardPaid = admin.data.cardsOk ? (pay.data || []) : [];
   // identificação dos pedidos (número + cliente) e valor de venda do estoque restante
   await sb.rpc("rollover_delivery_stock"); // idempotente: só transfere sobras de mês já encerrado
-  const [ord, dp, db, ds, dt] = await Promise.all([
+  const [ord, dp, db, ds, dt, dw] = await Promise.all([
     sb.from("orders").select("id,order_number,customer_name"),
     sb.from("products").select("*").eq("category", "delivery"),
     sb.from("delivery_stock_batches").select("*"),
     sb.from("delivery_sales").select("*"),
     sb.from("delivery_stock_transfers").select("*"),
+    sb.from("delivery_stock_writeoffs").select("*"),
   ]);
+  admin.data.dWriteoffs = dw.error ? [] : (dw.data || []);
   admin.data.finOrders = {}; (ord.data || []).forEach(o => { admin.data.finOrders[o.id] = o; });
   // dados do estoque de produtos: o resultado projetado é calculado POR MÊS (stockMonthRows)
   admin.data.dProducts = (dp.data || []).filter(p => p.active !== false);
@@ -2580,13 +2586,16 @@ async function loadEstoqueProdutos(main) {
   const tr = await sb.from("delivery_stock_transfers").select("*").order("transferred_at", { ascending: false });
   admin.data.dTransfers = tr.error ? [] : (tr.data || []);
   if (!admin.data.stockMonth) admin.data.stockMonth = spToday().slice(0, 7);
-  const [pr, ba, sa, st, cu] = await Promise.all([
+  const [pr, ba, sa, st, cu, wo] = await Promise.all([
     sb.from("products").select("*").eq("category", "delivery").order("sort_order").order("name"),
     sb.from("delivery_stock_batches").select("*").order("produced_at", { ascending: false }),
     sb.from("delivery_sales").select("*, orders(order_number, customer_name)").order("created_at", { ascending: false }),
     sb.from("delivery_settings").select("*").eq("id", 1).maybeSingle(),
     sb.from("customers").select("id, full_name, email, phone").order("full_name"),
+    sb.from("delivery_stock_writeoffs").select("*").order("written_off_at", { ascending: false }).order("created_at", { ascending: false }),
   ]);
+  admin.data.woOk = !wo.error;                       // false = script add_baixa_congelados_planejamento.sql ainda não foi rodado
+  admin.data.dWriteoffs = wo.error ? [] : (wo.data || []);
   admin.data.dSettings = st.error ? null : st.data;
   admin.data.dCustomers = cu.error ? [] : (cu.data || []);
   if (pr.error) throw pr.error;
@@ -2604,9 +2613,10 @@ function deliveryStockRows() {
     const ss = admin.data.dSales.filter(x => x.product_id === p.id && !x.reversed);
     const produced = bs.reduce((t, b) => t + Number(b.quantity), 0);
     const sold = ss.reduce((t, x) => t + Number(x.quantity), 0);
+    const wasted = (admin.data.dWriteoffs || []).filter(w => w.product_id === p.id).reduce((t, w) => t + Number(w.quantity), 0);
     const invoiced = ss.reduce((t, x) => t + Number(x.quantity) * Number(x.unit_price), 0);
-    const stock = produced - sold;
-    return { p, produced, sold, stock, invoiced, potential: Math.max(stock, 0) * Number(p.price) };
+    const stock = produced - sold - wasted;
+    return { p, produced, sold, wasted, stock, invoiced, potential: Math.max(stock, 0) * Number(p.price) };
   });
 }
 
@@ -2622,8 +2632,9 @@ function stockMonthRows(key) {
     const sold = sales.filter(x => inM(x.sold_at)).reduce((t, x) => t + Number(x.quantity), 0);
     const estornos = sales.filter(x => x.reversed && inM(spDate(x.reversed_at) || x.sold_at)).reduce((t, x) => t + Number(x.quantity), 0);
     const invoiced = sales.filter(x => !x.reversed && inM(x.sold_at)).reduce((t, x) => t + Number(x.quantity) * Number(x.unit_price), 0);
-    const stock = tIn + produced - sold + estornos - tOut;
-    return { p, opening: tIn, produced, sold: sold - estornos, out: tOut, stock, invoiced, potential: Math.max(stock, 0) * Number(p.price) };
+    const wasted = (admin.data.dWriteoffs || []).filter(w => w.product_id === p.id && inM(w.written_off_at)).reduce((t, w) => t + Number(w.quantity), 0);
+    const stock = tIn + produced - sold + estornos - tOut - wasted;
+    return { p, opening: tIn, produced, sold: sold - estornos, wasted, out: tOut, stock, invoiced, potential: Math.max(stock, 0) * Number(p.price) };
   });
 }
 function setStockMonth(key) { if (key) { admin.data.stockMonth = key; saveNav(); renderEstoqueProdutos(document.getElementById("adminMain")); } }
@@ -2654,13 +2665,14 @@ function renderEstoqueProdutos(main) {
   main.innerHTML = `
     <div class="admin-topbar"><h1>Estoque de Produtos</h1>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-outline" onclick="openQuickSale()">Dar baixa rápida</button>
+        <button class="btn btn-outline" onclick="openQuickSale()">Venda rápida</button>
+        <button class="btn btn-outline" onclick="openWriteoffForm()">Baixa por perda/vencimento</button>
         <button class="btn btn-pink" onclick="openStockBatchForm()">+ Nova leva</button>
       </div>
     </div>
     ${renderDeliverySwitch()}
     <div id="notifyArea">${admin.data.showNotify ? renderNotifyPanel() : ""}</div>
-    <p class="hint">Produtos cadastrados em Produtos → Delivery. Toda venda dá baixa no estoque: pedidos do site e vendas feitas por fora (use <strong>Dar baixa rápida</strong>) — cancelar ou excluir o pedido devolve o produto.</p>
+    <p class="hint">Produtos cadastrados em Produtos → Delivery. Toda venda dá baixa no estoque: pedidos do site e vendas feitas por fora (use <strong>Venda rápida</strong>) — cancelar ou excluir o pedido devolve o produto.</p>
     <div id="stockFormArea"></div>
     <div class="admin-card" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <button class="btn btn-outline btn-sm" onclick="setStockMonth(shiftMonth('${skey}', -1))">‹</button>
@@ -2675,13 +2687,15 @@ function renderEstoqueProdutos(main) {
     </div>
     <div class="admin-card">
       ${rows.length ? `<table>
-        <thead><tr><th>Produto</th><th>Saldo anterior</th><th>Produzido</th><th>Vendido</th><th>Transferido</th><th>Estoque</th><th>Preço</th><th>Faturado</th><th>A faturar</th></tr></thead>
+        <thead><tr><th>Produto</th><th>Saldo anterior</th><th>Produzido</th><th>Vendido</th><th>Perdas</th><th>Transferido</th><th>Estoque</th><th>Preço</th><th>Faturado</th><th>A faturar</th></tr></thead>
         <tbody>${rows.map(r => `<tr>
-          <td><strong>${r.p.name}</strong></td><td>${r.opening}</td><td>${r.produced}</td><td>${r.sold}</td><td>${r.out ? `−${r.out}` : 0}</td>
+          <td><strong>${r.p.name}</strong></td><td>${r.opening}</td><td>${r.produced}</td><td>${r.sold}</td><td style="color:${r.wasted ? "#B23434" : "inherit"}">${r.wasted ? `−${r.wasted}` : 0}</td><td>${r.out ? `−${r.out}` : 0}</td>
           <td style="color:${r.stock <= 0 ? "#B23434" : "var(--ink)"}"><strong>${r.stock}</strong></td>
           <td>${fmt(r.p.price)}</td><td style="color:#2E7D46">${fmt(r.invoiced)}</td><td>${fmt(r.potential)}</td></tr>`).join("")}
         </tbody></table>` : `<p class="center-msg">Cadastre primeiro os produtos na aba Produtos → Delivery.</p>`}
     </div>
+    ${typeof renderValidityCard === "function" ? renderValidityCard() : ""}
+    ${typeof renderWasteCard === "function" ? renderWasteCard(skey) : ""}
     ${renderStockTransfers(skey)}
     <div class="admin-card">
       <h2>Movimentações — ${monthGroupLabel(skey)}</h2>
@@ -2695,8 +2709,8 @@ function renderEstoqueProdutos(main) {
     </div>
     <div class="admin-card">
       <h2>Levas produzidas — ${monthGroupLabel(skey)}</h2>
-      ${monthBatches.length ? `<table><thead><tr><th>Data</th><th>Produto</th><th>Qtd</th><th>Valor un.</th><th></th></tr></thead><tbody>
-        ${monthBatches.map(b => `<tr><td>${new Date(b.produced_at + "T00:00:00").toLocaleDateString("pt-BR")}</td><td>${nameOf(b.product_id)}</td><td>${b.quantity}</td><td>${fmt(b.unit_price)}</td>
+      ${monthBatches.length ? `<table><thead><tr><th>Data</th><th>Produto</th><th>Qtd</th><th>Valor un.</th><th>Validade</th><th></th></tr></thead><tbody>
+        ${monthBatches.map(b => `<tr><td>${new Date(b.produced_at + "T00:00:00").toLocaleDateString("pt-BR")}</td><td>${nameOf(b.product_id)}${b.origin === "descongelado" ? ` <span class="badge">descongelado</span>` : ""}</td><td>${b.quantity}</td><td>${fmt(b.unit_price)}</td><td>${b.expires_at ? new Date(b.expires_at + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
           <td style="display:flex;gap:6px"><button class="btn btn-outline btn-sm" onclick="openStockBatchForm('${b.id}');window.scrollTo(0,0)">Editar</button><button class="btn btn-danger btn-sm" onclick="deleteStockBatch('${b.id}')">Excluir</button></td></tr>`).join("")}
       </tbody></table>` : `<p class="center-msg">Nenhuma leva em ${monthGroupLabel(skey)}.</p>`}
     </div>
@@ -2722,6 +2736,7 @@ function openStockBatchForm(id) {
         <label>Quantidade produzida<input type="number" min="1" step="1" id="stQty" value="${b ? b.quantity : ""}"></label>
         <label>Valor de venda (R$)<input type="number" min="0" step="0.01" id="stPrice" value="${b ? b.unit_price : ""}"></label>
         <label>Data<input type="date" id="stDate" value="${b ? b.produced_at : new Date().toISOString().slice(0, 10)}"></label>
+        <label>Validade (opcional)<input type="date" id="stExpires" value="${b && b.expires_at ? b.expires_at : ""}"></label>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px">
         <button class="btn btn-pink" onclick="saveStockBatch('${id || ""}')">Salvar</button>
@@ -2735,6 +2750,8 @@ async function saveStockBatch(id) {
   const quantity = parseInt(document.getElementById("stQty").value);
   const unit_price = Number(document.getElementById("stPrice").value) || 0;
   const produced_at = document.getElementById("stDate").value;
+  const expEl = document.getElementById("stExpires");
+  const expires_at = expEl && expEl.value ? expEl.value : null;
   if (!product_id || !quantity || quantity <= 0) { alert("Informe o produto e a quantidade."); return; }
   if (id) {
     const row = deliveryStockRows().find(r => r.p.id === product_id);
@@ -2742,10 +2759,12 @@ async function saveStockBatch(id) {
     const newStock = (row ? row.stock : 0) - (old && old.product_id === product_id ? Number(old.quantity) : 0) + quantity;
     if (newStock < 0 && !confirm("Com essa quantidade o estoque ficaria negativo (já foi vendido mais do que isso). Salvar mesmo assim?")) return;
   }
+  const row = { product_id, quantity, unit_price, produced_at };
+  if (expires_at || id) row.expires_at = expires_at;     // coluna criada por add_baixa_congelados_planejamento.sql
   const { error } = id
-    ? await sb.from("delivery_stock_batches").update({ product_id, quantity, unit_price, produced_at }).eq("id", id)
-    : await sb.from("delivery_stock_batches").insert({ product_id, quantity, unit_price, produced_at });
-  if (error) { console.error(error); alert("Não foi possível salvar: " + (error.message || "")); return; }
+    ? await sb.from("delivery_stock_batches").update(row).eq("id", id)
+    : await sb.from("delivery_stock_batches").insert(row);
+  if (error) { console.error(error); alert(/expires_at/.test(error.message || "") ? "Para guardar a validade, rode primeiro o script add_baixa_congelados_planejamento.sql no Supabase." : "Não foi possível salvar: " + (error.message || "")); return; }
   // o preço informado passa a ser o preço do produto no delivery
   await sb.from("products").update({ price: unit_price }).eq("id", product_id);
   await loadEstoqueProdutos(document.getElementById("adminMain"));
@@ -4384,7 +4403,7 @@ function openQuickSale() {
   if (!admin.data.dProducts.length) { alert("Cadastre antes um produto em Produtos → Delivery."); return; }
   const today = new Date().toISOString().slice(0, 10);
   document.getElementById("stockFormArea").innerHTML = `
-    <div class="admin-card"><h2>Dar baixa rápida</h2>
+    <div class="admin-card"><h2>Venda rápida</h2>
       <p class="hint">Para vendas feitas por fora do site. Cria um pedido de delivery já entregue (aparece em Pedidos e no Financeiro) e o estoque diminui também no site.</p>
       <div class="form-grid">
         <label>Produto<select id="qsProduct" onchange="qsFill()">${admin.data.dProducts.map(p => `<option value="${p.id}" data-price="${p.price}">${p.name}</option>`).join("")}</select></label>
