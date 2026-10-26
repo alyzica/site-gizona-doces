@@ -13,8 +13,8 @@ window.GIZONA_LEGAL = {
   whatsapp: "5519997489773",  // só números, com 55 + DDD
   instagram: "https://www.instagram.com/gizonadoces/",
   responsavelDados: "Alysson Murari Izidorio",       // nome de quem atende pedidos de privacidade (pode ser o(a) próprio(a) dono(a))
-  atualizadoEm: "21/10/2026", // data da última revisão destes textos
-  versao: "2026-10-21",       // muda sempre que os textos mudarem (gravada no aceite do cadastro)
+  atualizadoEm: "26/10/2026", // data da última revisão destes textos
+  versao: "2026-10-26",       // muda sempre que os textos mudarem (gravada no aceite do cadastro)
 
   /* Regras de cancelamento/devolução que SÓ VOCÊS podem definir.
      Deixe "" para usar o texto neutro (a lei vale sempre).

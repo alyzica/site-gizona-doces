@@ -21,7 +21,7 @@
     footerHtml() {
       const base = window.GIZONA_BASE || "";
       const parts = [L.razaoSocial || L.nomeFantasia, L.cnpj ? "CNPJ " + L.cnpj : "", L.endereco].filter(Boolean).join(" · ");
-      return `<nav class="legal-links" aria-label="Documentos legais"><a href="${base}privacidade.html">Privacidade</a><a href="${base}termos.html">Termos de uso</a><a href="${base}reembolso.html">Trocas e reembolso</a><a href="${base}cookies.html">Cookies</a></nav>
+      return `<nav class="legal-links" aria-label="Documentos legais"><a href="${base}privacidade.html">Privacidade</a><a href="${base}termos.html">Termos de uso</a><a href="${base}reembolso.html">Cancelamentos e reembolsos</a><a href="${base}cookies.html">Cookies</a></nav>
         <p class="footer-legal">${parts}${L.emailContato ? " · " + L.emailContato : ""}</p>`;
     }
   };
