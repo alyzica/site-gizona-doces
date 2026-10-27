@@ -25,12 +25,16 @@ function renderLoyaltyClub() {
   const points = Number(state.loyaltyCard?.points || 0);
   app.innerHTML = `
     <section class="screen">
-      <div class="screen-head pink"><h2>Clube Fidelidade</h2><p>Quanto mais você compra, mais pontos acumula.</p></div>
+      <div class="screen-head pink"><h2>Clube Fidelidade</h2><p>Compre no delivery e acumule pontos.</p></div>
       <div class="cart-summary center-text">
         <div style="font-size:14px;color:var(--muted);margin-bottom:4px">Seu saldo</div>
         <div style="font-size:42px;font-weight:800;color:var(--pink)">${points}</div>
         <div style="font-weight:700">pontos</div>
-        <p class="hint" style="margin-top:8px">A cada R$ 1,00 em pedidos concluídos, você ganha 1 ponto.</p>
+      </div>
+      <div class="loy-rules">
+        <h3>Clube Fidelidade Gizona Doces</h3>
+        <p>A cada <strong>R$ 1,00</strong> gasto em produtos no <strong>delivery</strong>, você ganha <strong>1 ponto</strong> para trocar por mimos especiais!</p>
+        <p class="loy-important"><strong>Importante:</strong> os pontos são válidos exclusivamente para compras no delivery. Encomendas não acumulam pontos.</p>
       </div>
       <p class="cart-section-title" style="margin-top:6px">Mimos disponíveis</p>
       ${state.rewardsList && state.rewardsList.length ? state.rewardsList.map(r => {

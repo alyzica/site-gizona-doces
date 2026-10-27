@@ -419,3 +419,10 @@ button.pc-thumb{border:0;padding:0;background:none;cursor:zoom-in;display:block;
 .legal-links{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 14px;margin:0 0 8px;}
 .legal-links a{color:inherit;font-size:12px;text-decoration:underline;}
 .footer-legal{font-size:11.5px;line-height:1.5;opacity:.95;text-align:center;margin:6px 0 0;}
+
+/* ===== Clube Fidelidade: regra de pontos ===== */
+.loy-rules{background:#fff;border:1.5px solid var(--border);border-radius:24px;padding:20px 22px;box-shadow:0 10px 28px -14px rgba(224,72,124,.28);}
+.loy-rules h3{font-family:var(--font-display);font-size:17px;margin:0 0 8px;color:var(--ink);}
+.loy-rules p{margin:0 0 10px;font-size:14px;line-height:1.55;color:var(--ink);}
+.loy-rules strong{color:var(--pink-dark,#C42B63);}
+.loy-rules .loy-important{background:var(--pink-soft,#FFF0F5);border-radius:14px;padding:10px 12px;margin:0;font-size:13.5px;}

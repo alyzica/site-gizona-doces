@@ -1694,6 +1694,10 @@ async function loadCaixa(main) {
   const { data: entries, error } = await sb.from("cash_entries").select("*").order("entry_date", { ascending: false }).order("created_at", { ascending: false });
   if (error) throw error;
   admin.data.cashEntries = entries || [];
+  // Trocas (transferência Pix <-> dinheiro) ficam em tabela própria; se ainda não existir, o Caixa segue funcionando.
+  const tr = await sb.from("cash_transfers").select("*").order("transfer_date", { ascending: false }).order("created_at", { ascending: false });
+  admin.data.cashTransfersOk = !tr.error;
+  admin.data.cashTransfers = tr.error ? [] : (tr.data || []);
   renderCaixa(main);
 }
 
@@ -1710,9 +1714,17 @@ function renderCaixa(main) {
   const norm = m => { const t = String(m || "").toLowerCase(); return t.includes("pix") ? "pix" : t.includes("dinheiro") ? "dinheiro" : "outros"; };
   const bal = { dinheiro: 0, pix: 0, outros: 0 };
   entries.forEach(e => { bal[norm(e.payment_method)] += (e.type === "entrada" ? 1 : -1) * Number(e.amount); });
+  // Troca: só move saldo entre Pix e dinheiro; não entra em entradas, saídas, retiradas nem no saldo total.
+  const transfers = admin.data.cashTransfers || [];
+  transfers.forEach(t => { bal[t.from_method] -= Number(t.amount); bal[t.to_method] += Number(t.amount); });
+  const TRF_LABEL = { pix: "Pix", dinheiro: "Dinheiro" };
+  const history = [
+    ...entries.map(e => ({ kind: "entry", date: e.entry_date, created: e.created_at || "", e })),
+    ...transfers.map(t => ({ kind: "transfer", date: t.transfer_date, created: t.created_at || "", t })),
+  ].sort((a, b) => (a.date === b.date ? String(b.created).localeCompare(String(a.created)) : String(b.date).localeCompare(String(a.date))));
 
   main.innerHTML = `
-    <div class="admin-topbar"><h1>Caixa</h1><button class="btn btn-pink" onclick="openCashForm()">+ Nova movimentação</button></div>
+    <div class="admin-topbar"><h1>Caixa</h1><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-outline" onclick="openTransferForm()">⇄ Troca</button><button class="btn btn-pink" onclick="openCashForm()">+ Nova movimentação</button></div></div>
     <p class="hint">Controle 100% manual — nada aqui é lançado sozinho pelo sistema.</p>
 
     <div class="stat-grid">
@@ -1734,11 +1746,20 @@ function renderCaixa(main) {
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700"><input type="checkbox" id="caixaSelectAll" onchange="toggleAllCashEntries(this.checked)"> Selecionar todos</label>
         <button class="btn btn-danger btn-sm" onclick="deleteSelectedCashEntries()">Excluir selecionadas</button>
       </div>
-      ${entries.length ? `
+      ${history.length ? `
         <table>
           <thead><tr><th></th><th>Data</th><th>Tipo</th><th>Descrição</th><th>Pagamento</th><th>Valor</th><th></th></tr></thead>
           <tbody>
-            ${entries.map(e => `
+            ${history.map(h => h.kind === "transfer" ? (t => `
+              <tr>
+                <td></td>
+                <td>${new Date(t.transfer_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
+                <td><span class="badge-status confirmed">Troca</span></td>
+                <td>${t.description ? String(t.description).replace(/</g, "&lt;") : "Troca de saldo"}</td>
+                <td>${TRF_LABEL[t.from_method]} → ${TRF_LABEL[t.to_method]}</td>
+                <td><strong style="color:var(--muted)">⇄ ${fmt(t.amount)}</strong></td>
+                <td><button class="btn btn-outline btn-sm" onclick="deleteCashTransfer('${t.id}')">Excluir</button></td>
+              </tr>`)(h.t) : (e => `
               <tr>
                 <td><input type="checkbox" class="caixaCheck" value="${e.id}"></td>
                 <td>${new Date(e.entry_date + "T00:00:00").toLocaleDateString("pt-BR")}</td>
@@ -1748,7 +1769,7 @@ function renderCaixa(main) {
                 <td><strong style="color:${CAIXA_TYPE_COLOR[e.type]}">${e.type === "entrada" ? "+" : "−"} ${fmt(e.amount)}</strong></td>
                 <td><button class="btn btn-outline btn-sm" onclick="deleteCashEntry('${e.id}')">Excluir</button></td>
               </tr>
-            `).join("")}
+            `)(h.e)).join("")}
           </tbody>
         </table>
       ` : `<p class="center-msg">Nenhuma movimentação ainda.</p>`}
@@ -1787,6 +1808,66 @@ function openCashForm() {
       </div>
     </div>
   `;
+}
+
+function openTransferForm() {
+  if (!admin.data.cashTransfersOk) {
+    alert("A opção Troca ainda não foi ativada no banco. Rode o arquivo supabase/add_caixa_troca.sql no SQL Editor do Supabase e recarregue o painel.");
+    return;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById("cashFormArea").innerHTML = `
+    <div class="admin-card">
+      <h2>Troca entre Pix e dinheiro</h2>
+      <p class="hint">Só transfere saldo de uma modalidade para outra. Não conta como entrada nem como saída e não altera faturamento, despesas, resultado ou lucro.</p>
+      <div class="form-grid">
+        <label>Data<input type="date" id="trDate" value="${today}"></label>
+        <label>Valor da troca (R$)<input type="number" step="0.01" min="0" id="trAmount" placeholder="0,00"></label>
+        <label>Origem (de onde sai)
+          <select id="trFrom" onchange="syncTransferTo()"><option value="pix">Pix</option><option value="dinheiro">Dinheiro</option></select>
+        </label>
+        <label>Destino (para onde vai)
+          <select id="trTo"><option value="dinheiro">Dinheiro</option><option value="pix">Pix</option></select>
+        </label>
+        <label>Descrição (opcional)<input type="text" id="trDesc" placeholder="Ex: troquei Pix por dinheiro para o troco"></label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-pink" onclick="saveCashTransfer()">Registrar troca</button>
+        <button class="btn btn-outline" onclick="document.getElementById('cashFormArea').innerHTML=''">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+function syncTransferTo() {
+  const f = document.getElementById("trFrom").value;
+  document.getElementById("trTo").value = f === "pix" ? "dinheiro" : "pix";
+}
+async function saveCashTransfer() {
+  const payload = {
+    transfer_date: document.getElementById("trDate").value,
+    from_method: document.getElementById("trFrom").value,
+    to_method: document.getElementById("trTo").value,
+    amount: Math.round(Number(document.getElementById("trAmount").value) * 100) / 100,
+    description: document.getElementById("trDesc").value.trim() || null,
+  };
+  if (!payload.transfer_date || !(payload.amount > 0)) { alert("Informe a data e um valor maior que zero."); return; }
+  if (payload.from_method === payload.to_method) { alert("Origem e destino precisam ser diferentes."); return; }
+  const label = { pix: "Pix", dinheiro: "Dinheiro" };
+  const entries = admin.data.cashEntries || [];
+  let saldoOrigem = 0;
+  entries.forEach(e => { const t = String(e.payment_method || "").toLowerCase(); const m = t.includes("pix") ? "pix" : t.includes("dinheiro") ? "dinheiro" : "outros"; if (m === payload.from_method) saldoOrigem += (e.type === "entrada" ? 1 : -1) * Number(e.amount); });
+  (admin.data.cashTransfers || []).forEach(t => { if (t.from_method === payload.from_method) saldoOrigem -= Number(t.amount); if (t.to_method === payload.from_method) saldoOrigem += Number(t.amount); });
+  if (payload.amount > saldoOrigem + 0.004 && !confirm(`O saldo em ${label[payload.from_method]} (${fmt(saldoOrigem)}) é menor que a troca (${fmt(payload.amount)}). Registrar mesmo assim?`)) return;
+  const { error } = await sb.from("cash_transfers").insert(payload);
+  if (error) { console.error(error); alert("Não foi possível registrar a troca."); return; }
+  document.getElementById("cashFormArea").innerHTML = "";
+  await loadCaixa(document.getElementById("adminMain"));
+}
+async function deleteCashTransfer(id) {
+  if (!confirm("Excluir esta troca? Os saldos voltam ao que eram antes dela.")) return;
+  const { error } = await sb.from("cash_transfers").delete().eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível excluir."); return; }
+  await loadCaixa(document.getElementById("adminMain"));
 }
 
 async function saveCashEntry() {

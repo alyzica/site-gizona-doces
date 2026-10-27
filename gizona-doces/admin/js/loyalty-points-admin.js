@@ -52,7 +52,7 @@ function renderLoyaltyTable(main) {
           </div>
         </div>
         <div class="lp-points">
-          <div><div class="lp-points-t">${star} Pontos</div><div class="lp-sub">R$ 1,00 = 1 ponto</div></div>
+          <div><div class="lp-points-t">${star} Pontos</div><div class="lp-sub">R$ 1,00 no delivery = 1 ponto</div></div>
           ${stepper("adjustLoyaltyPoints", r.customer.id, r.points, true)}
         </div>
       </div>`).join("") : `<div class="admin-card"><p class="center-msg">Nenhum cliente cadastrado.</p></div>`}
