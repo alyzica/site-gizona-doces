@@ -1,0 +1,19 @@
+/* Layout para computador (telas largas). Só é carregado em >= 900px,
+   então o visual do celular não muda. */
+body{background:linear-gradient(160deg,#F6EDE4 0%,#FBE3EC 100%);background-attachment:fixed;}
+.wizard-wrap{background:transparent;padding:24px 0;}
+#app{max-width:1020px;min-height:calc(100vh - 48px);border-radius:28px;overflow:hidden;box-shadow:0 30px 80px -30px rgba(176,40,95,.35);}
+.screen{padding:0 56px 56px;gap:22px;}
+/* conteúdo comum fica numa coluna confortável, centralizada */
+.screen:not(.center-screen):not(.cover-screen) > *{width:100%;max-width:760px;margin-left:auto;margin-right:auto;}
+/* listas viram grade */
+.screen:not(.center-screen):not(.cover-screen) > .cat-choices{max-width:920px;display:grid;grid-template-columns:repeat(2,1fr);gap:18px;}
+.screen:not(.center-screen):not(.cover-screen) > .flavor-list{max-width:920px;display:grid;grid-template-columns:repeat(2,1fr);gap:14px;padding:14px;}
+.app-topbar{padding:16px 32px;}
+/* menu inferior vira uma barra flutuante, não esticada */
+.bottom-nav{max-width:560px;bottom:16px;border:1px solid var(--border);border-radius:22px;box-shadow:0 14px 40px -12px rgba(0,0,0,.25);}
+#app.has-nav{padding-bottom:104px;}
+.sticky-subtotal{bottom:96px;}
+.cover-logo{width:280px;}
+/* faixa rosa do topo ocupa a largura toda */
+.screen:not(.center-screen):not(.cover-screen) > .screen-head.pink{max-width:none;width:auto;margin:0 -56px 6px;padding:44px 56px 38px;}
