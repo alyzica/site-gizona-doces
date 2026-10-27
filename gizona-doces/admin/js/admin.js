@@ -107,8 +107,14 @@ function navIcon(name) {
 
 function renderShell() {
   root.innerHTML = `
-    <div class="admin-shell">
-      <aside class="admin-sidebar">
+    <div class="admin-shell" id="adminShell">
+      <header class="admin-mobilebar">
+        <button type="button" class="admin-burger" onclick="toggleAdminMenu()" aria-label="Abrir menu" aria-controls="adminSidebar" aria-expanded="false"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+        <img class="admin-top-logo" src="../images/brand/icon.png" alt="">
+        <strong id="adminTopTitle">Painel</strong>
+      </header>
+      <div class="admin-scrim" onclick="toggleAdminMenu(false)"></div>
+      <aside class="admin-sidebar" id="adminSidebar">
         <div class="admin-logo"><img class="seal" src="../images/brand/icon.png" alt="Gizona Doces"><span>Painel Admin<br>Gizona Doces</span></div>
         <nav class="admin-nav">
           <button class="${admin.tab === 'dashboard' ? 'active' : ''}" onclick="setTab('dashboard')">${navIcon("home")}Dashboard</button>
@@ -134,10 +140,20 @@ function renderShell() {
       <main class="admin-main" id="adminMain"><div class="center-msg">Carregando...</div></main>
     </div>
   `;
+  const act = root.querySelector(".admin-nav button.active");
+  const tt = document.getElementById("adminTopTitle");
+  if (act && tt) tt.textContent = act.textContent.trim();
   loadTab();
   updateNewOrdersUI();
   startNewOrderPolling();
 }
+function toggleAdminMenu(force) {
+  const sh = document.getElementById("adminShell"); if (!sh) return;
+  const open = typeof force === "boolean" ? force : !sh.classList.contains("menu-open");
+  sh.classList.toggle("menu-open", open);
+  const b = sh.querySelector(".admin-burger"); if (b) b.setAttribute("aria-expanded", open ? "true" : "false");
+}
+document.addEventListener("keydown", e => { if (e.key === "Escape") toggleAdminMenu(false); });
 const ADMIN_TABS = ["dashboard","orders","products","customers","caixa","financeiro","estoque","estoque_produtos","planejamento","receitas","fichas","precificacao","calendario","cupons","entrega","rewards"];
 function saveNav() {
   try { localStorage.setItem("gz_admin_nav", JSON.stringify({ tab: admin.tab, finMonth: admin.data.finMonth || null, stockMonth: admin.data.stockMonth || null })); } catch (e) {}
