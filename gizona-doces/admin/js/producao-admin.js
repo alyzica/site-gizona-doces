@@ -126,121 +126,202 @@ async function deleteWriteoff(id) {
 /* ============================================================
    PRODUÇÃO E CONGELADOS (aba)
 ============================================================ */
+/* =====================================================================
+   PRODUÇÃO E CONGELADOS — 3 seções na mesma aba
+   ① Planejamento de produção (usa a composição da Precificação)
+   ② Estoque de congelados (lotes, validades, alertas, prazos por produto)
+   ③ Retirada do freezer (baixa no lote + entrada no Estoque de produtos)
+   ===================================================================== */
+const pcNeedScript = () => `<div class="error-box">Para usar esta aba, rode no SQL Editor do Supabase, nesta ordem: <strong>add_baixa_congelados_planejamento.sql</strong> (se ainda não rodou) e <strong>add_producao_congelados_v2.sql</strong>. Depois recarregue o painel.</div>`;
+const frozenLeft = b => Number(b.quantity) - (admin.data.thaws || []).filter(t => t.frozen_batch_id === b.id).reduce((s, t) => s + Number(t.quantity), 0);
+const pcAddDays = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return d.toLocaleDateString("sv-SE"); };
+const pcDiffDays = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
+const pcNum = v => Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 3 });
+const pcSetting = pricingId => (admin.data.pcSettings || []).find(s => s.pricing_id === pricingId) || {};
+const pcSettingByProduct = productId => (admin.data.pcSettings || []).find(s => s.product_id === productId) || {};
+const pcAlertDays = () => Number((admin.data.pcConfig || {}).alert_days ?? 7);
+const pcPricingName = id => ((admin.data.pcPricings || []).find(p => p.id === id) || {}).name || "—";
+const pcPricing = id => (admin.data.pcPricings || []).find(p => p.id === id);
+
 async function loadPlanejamento(main) {
-  const [pl, pr, rc, fb, ft, ing] = await Promise.all([
-    sb.from("production_plans").select("*").order("created_at", { ascending: true }),
+  const [pl, pr, fb, ft, ps, st, cf, rn] = await Promise.all([
+    sb.from("production_plans").select("*").order("created_at", { ascending: false }),
     sb.from("products").select("id,name,price,active").eq("category", "delivery").order("name"),
-    sb.from("recipes").select("id,name,yield_qty,yield_unit, recipe_ingredients(quantity, ingredient_id, ingredients(name, unit, current_stock, package_qty, package_cost))").order("name"),
     sb.from("frozen_batches").select("*").order("frozen_at", { ascending: false }),
     sb.from("frozen_thaws").select("*").order("thawed_at", { ascending: false }),
-    sb.from("ingredients").select("id,name,unit,current_stock").order("name"),
+    sb.from("pricings").select("id,name,produced_qty").order("name"),
+    sb.from("production_settings").select("*"),
+    sb.from("production_config").select("*").eq("id", 1).maybeSingle(),
+    sb.from("production_runs").select("*").order("created_at", { ascending: false }).limit(20),
   ]);
-  admin.data.planOk = !(pl.error || fb.error || ft.error);
+  admin.data.planOk = !(pl.error || fb.error || ft.error || st.error || cf.error || rn.error);
   admin.data.plans = pl.error ? [] : (pl.data || []);
   admin.data.pAllProducts = pr.data || [];
-  admin.data.pRecipes = rc.error ? [] : (rc.data || []);
+  admin.data.pcPricings = ps.error ? [] : (ps.data || []);
+  admin.data.pcSettings = st.error ? [] : (st.data || []);
+  admin.data.pcConfig = cf.error ? {} : (cf.data || {});
+  admin.data.pcRuns = rn.error ? [] : (rn.data || []);
   admin.data.frozen = fb.error ? [] : (fb.data || []);
   admin.data.thaws = ft.error ? [] : (ft.data || []);
   if (!admin.data.dProducts) admin.data.dProducts = admin.data.pAllProducts;
+  admin.data.pcReq = admin.data.pcReq || {};
   renderPlanejamento(main);
 }
+const pcReload = () => loadPlanejamento(document.getElementById("adminMain"));
 
-const frozenLeft = b => Number(b.quantity) - (admin.data.thaws || []).filter(t => t.frozen_batch_id === b.id).reduce((s, t) => s + Number(t.quantity), 0);
-
-function renderPlanejamento(main) {
-  if (!admin.data.planOk) { main.innerHTML = `<div class="admin-topbar"><h1>Produção e congelados</h1></div>${woNeedScript()}`; return; }
-  const prods = admin.data.pAllProducts, recs = admin.data.pRecipes;
-  const frozen = admin.data.frozen.filter(b => frozenLeft(b) > 0);
-  const frozenByProd = {}; frozen.forEach(b => { frozenByProd[b.product_id] = (frozenByProd[b.product_id] || 0) + frozenLeft(b); });
-  const today = spToday();
-  main.innerHTML = `
-    <div class="admin-topbar"><h1>Produção e congelados</h1>
-      <div style="display:flex;gap:8px"><button class="btn btn-outline" onclick="openFreezeForm()">+ Registrar congelamento</button><button class="btn btn-pink" onclick="addPlanItem()">+ Item no plano</button></div></div>
-    <div id="planFormArea"></div>
-
-    <div class="admin-card"><h2>No freezer</h2>
-      <p class="hint">Congelados <strong>não entram no estoque de venda</strong>. Ao descongelar, você informa a validade e as unidades passam para o Estoque de Produtos com essa validade.</p>
-      ${frozen.length ? `<table><thead><tr><th>Produto</th><th>Congelado em</th><th>Quantidade</th><th>No freezer</th><th></th></tr></thead><tbody>
-        ${frozen.map(b => `<tr><td><strong>${escapeHtml(woProdName(b.product_id))}</strong>${b.note ? `<br><small style="color:var(--muted)">${escapeHtml(b.note)}</small>` : ""}</td><td>${woFmtDate(b.frozen_at)}</td><td>${b.quantity}</td><td><strong>${frozenLeft(b)}</strong></td>
-          <td style="display:flex;gap:6px"><button class="btn btn-pink btn-sm" onclick="openThawForm('${b.id}')">Descongelar</button><button class="btn btn-outline btn-sm" onclick="deleteFrozen('${b.id}')">Excluir</button></td></tr>`).join("")}
-      </tbody></table>
-      <p class="hint" style="margin-top:8px">Total por produto: ${Object.entries(frozenByProd).map(([id, q]) => `${escapeHtml(woProdName(id))}: <strong>${q}</strong>`).join(" · ")}</p>` : `<p class="hint">Nada no freezer. Use "+ Registrar congelamento" quando produzir para congelar.</p>`}
-      <div id="thawArea"></div>
-    </div>
-
-    <div class="admin-card"><h2>Descongelados recentemente</h2>
-      ${admin.data.thaws.length ? `<table><thead><tr><th>Descongelado em</th><th>Produto</th><th>Qtd</th><th>Validade</th><th></th></tr></thead><tbody>
-        ${admin.data.thaws.slice(0, 15).map(t => { const b = admin.data.frozen.find(x => x.id === t.frozen_batch_id); const exp = t.expires_at < today;
-          return `<tr><td>${woFmtDate(t.thawed_at)}</td><td>${escapeHtml(b ? woProdName(b.product_id) : "—")}</td><td>${t.quantity}</td><td style="${exp ? "color:#B23434;font-weight:700" : ""}">${woFmtDate(t.expires_at)}${exp ? " (vencido)" : ""}</td>
-          <td><button class="btn btn-outline btn-sm" onclick="undoThaw('${t.id}')">Desfazer</button></td></tr>`; }).join("")}
-      </tbody></table>` : `<p class="hint">Nenhum descongelamento ainda.</p>`}
-    </div>
-
-    <div class="admin-card"><h2>Plano de produção</h2>
-      <p class="hint">Escolha o produto, a receita, quantas vezes ela será feita e a data. A receita define a lista de compras; o calendário recebe o lembrete de produção.
-        Produtos sem receita cadastrada aparecem sem lista de compras: cadastre em <a href="#/receitas" onclick="setTab('receitas');return false">Receitas</a> e depois vincule aqui.</p>
-      ${admin.data.plans.length ? admin.data.plans.map(p => planRowHtml(p, prods, recs)).join("") : `<p class="hint">Nenhum item. Clique em "+ Item no plano".</p>`}
-    </div>
-    ${renderShoppingList()}
-  `;
+function pcLotStatus(b) {
+  const left = frozenLeft(b), today = spToday();
+  if (left <= 0) return { key: "esgotado", label: "Esgotado", color: "var(--muted)", left };
+  if (!b.expires_at) return { key: "semval", label: "Sem validade informada", color: "var(--muted)", left };
+  const d = pcDiffDays(today, b.expires_at);
+  if (d < 0) return { key: "vencido", label: `Vencido há ${-d} dia${d === -1 ? "" : "s"}`, color: "#B23434", left };
+  if (d <= pcAlertDays()) return { key: "vence", label: d === 0 ? "Vence hoje" : `Vence em ${d} dia${d === 1 ? "" : "s"}`, color: "#B26A00", left };
+  return { key: "ok", label: "Válido", color: "#2E7D46", left };
 }
 
-function planRowHtml(p, prods, recs) {
-  const st = { planejado: "Planejado", comprado: "Ingredientes comprados", produzido: "Produzido" };
-  const done = p.status === "produzido";
-  return `<div class="plan-row" style="border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px;${done ? "opacity:.65" : ""}">
-    <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
-      <strong>${escapeHtml(p.title)}</strong>
-      <span class="badge ${p.kind === "congelado" ? "confirmed" : "pending"}">${p.kind === "congelado" ? "Congelado" : "Fresco"}</span>
+function renderPlanejamento(main) {
+  const head = `<div class="admin-topbar"><h1>Produção e congelados</h1></div>`;
+  if (!admin.data.planOk) { main.innerHTML = head + pcNeedScript(); return; }
+  main.innerHTML = `${head}
+    <p class="hint">Três etapas, uma de cada vez: <strong>① planejar</strong> (só cálculo, nada é descontado), <strong>② conferir o freezer</strong> e <strong>③ retirar para a venda</strong>.</p>
+    <section class="pc-sec" id="pcSec1">${pcSec1Html()}</section>
+    <section class="pc-sec" id="pcSec2">${pcSec2Html()}</section>
+    <section class="pc-sec" id="pcSec3">${pcSec3Html()}</section>`;
+  pcCalcNew();
+  pcFillThaw(true);
+}
+
+/* ---------------- ① PLANEJAMENTO ---------------- */
+function pcReqTable(rows, opts = {}) {
+  if (!rows) return `<p class="hint">Calculando…</p>`;
+  if (!rows.length) return `<p class="hint">Este produto não tem insumos cadastrados na Precificação.</p>`;
+  const miss = rows.filter(r => Number(r.missing) > 0);
+  return `<div class="pc-tablewrap"><table class="pc-req"><thead><tr><th>Ingrediente / material</th><th>Necessário</th><th>No estoque</th><th>Falta comprar</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${escapeHtml(r.ingredient_name)}</td><td>${pcNum(r.needed)} ${escapeHtml(r.unit)}</td><td>${pcNum(r.in_stock)} ${escapeHtml(r.unit)}</td>
+      <td>${Number(r.missing) > 0 ? `<strong style="color:#B23434">${pcNum(r.missing)} ${escapeHtml(r.unit)}</strong>` : `<span style="color:#2E7D46">ok</span>`}</td></tr>`).join("")}
+  </tbody></table></div>
+  <p class="hint" style="margin-top:6px">${miss.length ? `<strong>${miss.length}</strong> item(ns) para comprar. ` : "Tudo em estoque. "}${opts.confirm ? "Estes insumos serão descontados do estoque ao confirmar a produção." : "Planejamento apenas: nada é descontado do estoque enquanto você não confirmar a produção."}</p>`;
+}
+async function pcFetchReq(pricingId, batches) {
+  const { data, error } = await sb.rpc("production_requirements", { p_pricing: pricingId, p_batches: batches });
+  if (error) { console.error(error); return { error: error.message || "Não foi possível calcular." }; }
+  return { rows: data || [] };
+}
+function pcYieldLine(pricingId, batches) {
+  const p = pcPricing(pricingId); if (!p) return "";
+  const per = Number(p.produced_qty || 0);
+  return `<p class="pc-yield">1 receita de produção rende <strong>${pcNum(per)}</strong> · ${pcNum(batches)} receita(s) = <strong>${pcNum(per * batches)}</strong> unidades</p>`;
+}
+function pcSec1Html() {
+  const pricings = admin.data.pcPricings;
+  const pending = admin.data.plans.filter(p => p.status !== "produzido");
+  const runs = admin.data.pcRuns || [];
+  return `<h2 class="pc-h"><span class="pc-n">1</span> Planejamento de produção</h2>
+    <p class="hint">Escolha o produto: os ingredientes e receitas vêm da <strong>Precificação</strong> (nada é cadastrado de novo). O cálculo usa o número de <em>receitas de produção</em> e as proporções cadastradas.</p>
+    <div class="admin-card pc-new">
+      <h3>Novo planejamento</h3>
+      ${pricings.length ? `<div class="form-grid">
+        <label>Produto (Precificação)<select id="pcnPricing" onchange="pcCalcNew()">${pricings.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("")}</select></label>
+        <label>Receitas de produção<input type="number" min="0.5" step="0.5" id="pcnBatches" value="1" oninput="pcCalcNew()"></label>
+        <label>Data prevista (opcional)<input type="date" id="pcnDate"></label>
+      </div>
+      <div id="pcnYield"></div>
+      <div id="pcnReq"></div>
+      <div class="pc-actions"><button class="btn btn-pink" onclick="pcSavePlan()">Salvar planejamento</button></div>` : `<p class="hint">Nenhum produto na Precificação ainda. Cadastre em <a href="#/precificacao" onclick="setTab('precificacao');return false">Precificação</a>.</p>`}
     </div>
-    ${p.note ? `<p class="hint" style="margin:4px 0 8px">${escapeHtml(p.note)}</p>` : ""}
-    <div class="form-grid" style="margin-top:8px">
-      <label>Produto (estoque)<select id="pl_prod_${p.id}"><option value="">— sem vínculo —</option>${prods.map(x => `<option value="${x.id}" ${x.id === p.product_id ? "selected" : ""}>${escapeHtml(x.name)}</option>`).join("")}</select></label>
-      <label>Receita<select id="pl_rec_${p.id}"><option value="">— sem receita —</option>${recs.map(x => `<option value="${x.id}" ${x.id === p.recipe_id ? "selected" : ""}>${escapeHtml(x.name)}</option>`).join("")}</select></label>
-      <label>Quantas vezes a receita<input type="number" min="0.5" step="0.5" id="pl_bat_${p.id}" value="${p.recipe_batches}"></label>
-      <label>Unidades a sair (opcional)<input type="number" min="1" step="1" id="pl_qty_${p.id}" value="${p.target_qty || ""}"></label>
-      <label>Data de produção<input type="date" id="pl_date_${p.id}" value="${p.planned_date || ""}"></label>
-      <label>Situação<select id="pl_st_${p.id}">${Object.entries(st).map(([k, v]) => `<option value="${k}" ${k === p.status ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+    <h3 class="pc-sub">Planejamentos em aberto</h3>
+    ${pending.length ? pending.map(pcPlanCard).join("") : `<p class="hint">Nenhum planejamento em aberto.</p>`}
+    ${runs.length ? `<details class="pc-details"><summary>Produções já confirmadas (${runs.length})</summary>
+      <div class="pc-tablewrap"><table><thead><tr><th>Data</th><th>Produto</th><th>Receitas</th><th>Produzido</th><th>Congelado</th><th>Para venda</th></tr></thead><tbody>
+      ${runs.map(r => `<tr><td>${woFmtDate(r.produced_at)}</td><td>${escapeHtml(pcPricingName(r.pricing_id))}</td><td>${pcNum(r.recipe_batches)}</td><td>${r.produced_qty}</td><td>${r.frozen_qty}</td><td>${r.stock_qty}</td></tr>`).join("")}
+      </tbody></table></div></details>` : ""}`;
+}
+let pcCalcTimer = null;
+function pcCalcNew() {
+  const sel = document.getElementById("pcnPricing"); if (!sel) return;
+  const b = Number(document.getElementById("pcnBatches").value);
+  document.getElementById("pcnYield").innerHTML = b > 0 ? pcYieldLine(sel.value, b) : "";
+  const box = document.getElementById("pcnReq");
+  if (!(b > 0)) { box.innerHTML = `<p class="hint">Informe a quantidade de receitas.</p>`; return; }
+  box.innerHTML = `<p class="hint">Calculando…</p>`;
+  clearTimeout(pcCalcTimer);
+  pcCalcTimer = setTimeout(async () => {
+    const r = await pcFetchReq(sel.value, b);
+    if (!document.getElementById("pcnReq")) return;
+    document.getElementById("pcnReq").innerHTML = r.error ? `<div class="error-box">${escapeHtml(r.error)}</div>` : pcReqTable(r.rows);
+  }, 250);
+}
+async function pcSavePlan() {
+  const pricingId = document.getElementById("pcnPricing").value, batches = Number(document.getElementById("pcnBatches").value);
+  if (!pricingId || !(batches > 0)) { alert("Escolha o produto e a quantidade de receitas."); return; }
+  const set = pcSetting(pricingId);
+  const { error } = await sb.from("production_plans").insert({
+    title: pcPricingName(pricingId), pricing_id: pricingId, product_id: set.product_id || null, recipe_batches: batches,
+    planned_date: document.getElementById("pcnDate").value || null, kind: "congelado", status: "planejado",
+  });
+  if (error) { console.error(error); alert("Não foi possível salvar o planejamento."); return; }
+  await pcReload();
+}
+function pcPlanCard(p) {
+  const pr = pcPricing(p.pricing_id);
+  const exp = pr ? Number(pr.produced_qty || 0) * Number(p.recipe_batches) : null;
+  const pricings = admin.data.pcPricings;
+  return `<div class="pc-plan" id="pcPlan_${p.id}">
+    <div class="pc-plan-head"><strong>${escapeHtml(p.pricing_id ? pcPricingName(p.pricing_id) : p.title)}</strong>
+      <span class="pc-chip">${p.planned_date ? "Previsto: " + woFmtDate(p.planned_date) : "Sem data"}</span></div>
+    ${!p.pricing_id ? `<p class="hint" style="color:#B26A00">Este item é antigo e ainda não está ligado a um produto da Precificação. Escolha abaixo para calcular os insumos.</p>` : ""}
+    <div class="form-grid">
+      <label>Produto (Precificação)<select id="pp_pr_${p.id}"><option value="">— escolher —</option>${pricings.map(x => `<option value="${x.id}" ${x.id === p.pricing_id ? "selected" : ""}>${escapeHtml(x.name)}</option>`).join("")}</select></label>
+      <label>Receitas de produção<input type="number" min="0.5" step="0.5" id="pp_bat_${p.id}" value="${p.recipe_batches}"></label>
+      <label>Data prevista<input type="date" id="pp_date_${p.id}" value="${p.planned_date || ""}"></label>
     </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
-      <button class="btn btn-pink btn-sm" onclick="savePlan('${p.id}')">Salvar</button>
+    ${exp != null ? `<p class="pc-yield">${pcNum(p.recipe_batches)} receita(s) × ${pcNum(pr.produced_qty)} = <strong>${pcNum(exp)}</strong> unidades esperadas</p>` : ""}
+    <div id="ppReq_${p.id}">${admin.data.pcReq[p.id] ? pcReqTable(admin.data.pcReq[p.id]) : ""}</div>
+    <div id="ppConf_${p.id}"></div>
+    <div class="pc-actions">
+      <button class="btn btn-outline btn-sm" onclick="pcSavePlanEdit('${p.id}')">Salvar alterações</button>
+      <button class="btn btn-outline btn-sm" onclick="pcShowReq('${p.id}')">Ver insumos e compras</button>
+      <button class="btn btn-pink btn-sm" onclick="pcOpenConfirm('${p.id}')">Confirmar produção</button>
       <button class="btn btn-outline btn-sm" onclick="planToCalendar('${p.id}')">${(p.event_ids || []).length ? "Atualizar no calendário" : "Colocar no calendário"}</button>
-      ${p.kind === "congelado" && !done ? `<button class="btn btn-outline btn-sm" onclick="planProduced('${p.id}')">Produzi e congelei</button>` : ""}
+      <button class="btn btn-outline btn-sm" onclick="pcShopReminder('${p.id}')">Lembrete de compra</button>
       <button class="btn btn-outline btn-sm" onclick="deletePlan('${p.id}')">Excluir</button>
     </div>
   </div>`;
 }
-
-/* ---------- Plano: salvar / calendário / produzido ---------- */
-function planFields(id) {
-  const g = k => document.getElementById(`pl_${k}_${id}`).value;
-  return { product_id: g("prod") || null, recipe_id: g("rec") || null, recipe_batches: Number(g("bat")) || 1, target_qty: parseInt(g("qty")) || null, planned_date: g("date") || null, status: g("st") };
+function pcPlanFields(id) {
+  const g = k => document.getElementById(`pp_${k}_${id}`).value;
+  const pricingId = g("pr") || null;
+  return { pricing_id: pricingId, product_id: pricingId ? (pcSetting(pricingId).product_id || null) : null, title: pricingId ? pcPricingName(pricingId) : (admin.data.plans.find(x => x.id === id) || {}).title,
+    recipe_batches: Number(g("bat")) || 1, planned_date: g("date") || null };
 }
-async function savePlan(id) {
-  const { error } = await sb.from("production_plans").update(planFields(id)).eq("id", id);
+async function pcSavePlanEdit(id) {
+  const { error } = await sb.from("production_plans").update(pcPlanFields(id)).eq("id", id);
   if (error) { console.error(error); alert("Não foi possível salvar."); return; }
-  await loadPlanejamento(document.getElementById("adminMain"));
+  delete admin.data.pcReq[id];
+  await pcReload();
 }
-async function addPlanItem() {
-  const title = (prompt("Nome do item (ex.: Bolo de pote Choconinho):") || "").trim();
-  if (!title) return;
-  const kind = confirm("É um produto para CONGELAR?\n\nOK = congelado · Cancelar = fresco") ? "congelado" : "fresco";
-  const { error } = await sb.from("production_plans").insert({ title, kind });
-  if (error) { console.error(error); alert("Não foi possível adicionar."); return; }
-  await loadPlanejamento(document.getElementById("adminMain"));
+async function pcShowReq(id) {
+  const f = pcPlanFields(id);
+  if (!f.pricing_id) { alert("Escolha o produto da Precificação primeiro."); return; }
+  const box = document.getElementById("ppReq_" + id); box.innerHTML = `<p class="hint">Calculando…</p>`;
+  const r = await pcFetchReq(f.pricing_id, f.recipe_batches);
+  if (r.error) { box.innerHTML = `<div class="error-box">${escapeHtml(r.error)}</div>`; return; }
+  admin.data.pcReq[id] = r.rows;
+  box.innerHTML = pcReqTable(r.rows);
 }
 async function deletePlan(id) {
-  if (!confirm("Excluir este item do plano? Os eventos já criados no calendário continuam lá.")) return;
+  if (!confirm("Excluir este planejamento? Eventos já criados no calendário continuam lá. Produções já confirmadas não são afetadas.")) return;
   const { error } = await sb.from("production_plans").delete().eq("id", id);
   if (error) { console.error(error); alert("Não foi possível excluir."); return; }
-  await loadPlanejamento(document.getElementById("adminMain"));
+  await pcReload();
 }
 async function planToCalendar(id) {
-  const f = planFields(id);
-  const p = admin.data.plans.find(x => x.id === id);
-  if (!f.planned_date) { alert("Escolha a data de produção antes."); return; }
+  const f = pcPlanFields(id), p = admin.data.plans.find(x => x.id === id);
+  if (!f.planned_date) { alert("Escolha a data prevista antes."); return; }
   await sb.from("production_plans").update(f).eq("id", id);
-  const title = `Produzir: ${p.title}${f.target_qty ? ` (${f.target_qty} un.)` : ""}`;
+  const pr = pcPricing(f.pricing_id);
+  const qty = pr ? Number(pr.produced_qty || 0) * f.recipe_batches : null;
+  const title = `Produzir: ${f.title}${qty ? ` (${pcNum(qty)} un.)` : ""}`;
   const ids = Array.isArray(p.event_ids) ? p.event_ids : [];
   let res;
   if (ids.length) res = await sb.from("production_events").update({ event_date: f.planned_date, title }).eq("id", ids[0]);
@@ -250,121 +331,241 @@ async function planToCalendar(id) {
   }
   if (res.error) { console.error(res.error); alert("Não foi possível criar o evento no calendário."); return; }
   alert("Pronto! O calendário está atualizado.");
-  await loadPlanejamento(document.getElementById("adminMain"));
+  await pcReload();
 }
-async function planProduced(id) {
-  const f = planFields(id);
-  if (!f.product_id) { alert("Vincule antes o produto do estoque (se ele ainda não existe, cadastre em Produtos → Delivery)."); return; }
-  const q = parseInt(prompt("Quantas unidades foram para o freezer?", f.target_qty || "") || "");
-  if (!q || q <= 0) return;
-  const r1 = await sb.from("frozen_batches").insert({ product_id: f.product_id, quantity: q, frozen_at: spToday(), note: "Do plano de produção" });
-  if (r1.error) { console.error(r1.error); alert("Não foi possível registrar o congelamento."); return; }
-  await sb.from("production_plans").update({ ...f, status: "produzido" }).eq("id", id);
-  await loadPlanejamento(document.getElementById("adminMain"));
+async function pcShopReminder(id) {
+  const f = pcPlanFields(id);
+  if (!f.pricing_id) { alert("Escolha o produto da Precificação primeiro."); return; }
+  const date = prompt("Data do lembrete de compra (AAAA-MM-DD):", spToday());
+  if (!date) return;
+  const r = await pcFetchReq(f.pricing_id, f.recipe_batches);
+  if (r.error) { alert(r.error); return; }
+  const items = r.rows.filter(x => Number(x.missing) > 0).map(x => `${x.ingredient_name} (${pcNum(x.missing)} ${x.unit})`);
+  const { error } = await sb.from("production_events").insert({ event_date: date, title: "Comprar ingredientes: " + f.title, category: "outro", description: items.length ? items.join(", ") : "Conferir lista de compras" });
+  if (error) { console.error(error); alert("Não foi possível criar o lembrete."); return; }
+  alert("Lembrete de compra criado no calendário.");
 }
 
-/* ---------- Congelados: registrar / descongelar / desfazer ---------- */
+/* ---- Confirmação da produção ---- */
+async function pcOpenConfirm(id) {
+  const f = pcPlanFields(id), box = document.getElementById("ppConf_" + id);
+  if (!f.pricing_id) { alert("Escolha o produto da Precificação primeiro."); return; }
+  await sb.from("production_plans").update(f).eq("id", id);
+  const set = pcSetting(f.pricing_id);
+  if (!set.product_id) { box.innerHTML = `<div class="error-box">Este produto ainda não está ligado a um produto do <strong>Estoque de produtos</strong>. Ligue em "Prazos e vínculo por produto" (seção ②) e volte aqui.</div>`; return; }
+  const pr = pcPricing(f.pricing_id), exp = Number(pr.produced_qty || 0) * f.recipe_batches, today = spToday();
+  box.innerHTML = `<div class="pc-confirm"><h4>Confirmar o que foi realmente produzido</h4><div id="pcfReq" data-id="${id}"><p class="hint">Calculando insumos…</p></div>
+    <div class="form-grid">
+      <label>Quantidade produzida *<input type="number" min="1" step="1" id="pcfProd" value="${exp || ""}" oninput="pcfCalc('${id}')"></label>
+      <label>Quantidade congelada *<input type="number" min="0" step="1" id="pcfFroz" value="${exp || ""}" oninput="pcfCalc('${id}')"></label>
+      <label>Data da produção<input type="date" id="pcfPDate" value="${today}" onchange="pcfCalc('${id}',true)"></label>
+      <label>Data do congelamento<input type="date" id="pcfFDate" value="${today}" onchange="pcfCalc('${id}',true)"></label>
+      <label>Validade no freezer<input type="date" id="pcfFExp"></label>
+      <label>Validade do que fica para venda<input type="date" id="pcfSExp"></label>
+    </div>
+    <p class="hint" id="pcfInfo"></p>
+    <div class="pc-actions"><button class="btn btn-pink" id="pcfBtn" onclick="pcConfirmRun('${id}')">Confirmar produção e descontar insumos</button>
+    <button class="btn btn-outline" onclick="document.getElementById('ppConf_${id}').innerHTML=''">Cancelar</button></div></div>`;
+  pcfCalc(id, true);
+  const r = await pcFetchReq(f.pricing_id, f.recipe_batches);
+  const rb = document.getElementById("pcfReq"); if (rb) rb.innerHTML = r.error ? `<div class="error-box">${escapeHtml(r.error)}</div>` : pcReqTable(r.rows, { confirm: true });
+}
+function pcfCalc(id, refreshDates) {
+  const p = admin.data.plans.find(x => x.id === id); const set = pcSetting(p.pricing_id);
+  const prod = parseInt(document.getElementById("pcfProd").value) || 0, froz = parseInt(document.getElementById("pcfFroz").value) || 0;
+  if (refreshDates) {
+    const fd = document.getElementById("pcfFDate").value, pd = document.getElementById("pcfPDate").value;
+    document.getElementById("pcfFExp").value = fd && set.freezer_days ? pcAddDays(fd, set.freezer_days) : "";
+    document.getElementById("pcfSExp").value = pd && set.thaw_days ? pcAddDays(pd, set.thaw_days) : "";
+  }
+  const stock = prod - froz;
+  const warn = [];
+  if (froz > prod) warn.push("A quantidade congelada não pode passar da produzida.");
+  if (froz > 0 && !set.freezer_days) warn.push("Defina a validade do freezer deste produto em \"Prazos e vínculo\" (ou preencha a data manualmente).");
+  if (stock > 0 && !set.thaw_days) warn.push("Defina a validade após descongelar deste produto em \"Prazos e vínculo\" (ou preencha a data manualmente).");
+  document.getElementById("pcfInfo").innerHTML = `Vão para o <strong>freezer</strong>: ${Math.max(0, Math.min(froz, prod))} · vão direto para o <strong>estoque de produtos</strong>: ${Math.max(0, stock)}` + (warn.length ? `<br><span style="color:#B23434">${warn.join("<br>")}</span>` : "");
+}
+async function pcConfirmRun(id) {
+  const g = k => document.getElementById(k).value;
+  const prod = parseInt(g("pcfProd")), froz = parseInt(g("pcfFroz") || "0");
+  if (!(prod > 0)) { alert("Informe a quantidade produzida."); return; }
+  if (isNaN(froz) || froz < 0 || froz > prod) { alert("A quantidade congelada deve estar entre 0 e a produzida."); return; }
+  if (froz > 0 && !g("pcfFExp")) { alert("Informe a validade no freezer."); return; }
+  if (prod - froz > 0 && !g("pcfSExp")) { alert("Informe a validade das unidades que ficam para venda."); return; }
+  if (!confirm(`Confirmar?\n\n• Os insumos do planejamento serão descontados do estoque\n• ${froz} unidade(s) entram no freezer\n• ${prod - froz} unidade(s) entram no estoque de produtos`)) return;
+  const btn = document.getElementById("pcfBtn"); btn.disabled = true; btn.textContent = "Confirmando…";
+  const { error } = await sb.rpc("confirm_production", { p_plan: id, p_produced: prod, p_frozen: froz, p_produced_at: g("pcfPDate"), p_frozen_at: g("pcfFDate") || null, p_freezer_expires: g("pcfFExp") || null, p_fresh_expires: g("pcfSExp") || null, p_note: null });
+  if (error) { console.error(error); alert("Não foi possível confirmar: " + (error.message || "")); btn.disabled = false; btn.textContent = "Confirmar produção e descontar insumos"; return; }
+  await pcReload();
+}
+
+/* ---------------- ② ESTOQUE DE CONGELADOS ---------------- */
+function pcSec2Html() {
+  const all = admin.data.frozen, showAll = !!admin.data.pcShowAll;
+  const lots = all.filter(b => showAll || frozenLeft(b) > 0)
+    .sort((a, b) => (woProdName(a.product_id)).localeCompare(woProdName(b.product_id)) || String(a.frozen_at).localeCompare(String(b.frozen_at)));
+  const alerts = all.map(b => ({ b, s: pcLotStatus(b) })).filter(x => x.s.key === "vencido" || x.s.key === "vence");
+  const byProd = {}; all.forEach(b => { const l = frozenLeft(b); if (l > 0) byProd[b.product_id] = (byProd[b.product_id] || 0) + l; });
+  return `<h2 class="pc-h"><span class="pc-n">2</span> Estoque de congelados</h2>
+    <p class="hint">Produtos já produzidos que estão no freezer. <strong>Não entram no estoque de venda</strong> até serem retirados (seção ③).</p>
+    ${alerts.length ? `<div class="pc-alert">${alerts.map(x => `<div>⚠ <strong>${escapeHtml(woProdName(x.b.product_id))}</strong> (lote ${escapeHtml(x.b.lot_code || woFmtDate(x.b.frozen_at))}, ${frozenLeft(x.b)} un.): <span style="color:${x.s.color};font-weight:700">${x.s.label}</span></div>`).join("")}</div>` : ""}
+    <div class="admin-card">
+      <div class="pc-actions" style="margin:0 0 10px"><label class="pc-check"><input type="checkbox" ${showAll ? "checked" : ""} onchange="admin.data.pcShowAll=this.checked;pcReload()"> Mostrar lotes esgotados</label>
+        <button class="btn btn-outline btn-sm" onclick="openFreezeForm()">+ Lançar lote manualmente</button></div>
+      <div id="pcFreezeForm"></div>
+      ${lots.length ? `<div class="pc-tablewrap"><table><thead><tr><th>Produto</th><th>Lote</th><th>Congelado</th><th>Produção / congelamento</th><th>Validade no freezer</th><th>Situação</th><th></th></tr></thead><tbody>
+        ${lots.map(b => { const s = pcLotStatus(b); return `<tr>
+          <td><strong>${escapeHtml(woProdName(b.product_id))}</strong></td>
+          <td>${escapeHtml(b.lot_code || "—")}</td>
+          <td><strong>${s.left}</strong> <small style="color:var(--muted)">de ${b.quantity}</small></td>
+          <td>${woFmtDate(b.produced_at || b.frozen_at)}${b.produced_at && b.produced_at !== b.frozen_at ? ` / ${woFmtDate(b.frozen_at)}` : ""}</td>
+          <td>${b.expires_at ? woFmtDate(b.expires_at) : "—"}</td>
+          <td><span class="pc-badge" style="color:${s.color};border-color:${s.color}">${s.label}</span></td>
+          <td class="pc-rowact"><button class="btn btn-pink btn-sm" ${s.left <= 0 || s.key === "vencido" ? "disabled" : ""} onclick="pcPickLot('${b.id}')">Retirar</button>
+            <button class="btn btn-outline btn-sm" onclick="pcToggleLot('${b.id}')">Detalhes</button></td></tr>
+          <tr id="pcLotDet_${b.id}" style="display:none"><td colspan="7">${pcLotDetails(b)}</td></tr>`; }).join("")}
+      </tbody></table></div>
+      <p class="hint" style="margin-top:8px">Total por produto: ${Object.entries(byProd).map(([id, q]) => `${escapeHtml(woProdName(id))}: <strong>${q}</strong>`).join(" · ") || "—"}</p>` : `<p class="hint">Nada no freezer. Confirme uma produção na seção ① para criar um lote.</p>`}
+    </div>
+    ${pcSettingsHtml()}`;
+}
+function pcLotDetails(b) {
+  const th = admin.data.thaws.filter(t => t.frozen_batch_id === b.id);
+  const run = (admin.data.pcRuns || []).find(r => r.id === b.production_run_id);
+  return `<div class="pc-lotdet">
+    ${run ? `<p class="hint">Veio da produção de ${woFmtDate(run.produced_at)}: ${pcNum(run.recipe_batches)} receita(s), ${run.produced_qty} produzidas, ${run.frozen_qty} congeladas${run.stock_qty ? `, ${run.stock_qty} foram direto para o estoque de produtos` : ""}.</p>` : `<p class="hint">Lote lançado manualmente${b.note ? ": " + escapeHtml(b.note) : ""}.</p>`}
+    <div class="pc-actions" style="margin:4px 0"><label style="font-size:12.5px">Ajustar validade no freezer <input type="date" id="pcExp_${b.id}" value="${b.expires_at || ""}"></label>
+      <button class="btn btn-outline btn-sm" onclick="pcSaveLotExp('${b.id}')">Salvar validade</button>
+      <button class="btn btn-outline btn-sm" onclick="deleteFrozen('${b.id}')">Excluir lote</button></div>
+    ${th.length ? `<div class="pc-tablewrap"><table><thead><tr><th>Retirado em</th><th>Qtd</th><th>Validade após descongelar</th><th></th></tr></thead><tbody>
+      ${th.map(t => `<tr><td>${woFmtDate(t.thawed_at)}</td><td>${t.quantity}</td><td>${woFmtDate(t.expires_at)}</td><td><button class="btn btn-outline btn-sm" onclick="undoThaw('${t.id}')">Desfazer</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="hint">Nenhuma retirada deste lote.</p>`}
+  </div>`;
+}
+function pcToggleLot(id) { const r = document.getElementById("pcLotDet_" + id); if (r) r.style.display = r.style.display === "none" ? "" : "none"; }
+async function pcSaveLotExp(id) {
+  const v = document.getElementById("pcExp_" + id).value || null;
+  const { error } = await sb.from("frozen_batches").update({ expires_at: v }).eq("id", id);
+  if (error) { console.error(error); alert("Não foi possível salvar."); return; }
+  await pcReload();
+}
+function pcSettingsHtml() {
+  const pricings = admin.data.pcPricings, prods = admin.data.pAllProducts;
+  return `<details class="pc-details" ${admin.data.pcSetOpen ? "open" : ""} ontoggle="admin.data.pcSetOpen=this.open"><summary>Prazos e vínculo por produto</summary>
+    <p class="hint">Para cada produto: qual item do <strong>Estoque de produtos</strong> ele abastece e os prazos em dias. Os prazos ficam em branco até você preencher: o sistema não assume nenhum valor. Use os prazos reais e seguros de cada preparação.</p>
+    ${pricings.length ? `<div class="pc-tablewrap"><table><thead><tr><th>Produto (Precificação)</th><th>Produto no estoque</th><th>Validade no freezer (dias)</th><th>Validade após descongelar (dias)</th><th></th></tr></thead><tbody>
+    ${pricings.map(p => { const s = pcSetting(p.id); return `<tr><td>${escapeHtml(p.name)}</td>
+      <td><select id="ps_prod_${p.id}"><option value="">— escolher —</option>${prods.map(x => `<option value="${x.id}" ${x.id === s.product_id ? "selected" : ""}>${escapeHtml(x.name)}</option>`).join("")}</select></td>
+      <td><input type="number" min="1" step="1" id="ps_fz_${p.id}" value="${s.freezer_days || ""}" style="width:90px"></td>
+      <td><input type="number" min="1" step="1" id="ps_th_${p.id}" value="${s.thaw_days || ""}" style="width:90px"></td>
+      <td><button class="btn btn-outline btn-sm" onclick="pcSaveSetting('${p.id}')">Salvar</button></td></tr>`; }).join("")}
+    </tbody></table></div>` : `<p class="hint">Cadastre os produtos na Precificação primeiro.</p>`}
+    <div class="pc-actions" style="margin-top:10px"><label style="font-size:13px">Avisar lotes que vencem em até <input type="number" min="0" step="1" id="pcAlertDays" value="${pcAlertDays()}" style="width:70px"> dias</label>
+      <button class="btn btn-outline btn-sm" onclick="pcSaveAlert()">Salvar aviso</button></div>
+  </details>`;
+}
+async function pcSaveSetting(pricingId) {
+  const g = k => document.getElementById(`ps_${k}_${pricingId}`).value;
+  const row = { pricing_id: pricingId, product_id: g("prod") || null, freezer_days: parseInt(g("fz")) || null, thaw_days: parseInt(g("th")) || null, updated_at: new Date().toISOString() };
+  const { error } = await sb.from("production_settings").upsert(row, { onConflict: "pricing_id" });
+  if (error) { console.error(error); alert("Não foi possível salvar."); return; }
+  admin.data.pcSetOpen = true;
+  await pcReload();
+}
+async function pcSaveAlert() {
+  const v = parseInt(document.getElementById("pcAlertDays").value);
+  if (isNaN(v) || v < 0) { alert("Informe um número de dias."); return; }
+  const { error } = await sb.from("production_config").upsert({ id: 1, alert_days: v }, { onConflict: "id" });
+  if (error) { console.error(error); alert("Não foi possível salvar."); return; }
+  admin.data.pcSetOpen = true;
+  await pcReload();
+}
+/* lançar lote manualmente (mantido) */
 function openFreezeForm() {
   const prods = admin.data.pAllProducts;
-  document.getElementById("planFormArea").innerHTML = `<div class="admin-card"><h2>Registrar congelamento</h2>
-    <p class="hint">Produto não aparece? Cadastre em Produtos → Delivery (pode ficar inativo no site).</p>
+  document.getElementById("pcFreezeForm").innerHTML = `<div class="pc-confirm"><h4>Lançar lote manualmente</h4>
+    <p class="hint">Use para algo que já estava no freezer. Produto não aparece? Cadastre em Produtos → Delivery (pode ficar inativo no site).</p>
     <div class="form-grid">
       <label>Produto<select id="fzProd">${prods.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("")}</select></label>
       <label>Quantidade<input type="number" min="1" step="1" id="fzQty"></label>
-      <label>Data<input type="date" id="fzDate" value="${spToday()}"></label>
+      <label>Data do congelamento<input type="date" id="fzDate" value="${spToday()}"></label>
+      <label>Validade no freezer<input type="date" id="fzExp"></label>
       <label>Observação (opcional)<input type="text" id="fzNote"></label>
     </div>
-    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-pink" onclick="saveFreeze()">Salvar</button>
-    <button class="btn btn-outline" onclick="document.getElementById('planFormArea').innerHTML=''">Cancelar</button></div></div>`;
+    <div class="pc-actions"><button class="btn btn-pink" onclick="saveFreeze()">Salvar</button>
+    <button class="btn btn-outline" onclick="document.getElementById('pcFreezeForm').innerHTML=''">Cancelar</button></div></div>`;
 }
 async function saveFreeze() {
   const quantity = parseInt(document.getElementById("fzQty").value);
   if (!quantity || quantity <= 0) { alert("Informe a quantidade."); return; }
-  const { error } = await sb.from("frozen_batches").insert({ product_id: document.getElementById("fzProd").value, quantity, frozen_at: document.getElementById("fzDate").value || spToday(), note: document.getElementById("fzNote").value.trim() || null });
+  const date = document.getElementById("fzDate").value || spToday();
+  const { error } = await sb.from("frozen_batches").insert({ product_id: document.getElementById("fzProd").value, quantity, frozen_at: date, produced_at: date, expires_at: document.getElementById("fzExp").value || null, note: document.getElementById("fzNote").value.trim() || null });
   if (error) { console.error(error); alert("Não foi possível salvar."); return; }
-  await loadPlanejamento(document.getElementById("adminMain"));
+  await pcReload();
 }
 async function deleteFrozen(id) {
-  if (!confirm("Excluir este registro de congelamento? Descongelamentos já feitos continuam no estoque.")) return;
+  if (!confirm("Excluir este lote do freezer? Retiradas já feitas continuam no estoque de produtos.")) return;
   const { error } = await sb.from("frozen_batches").delete().eq("id", id);
   if (error) { console.error(error); alert("Não foi possível excluir."); return; }
-  await loadPlanejamento(document.getElementById("adminMain"));
-}
-function openThawForm(id) {
-  const b = admin.data.frozen.find(x => x.id === id); if (!b) return;
-  document.getElementById("thawArea").innerHTML = `<div style="border:1.5px solid var(--pink);border-radius:12px;padding:12px;margin-top:12px">
-    <strong>Descongelar — ${escapeHtml(woProdName(b.product_id))}</strong> <small>(no freezer: ${frozenLeft(b)})</small>
-    <div class="form-grid" style="margin-top:8px">
-      <label>Quantidade a descongelar<input type="number" min="1" max="${frozenLeft(b)}" step="1" id="thQty" value="${frozenLeft(b)}"></label>
-      <label>Data de descongelamento<input type="date" id="thDate" value="${spToday()}"></label>
-      <label>Validade após descongelar *<input type="date" id="thExp"></label>
-    </div>
-    <p class="hint">Defina a validade conforme a sua regra de segurança alimentar para esse produto. As unidades entram no Estoque de Produtos com essa data.</p>
-    <div style="display:flex;gap:8px"><button class="btn btn-pink btn-sm" onclick="saveThaw('${id}')">Descongelar e levar ao estoque</button>
-    <button class="btn btn-outline btn-sm" onclick="document.getElementById('thawArea').innerHTML=''">Cancelar</button></div></div>`;
-}
-async function saveThaw(id) {
-  const qty = parseInt(document.getElementById("thQty").value), exp = document.getElementById("thExp").value, dt = document.getElementById("thDate").value || spToday();
-  if (!qty || qty <= 0) { alert("Informe a quantidade."); return; }
-  if (!exp) { alert("Informe a validade."); return; }
-  if (exp < dt) { alert("A validade não pode ser anterior à data de descongelamento."); return; }
-  const { error } = await sb.rpc("thaw_frozen_batch", { p_frozen: id, p_qty: qty, p_expires: exp, p_thawed: dt });
-  if (error) { console.error(error); alert("Não foi possível descongelar: " + (error.message || "")); return; }
-  await loadPlanejamento(document.getElementById("adminMain"));
-}
-async function undoThaw(id) {
-  if (!confirm("Desfazer este descongelamento? As unidades saem do estoque e voltam ao freezer.")) return;
-  const { error } = await sb.rpc("undo_thaw", { p_thaw: id });
-  if (error) { console.error(error); alert(error.message || "Não foi possível desfazer."); return; }
-  await loadPlanejamento(document.getElementById("adminMain"));
+  await pcReload();
 }
 
-/* ---------- Lista de compras (a partir das receitas do plano) ---------- */
-function shoppingNeeds() {
-  const plans = admin.data.plans.filter(p => p.status === "planejado" && p.recipe_id);
-  const need = {};
-  plans.forEach(p => {
-    const rec = admin.data.pRecipes.find(r => r.id === p.recipe_id); if (!rec) return;
-    (rec.recipe_ingredients || []).forEach(ri => {
-      const ing = ri.ingredients || {}; const k = ri.ingredient_id;
-      const n = need[k] = need[k] || { name: ing.name || "—", unit: ing.unit || "", stock: Number(ing.current_stock || 0), pkgQty: Number(ing.package_qty || 0), pkgCost: Number(ing.package_cost || 0), need: 0, from: [] };
-      n.need += Number(ri.quantity) * Number(p.recipe_batches || 1);
-      if (!n.from.includes(p.title)) n.from.push(p.title);
-    });
-  });
-  return { plans, rows: Object.values(need).sort((a, b) => a.name.localeCompare(b.name)) };
+/* ---------------- ③ RETIRADA DO FREEZER ---------------- */
+function pcSec3Html() {
+  const lots = admin.data.frozen.filter(b => frozenLeft(b) > 0).sort((a, b) => String(a.expires_at || "9999").localeCompare(String(b.expires_at || "9999")));
+  const today = spToday(), thaws = admin.data.thaws.slice(0, 15);
+  return `<h2 class="pc-h"><span class="pc-n">3</span> Retirada do freezer</h2>
+    <p class="hint">Ao confirmar, as unidades <strong>saem do lote congelado</strong> e <strong>entram no Estoque de produtos</strong> com a validade abaixo. Elas passam a pertencer a um só estoque.</p>
+    <div class="admin-card" id="pcThawCard">
+      ${lots.length ? `<div class="form-grid">
+        <label>Lote<select id="rtLot" onchange="pcFillThaw(true)">${lots.map(b => { const s = pcLotStatus(b); return `<option value="${b.id}" ${s.key === "vencido" ? "disabled" : ""}>${escapeHtml(woProdName(b.product_id))} · ${escapeHtml(b.lot_code || woFmtDate(b.frozen_at))} · restam ${s.left}${b.expires_at ? " · vence " + woFmtDate(b.expires_at) : ""}${s.key === "vencido" ? " (VENCIDO)" : ""}</option>`; }).join("")}</select></label>
+        <label>Quantidade a retirar<input type="number" min="1" step="1" id="rtQty" oninput="pcFillThaw()"></label>
+        <label>Data da retirada<input type="date" id="rtDate" value="${today}" onchange="pcFillThaw(true)"></label>
+        <label>Validade após descongelar *<input type="date" id="rtExp"></label>
+      </div>
+      <p class="hint" id="rtInfo"></p>
+      <div class="pc-actions"><button class="btn btn-pink" onclick="pcConfirmThaw()">Confirmar retirada e transferir para o estoque de produtos</button></div>` : `<p class="hint">Nenhum lote disponível no freezer.</p>`}
+    </div>
+    <h3 class="pc-sub">Retiradas recentes</h3>
+    <div class="admin-card">${thaws.length ? `<div class="pc-tablewrap"><table><thead><tr><th>Retirado em</th><th>Produto</th><th>Lote</th><th>Qtd</th><th>Validade</th><th></th></tr></thead><tbody>
+      ${thaws.map(t => { const b = admin.data.frozen.find(x => x.id === t.frozen_batch_id); const exp = t.expires_at < today;
+        return `<tr><td>${woFmtDate(t.thawed_at)}</td><td>${escapeHtml(b ? woProdName(b.product_id) : "—")}</td><td>${escapeHtml(b ? (b.lot_code || woFmtDate(b.frozen_at)) : "—")}</td><td>${t.quantity}</td>
+        <td style="${exp ? "color:#B23434;font-weight:700" : ""}">${woFmtDate(t.expires_at)}${exp ? " (vencido)" : ""}</td>
+        <td><button class="btn btn-outline btn-sm" onclick="undoThaw('${t.id}')">Desfazer</button></td></tr>`; }).join("")}</tbody></table></div>` : `<p class="hint">Nenhuma retirada ainda.</p>`}</div>`;
 }
-function renderShoppingList() {
-  const { plans, rows } = shoppingNeeds();
-  const noRecipe = admin.data.plans.filter(p => p.status === "planejado" && !p.recipe_id);
-  const r2 = v => Number(v.toFixed(2)).toString().replace(".", ",");
-  let total = 0;
-  const body = rows.map(n => {
-    const buy = Math.max(0, n.need - n.stock);
-    const packs = buy > 0 && n.pkgQty > 0 ? Math.ceil(buy / n.pkgQty) : 0;
-    const cost = packs * n.pkgCost; total += cost;
-    return `<tr><td><strong>${escapeHtml(n.name)}</strong><br><small style="color:var(--muted)">${escapeHtml(n.from.join(", "))}</small></td><td>${r2(n.need)} ${n.unit}</td><td>${r2(n.stock)} ${n.unit}</td>
-      <td style="${buy > 0 ? "color:#B23434;font-weight:700" : "color:#2E7D46"}">${buy > 0 ? r2(buy) + " " + n.unit : "ok"}</td><td>${packs ? `${packs} emb. <small>(${r2(n.pkgQty)} ${n.unit})</small>` : "—"}</td><td>${cost ? fmt(cost) : "—"}</td></tr>`;
-  }).join("");
-  const dates = plans.map(p => p.planned_date).filter(Boolean).sort();
-  return `<div class="admin-card"><h2>Lista de compras</h2>
-    <p class="hint">Soma os ingredientes das receitas dos itens <strong>Planejados</strong>, desconta o que já tem em Estoque de Insumos e estima as embalagens. Os valores são estimativas com base nos preços cadastrados.</p>
-    ${rows.length ? `<table><thead><tr><th>Ingrediente</th><th>Precisa</th><th>Tem</th><th>Comprar</th><th>Embalagens</th><th>Custo est.</th></tr></thead><tbody>${body}</tbody></table>
-      <p class="hint" style="margin-top:8px">Custo estimado das compras: <strong>${fmt(total)}</strong></p>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
-        <label style="display:flex;gap:6px;align-items:center;font-size:12.5px">Data da compra <input type="date" id="shopDate" value="${dates[0] ? shiftDate(dates[0], -1) : spToday()}"></label>
-        <button class="btn btn-outline btn-sm" onclick="shopToCalendar()">Colocar compra no calendário</button>
-      </div>` : `<p class="hint">Nenhum item planejado com receita vinculada.</p>`}
-    ${noRecipe.length ? `<p class="hint" style="margin-top:10px;color:#8A5A00">⚠ Sem receita vinculada (fora da lista de compras): <strong>${noRecipe.map(p => escapeHtml(p.title)).join(", ")}</strong>.</p>` : ""}
-  </div>`;
+function pcPickLot(id) {
+  const sel = document.getElementById("rtLot"); if (!sel) return;
+  sel.value = id; pcFillThaw(true);
+  document.getElementById("pcSec3").scrollIntoView({ behavior: "smooth", block: "start" });
+  const q = document.getElementById("rtQty"); if (q) q.focus();
 }
-function shiftDate(iso, n) { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return d.toLocaleDateString("sv-SE"); }
-async function shopToCalendar() {
-  const date = document.getElementById("shopDate").value;
-  if (!date) { alert("Escolha a data da compra."); return; }
-  const { plans, rows } = shoppingNeeds();
-  const items = rows.filter(n => n.need > n.stock).map(n => n.name);
-  const { error } = await sb.from("production_events").insert({ event_date: date, title: "Comprar ingredientes (produção)", category: "outro", description: (items.length ? items.join(", ") : "Conferir lista de compras") + ` — para: ${plans.map(p => p.title).join(", ")}` });
-  if (error) { console.error(error); alert("Não foi possível criar o lembrete."); return; }
-  alert("Lembrete de compra criado no calendário.");
+function pcFillThaw(refreshDate) {
+  const sel = document.getElementById("rtLot"); if (!sel) return;
+  const b = admin.data.frozen.find(x => x.id === sel.value); if (!b) return;
+  const left = frozenLeft(b), set = pcSettingByProduct(b.product_id);
+  const q = document.getElementById("rtQty"); q.max = left;
+  if (refreshDate) {
+    const d = document.getElementById("rtDate").value;
+    document.getElementById("rtExp").value = d && set.thaw_days ? pcAddDays(d, set.thaw_days) : "";
+  }
+  const qty = parseInt(q.value) || 0;
+  document.getElementById("rtInfo").innerHTML = `No lote: <strong>${left}</strong> un.` + (qty > 0 && qty <= left ? ` → ficam <strong>${left - qty}</strong> no freezer e <strong>${qty}</strong> vão para o estoque de produtos.` : "")
+    + (set.thaw_days ? ` Prazo configurado: ${set.thaw_days} dia(s) após a retirada (a contagem começa no dia seguinte à retirada).` : ` <span style="color:#B23434">Sem prazo configurado para este produto: informe a validade manualmente ou preencha em "Prazos e vínculo".</span>`);
+}
+async function pcConfirmThaw() {
+  const id = document.getElementById("rtLot").value, qty = parseInt(document.getElementById("rtQty").value), exp = document.getElementById("rtExp").value, dt = document.getElementById("rtDate").value || spToday();
+  const b = admin.data.frozen.find(x => x.id === id); if (!b) return;
+  if (!(qty > 0)) { alert("Informe a quantidade a retirar."); return; }
+  if (qty > frozenLeft(b)) { alert(`Só restam ${frozenLeft(b)} no lote.`); return; }
+  if (!exp) { alert("Informe a validade após descongelar."); return; }
+  if (exp < dt) { alert("A validade não pode ser anterior à data da retirada."); return; }
+  if (b.expires_at && b.expires_at < dt) { alert("Este lote está vencido e não pode ser transferido para venda."); return; }
+  const { error } = await sb.rpc("thaw_frozen_batch", { p_frozen: id, p_qty: qty, p_expires: exp, p_thawed: dt });
+  if (error) { console.error(error); alert("Não foi possível retirar: " + (error.message || "")); return; }
+  await pcReload();
+}
+async function undoThaw(id) {
+  if (!confirm("Desfazer esta retirada? As unidades saem do estoque de produtos e voltam ao lote congelado.")) return;
+  const { error } = await sb.rpc("undo_thaw", { p_thaw: id });
+  if (error) { console.error(error); alert(error.message || "Não foi possível desfazer."); return; }
+  await pcReload();
 }
